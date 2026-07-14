@@ -433,7 +433,8 @@ async function apiGet(path) {
     if (res && typeof res === 'object' && 'data' in res && ('success' in res || 'code' in res)) return res.data
     return res
   } catch (e) {
-    snack('请求失败：' + (e?.message || e), 'error')
+    const detail = e?.response?.data?.message || e?.message || e
+    snack('请求失败：' + detail, 'error')
     return null
   }
 }

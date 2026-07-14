@@ -162,8 +162,8 @@ def _qr_request(method: str, path: str, params: dict = None, data: dict = None,
 
 
 def _qr_token() -> dict:
-    """获取二维码 token：{uid, time, sign, ...}。"""
-    raw, _ = _qr_request("POST", "/api/1.0/web/1.0/token/")
+    """获取二维码 token：GET /api/1.0/web/1.0/token/ -> {state, data:{uid, time, sign, qrcode}}。"""
+    raw, _ = _qr_request("GET", "/api/1.0/web/1.0/token/")
     return json.loads(raw)
 
 
@@ -177,9 +177,10 @@ def _qr_image_data_url(uid: str) -> str:
 
 
 def _qr_status(uid: str, t: str, sign: str) -> dict:
-    """轮询扫码状态：{status, msg, ...}。status: 0等待 1已扫描 2已确认 -1过期 -2取消。"""
+    """轮询扫码状态。115 该接口为长轮询，无事件时约 60s 返回空 data；这里用 30s
+    超时，超时即视为「等待扫码」。返回完整响应 {state, code, message, data}。"""
     raw, _ = _qr_request("GET", "/get/status/",
-                         params={"uid": uid, "time": t, "sign": sign}, timeout=35)
+                         params={"uid": uid, "time": t, "sign": sign}, timeout=30)
     return json.loads(raw)
 
 
@@ -216,7 +217,7 @@ class TgSearch115(_PluginBase):
         "订阅新增时优先到指定 Telegram 频道搜索 115 资源，命中并转存成功后自动完成订阅；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "2.1.4"
+    plugin_version = "2.1.5"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -698,14 +699,17 @@ class TgSearch115(_PluginBase):
         from starlette.responses import JSONResponse
         try:
             token = _qr_token()
-            uid = str(token.get("uid", "") or "")
+            data = token.get("data") if isinstance(token, dict) else None
+            data = data or {}
+            uid = str(data.get("uid", "") or "")
             if not uid:
-                return JSONResponse({"success": False, "message": "115 未返回 uid"}, status_code=502)
+                msg = token.get("message", "") if isinstance(token, dict) else ""
+                return JSONResponse({"success": False, "message": f"115 未返回 uid: {msg}"}, status_code=502)
             return JSONResponse({
                 "success": True,
                 "uid": uid,
-                "time": token.get("time"),
-                "sign": token.get("sign"),
+                "time": data.get("time"),
+                "sign": data.get("sign"),
                 "app": _qr_normalize_app(app),
                 "qrcode_url": _qr_image_data_url(uid),
             })
@@ -727,10 +731,24 @@ class TgSearch115(_PluginBase):
                     -1: "二维码已过期", -2: "已取消", -99: "异常"}
         try:
             resp = _qr_status(uid, str(time or ""), sign)
-            status = int(resp.get("status", -99))
+        except Exception:
+            # 115 状态接口为长轮询，超时（无扫码事件）视为「等待扫码」，不报错
+            return JSONResponse({"status": 0, "msg": "等待扫码", "login_ok": False})
+        try:
+            data = resp.get("data") if isinstance(resp, dict) else None
+            data = data or {}
+            # status 可能在 data.status、顶层 status，或缺失（长轮询无事件返回空 data）
+            status = data.get("status")
+            if status is None:
+                status = resp.get("status") if isinstance(resp, dict) else None
+            if status is None:
+                status = 0 if (isinstance(resp, dict) and resp.get("state") == 1) else -1
+            status = int(status)
+            msg = (data.get("msg") or (resp.get("message") if isinstance(resp, dict) else "")
+                   or _msg_map.get(status, ""))
             result = {
                 "status": status,
-                "msg": resp.get("msg") or _msg_map.get(status, ""),
+                "msg": msg,
                 "login_ok": False,
             }
             if status == 2:

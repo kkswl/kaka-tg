@@ -125,7 +125,8 @@ async function apiGet(path) {
     if (res && typeof res === 'object' && 'data' in res && ('success' in res || 'code' in res)) return res.data
     return res
   } catch (e) {
-    snack('请求失败：' + (e?.message || e), 'error');
+    const detail = e?.response?.data?.message || e?.message || e;
+    snack('请求失败：' + detail, 'error');
     return null
   }
 }
@@ -1127,6 +1128,6 @@ return (_ctx, _cache) => {
 }
 
 };
-const Config = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-1d15afb5"]]);
+const Config = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-afc027d6"]]);
 
 export { Config as default };
