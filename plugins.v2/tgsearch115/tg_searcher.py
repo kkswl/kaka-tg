@@ -81,6 +81,56 @@ class TgChannelSearcher:
             logger.error(f"【TG115】TG 频道搜索失败: {e}")
             return []
 
+    def check_channel(self, channel_id: str) -> Tuple[bool, str]:
+        """检查单个频道连通性：能否用当前 Session 解析并读取该频道。"""
+        channel_id = (channel_id or "").strip()
+        if not channel_id:
+            return False, "频道 ID 为空"
+        if not (self.api_id and self.api_hash and self.session_string):
+            return False, "TG 配置不完整（api_id/api_hash/session）"
+        try:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(self._async_check(channel_id))
+            finally:
+                loop.close()
+        except Exception as e:
+            return False, f"检查异常: {e}"
+
+    async def _async_check(self, channel_id: str) -> Tuple[bool, str]:
+        from telethon import TelegramClient
+        from telethon.sessions import StringSession
+
+        client = TelegramClient(
+            StringSession(self.session_string),
+            self.api_id,
+            self.api_hash,
+            proxy=self._parse_proxy(self.proxy),
+            connection_retries=2,
+            retry_delay=1,
+        )
+        await client.connect()
+        try:
+            if not await client.is_user_authorized():
+                return False, "TG Session 未授权或已失效，请重新生成"
+            try:
+                entity = await client.get_entity(channel_id)
+            except Exception as e:
+                return False, f"无法解析频道（账号可能未加入该频道）: {e}"
+            try:
+                async for _ in client.iter_messages(entity, limit=1):
+                    break
+            except Exception as e:
+                return False, f"频道不可读: {e}"
+            title = getattr(entity, "title", None) or channel_id
+            return True, f"连通正常（{title}）"
+        finally:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
+
     # ============================ 异步实现 ============================
     async def _async_search(self, keyword: str, limit: Optional[int]) -> List[TgHit]:
         from telethon import TelegramClient
