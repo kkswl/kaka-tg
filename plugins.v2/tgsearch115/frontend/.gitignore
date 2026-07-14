@@ -1,0 +1,5 @@
+node_modules/
+*.log
+.DS_Store
+.vite/
+# 注意：dist/ 必须提交！MoviePilot 运行时直接加载 dist/remoteEntry.js

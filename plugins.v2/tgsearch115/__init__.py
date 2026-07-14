@@ -1,31 +1,56 @@
 # -*- coding: utf-8 -*-
-"""MoviePilot 插件：订阅新增时优先到 Telegram 频道搜索 115 资源并转存。
+"""MoviePilot 插件：拦截订阅 -> TG 频道搜索 115 -> 转存 -> 完成订阅（自定义 Vue 前端版 v2）。
 
 ================================================================================
- 设计总览
+ 一、整体设计
 ================================================================================
-1. 触发：监听 ``EventType.SubscribeAdded`` 广播事件。该事件在订阅创建时由
-   ``SubscribeChain.add`` 发出，事件数据包含 ``subscribe_id`` 与 ``mediainfo``。
-   广播事件由 EventManager 的独立线程消费，且本插件在处理器内再起一个守护线程
-   执行实际工作，因此**绝不会阻塞 MoviePilot 主流程**。
+1. 触发：监听 ``EventType.SubscribeAdded``（订阅新增）。该事件由
+   ``SubscribeChain.add`` 发出，经 EventBus 的独立消费线程派发。本插件在处理器
+   内再起一个守护线程执行实际工作，**绝不阻塞 MoviePilot 主流程**。
+
+   说明：MoviePilot 的 EventBus 是「队列 + 独立消费线程」模型（见
+   ``app/core/event.py``），事件处理器无法同步阻断事件发起方。因此"拦截并阻断
+   原有搜索"采用的是「抢跑完成」策略——在 MP 默认的定时站点搜索跑起来之前，
+   用 TG+115 把订阅完成掉（写历史 / 删订阅 / 发 SubscribeComplete），
+   MP 的默认搜索自然无订阅可做；任何环节失败则静默 return，MP 默认搜索照常进行。
+   系统中并不存在 ``EventType.SearchStart`` 之类可阻断的搜索事件，
+   ``SubscribeAdded`` 是实现该目标的正确且唯一的钩子。
 
 2. TG 搜索：用 Telethon User Session 读取目标频道历史消息，按订阅标题/年份检索，
-   提取其中的 115 分享链接（见 ``tg_searcher.py``）。支持多个频道，每个频道可单独
-   开关、检查连通性。
+   提取其中的 115 分享链接（见 ``tg_searcher.py``）。支持多频道。
 
-3. 规则匹配：将每条命中构造成 ``TorrentInfo``，调用 MoviePilot 内置的
-   ``SubscribeChain().filter_torrents(rule_groups, torrent_list, mediainfo)``
-   与 ``TorrentHelper.filter_torrent``，复用用户在 MP 中配置的过滤规则。
+3. 规则匹配：每条命中构造为 ``TorrentInfo``，复用 MoviePilot 内置的
+   ``SubscribeChain().filter_torrents`` 与 ``TorrentHelper.filter_torrent``，
+   按用户在 MP 中配置的过滤规则二次校验。
 
 4. 115 转存：命中后用 ``p115client`` + 用户 Cookie 调 ``share_receive`` 转存到
    指定 115 目录（见 ``p115_transfer.py``）。
+   注意：MoviePilot 核心的 ``app.modules.filemanager.storages.u115.U115Pan``
+   是基于 OAuth 的存储模块，仅提供 list/upload/download/move，**不包含**
+   分享链接转存（share_receive）接口；官方插件仓 (jxxghp/MoviePilot-Plugins)
+   中的 ``agentresourceofficer`` 同样自带 ``services/p115_transfer.py`` 走
+   ``p115client``。故本插件沿用社区标准方案，不"手写 115 请求"，
+   也无法引用一个并不存在的 MP 核心转存类。
 
-5. 完成订阅：转存成功后直接标记订阅完成（写历史 / 删订阅 / 发
-   ``SubscribeComplete`` 事件 / 推送通知），镜像 ``SubscribeChain.__finish_subscribe``。
+5. 完成订阅：转存成功后镜像 ``SubscribeChain.__finish_subscribe``，写历史、
+   删订阅、发 ``SubscribeComplete`` 事件、推送通知。
 
-6. 回退：任何环节（未识别媒体 / TG 无命中 / 规则不匹配 / 转存失败 / 异常）都
-   静默 ``return``，**不删除、不修改订阅**，MoviePilot 默认的定时站点搜索照常进行。
+6. 回退：任何环节失败都静默 ``return``，不删除/不修改订阅。
+
 ================================================================================
+ 二、与 v1 的区别（自定义 Vue 前端架构）
+================================================================================
+- 配置 UI 由自定义 Vue 前端接管：插件随包附带 ``frontend/dist/remoteEntry.js``
+  （Module Federation，暴露 ``Config`` / ``Page`` 组件），MoviePilot 前端加载
+  ``Config`` 组件渲染配置弹窗、``Page`` 组件渲染插件详情页。
+- 后端因此把 ``get_form`` / ``get_page`` 返回空桩；配置的读写完全由
+  ``get_api`` 暴露的 RESTful 接口驱动：
+    GET  /api/v1/plugin/{plugin_id}/config/get   读取配置
+    POST /api/v1/plugin/{plugin_id}/config/save  保存配置并即时生效
+    GET  /api/v1/plugin/{plugin_id}/check_channel?index=N   检查单频道连通性
+    GET  /api/v1/plugin/{plugin_id}/check_all               检查全部频道连通性
+- 配置持久化改用 ``self.get_data("config")`` / ``self.save_data("config", ...)``
+  （PluginData 表，自动 JSON 序列化），不再使用 VForm 的 update_config。
 """
 import json
 import threading
@@ -47,34 +72,38 @@ from .p115_transfer import P115Transfer
 from .tg_searcher import TgChannelSearcher
 
 
+# get_data / save_data 存储本插件配置使用的 key
+CONFIG_KEY = "config"
+
+
 class TgSearch115(_PluginBase):
     """订阅新增 -> TG 频道搜索 115 -> 转存 -> 完成订阅；失败平滑回退。"""
 
-    # 插件元信息
+    # ============================ 插件元信息 ============================
     plugin_name = "拦截mp订阅"
     plugin_desc = (
         "订阅新增时优先到指定 Telegram 频道搜索 115 资源，命中并转存成功后自动完成订阅；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "1.0.4"
+    plugin_version = "2.0.0"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
     author_url = ""
     plugin_url = ""
 
-    # 运行态
+    # ============================ 运行态 ============================
     _enabled = False
     _lock = threading.Lock()
     _running_ids: set = set()
     _searcher: Optional[TgChannelSearcher] = None
     _transfer: Optional[P115Transfer] = None
 
-    # 配置项
+    # 配置项（运行态缓存）
     _tg_api_id = 0
     _tg_api_hash = ""
     _tg_session = ""
-    _tg_channels = []
+    _tg_channels: List[Dict[str, Any]] = []
     _tg_max_messages = 200
     _tg_proxy = ""
     _p115_cookie = ""
@@ -86,8 +115,32 @@ class TgSearch115(_PluginBase):
 
     # ============================ 生命周期 ============================
     def init_plugin(self, config: dict = None):
-        if not config:
-            return
+        """生效配置。
+
+        - 自定义前端 ``POST /config`` 会显式传入 config 并即时调用本方法；
+        - MoviePilot 启动 / 重载插件时，框架调用 ``init_plugin(get_config())``。
+          由于本插件用 ``get_data`` 持久化，``get_config()`` 为空，故 config 为
+          None 时回退到 ``get_data(CONFIG_KEY)`` 读取已保存配置。
+        """
+        if config is None:
+            config = self.get_data(CONFIG_KEY) or {}
+        if not isinstance(config, dict):
+            config = {}
+
+        self._apply_config(config)
+
+        # 持久化（保证 get_data 可读、字段干净）
+        try:
+            self.save_data(CONFIG_KEY, config)
+        except Exception as e:
+            logger.warn(f"【TG115】保存配置失败: {e}")
+
+        if self._enabled:
+            logger.info("【TG115】插件已启用")
+            self._check_deps()
+
+    def _apply_config(self, config: dict):
+        """把配置字典解析到运行态字段，并重建搜索器 / 转存器。"""
         self._enabled = self._to_bool(config.get("enabled"), False)
         self._tg_api_id = self._safe_int(config.get("tg_api_id"), 0)
         self._tg_api_hash = config.get("tg_api_hash") or ""
@@ -101,32 +154,11 @@ class TgSearch115(_PluginBase):
         self._notify_success = self._to_bool(config.get("notify_success"), True)
         self._notify_fail = self._to_bool(config.get("notify_fail"), False)
 
-        # 重建频道列表：从卡片 ch_{i}_* 字段 + 新增 + 批量导入
-        channels: List[Dict[str, Any]] = []
-        i = 0
-        while f"ch_{i}_id" in config or f"ch_{i}_name" in config:
-            cid = str(config.get(f"ch_{i}_id") or "").strip()
-            cname = str(config.get(f"ch_{i}_name") or "").strip() or cid
-            enabled = self._to_bool(config.get(f"ch_{i}_enabled"), True)
-            delete = self._to_bool(config.get(f"ch_{i}_delete"), False)
-            if cid and not delete:
-                channels.append({"name": cname, "id": cid, "enabled": enabled})
-            i += 1
-        # 新增频道
-        new_id = str(config.get("new_ch_id") or "").strip()
-        new_name = str(config.get("new_ch_name") or "").strip()
-        if new_id:
-            channels.append({"name": new_name or new_id, "id": new_id, "enabled": True})
-        # 批量导入
-        imp = str(config.get("import_json") or "").strip()
-        if imp:
-            for ch in self._parse_channels(imp):
-                ch.setdefault("enabled", True)
-                channels.append(ch)
-        self._tg_channels = channels
+        # TG 频道列表：自定义前端直接以数组/JSON 字符串形式提交 tg_channels
+        self._tg_channels = self._parse_channels(config.get("tg_channels"))
 
         # 搜索器只接收「已启用」的频道
-        enabled_channels = [ch for ch in channels if ch.get("enabled", True)]
+        enabled_channels = [ch for ch in self._tg_channels if ch.get("enabled", True)]
         self._searcher = TgChannelSearcher(
             api_id=self._tg_api_id,
             api_hash=self._tg_api_hash,
@@ -139,35 +171,75 @@ class TgSearch115(_PluginBase):
             cookie=self._p115_cookie, default_target_path=self._p115_target
         )
 
-        # 持久化干净配置：去掉临时字段 ch_*/new_*/import_json，保留 tg_channels(JSON)
-        try:
-            clean = {
-                "enabled": self._enabled,
-                "tg_api_id": self._tg_api_id,
-                "tg_api_hash": self._tg_api_hash,
-                "tg_session": self._tg_session,
-                "tg_max_messages": self._tg_max_messages,
-                "tg_proxy": self._tg_proxy,
-                "p115_cookie": self._p115_cookie,
-                "p115_target": self._p115_target,
-                "use_rule_groups": self._use_rule_groups,
-                "delay_seconds": self._delay_seconds,
-                "notify_success": self._notify_success,
-                "notify_fail": self._notify_fail,
-                "tg_channels": json.dumps(channels, ensure_ascii=False),
-            }
-            self.update_config(clean)
-        except Exception as e:
-            logger.warn(f"【TG115】保存清理后的配置失败: {e}")
+    def get_state(self) -> bool:
+        return self._enabled
 
-        if self._enabled:
-            logger.info("【TG115】插件已启用")
-            self._check_deps()
+    @staticmethod
+    def get_command() -> List[Dict[str, Any]]:
+        return []
+
+    def get_api(self) -> List[Dict[str, Any]]:
+        """注册插件 RESTful API，供自定义 Vue 前端调用。
+
+        MoviePilot 会把每个端点挂载到 ``/api/v1/plugin/{plugin_id}{path}``，
+        并按需校验 apikey。端点为「绑定方法」，形参会从 query / body 中按名注入。
+        """
+        # 路径与官方插件仓 agentresourceofficer 保持一致：get/save 拆成独立路径，
+        # 避免 MoviePilot 插件路由对「同路径不同方法」的兼容性差异。
+        return [
+            {
+                "path": "/config/get",
+                "endpoint": self.__get_config_api,
+                "methods": ["GET"],
+                "summary": "获取插件配置",
+                "description": "返回当前插件配置，供自定义前端 Config.vue 初始化读取",
+            },
+            {
+                "path": "/config/save",
+                "endpoint": self.__save_config_api,
+                "methods": ["POST"],
+                "summary": "保存插件配置",
+                "description": "保存配置并即时生效（写入 get_data 并重新 init_plugin）",
+            },
+            {
+                "path": "/check_channel",
+                "endpoint": self.__check_channel_api,
+                "methods": ["GET"],
+                "summary": "检查指定 TG 频道连通性",
+            },
+            {
+                "path": "/check_all",
+                "endpoint": self.__check_all_api,
+                "methods": ["GET"],
+                "summary": "检查所有 TG 频道连通性",
+            },
+        ]
+
+    def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
+        """配置页由自定义 Vue 前端（Config.vue）接管，这里返回空桩。
+
+        若尚未构建前端产物（frontend/dist/remoteEntry.js），可临时改为返回
+        Vuetify/VForm schema 作为兜底；当前面向自定义前端架构，故返回空。
+        """
+        return [], {}
+
+    def get_page(self) -> List[dict]:
+        """详情页由自定义 Vue 前端（Page.vue）接管，这里返回空桩。"""
+        return []
+
+    def stop_service(self):
+        """停止插件：清理运行态。守护线程为 daemon，随主进程退出。"""
+        with self._lock:
+            self._running_ids.clear()
 
     # ============================ 事件入口 ============================
     @eventmanager.register(EventType.SubscribeAdded)
     def on_subscribe_added(self, event: Event):
-        """订阅新增事件：异步触发 TG+115 优先处理。"""
+        """订阅新增事件：异步触发 TG+115 优先处理。
+
+        EventBus 在独立消费线程派发事件，本方法只做最轻量校验后另起守护线程，
+        避免占用事件消费线程、影响其它插件事件的处理。
+        """
         if not self._enabled:
             return
         data = getattr(event, "event_data", None) or {}
@@ -190,6 +262,7 @@ class TgSearch115(_PluginBase):
                     return
                 self._running_ids.add(subscribe_id)
 
+            # 抢跑延迟：给 TG+115 一个先于 MP 默认搜索完成的窗口
             if self._delay_seconds and self._delay_seconds > 0:
                 time.sleep(min(self._delay_seconds, 300))
 
@@ -226,8 +299,11 @@ class TgSearch115(_PluginBase):
             share_url = best.page_url or ""
             logger.info(f"【TG115】订阅 [{subscribe.name}] 命中: {best.title} -> {share_url}")
 
-            ok, msg, _data = self._transfer.transfer(share_url, self._p115_target) \
-                if self._transfer else (False, "转存模块未初始化", {})
+            ok, msg, _data = (
+                self._transfer.transfer(share_url, self._p115_target)
+                if self._transfer
+                else (False, "转存模块未初始化", {})
+            )
             if not ok:
                 logger.warn(f"【TG115】订阅 [{subscribe.name}] 115 转存失败: {msg}，回退到默认搜索")
                 self._notify_fail(subscribe, f"115 转存失败: {msg}")
@@ -280,6 +356,7 @@ class TgSearch115(_PluginBase):
         return torrents
 
     def _filter_resources(self, subscribe, mediainfo, torrents: List[TorrentInfo]) -> List[TorrentInfo]:
+        """复用 MP 内置过滤规则：先规则组，再 include/exclude/清晰度等参数。"""
         if not torrents:
             return []
         if self._use_rule_groups:
@@ -315,6 +392,7 @@ class TgSearch115(_PluginBase):
         }.items() if v}
 
     def _finish_subscribe(self, subscribe, meta, mediainfo, torrent: TorrentInfo, transfer_msg: str):
+        """转存成功：镜像 SubscribeChain.__finish_subscribe，标记订阅完成。"""
         try:
             oper = SubscribeOper()
             oper.add_history(**subscribe.to_dict())
@@ -349,9 +427,57 @@ class TgSearch115(_PluginBase):
         except Exception:
             pass
 
-    # ============================ 频道检查 API ============================
+    # ============================ REST API ============================
+    def __get_config_api(self):
+        """GET /config：返回当前配置（供自定义前端 Config.vue 读取）。"""
+        from starlette.responses import JSONResponse
+        config = self.get_data(CONFIG_KEY) or self._default_config()
+        return JSONResponse(config)
+
+    def __save_config_api(self, config: Any = None, **kwargs):
+        """POST /config/save：保存配置并即时生效。
+
+        MoviePilot 前端通过 ``props.api.post('plugin/{id}/config/save', configDict)``
+        以 JSON body 提交。不同 MP 版本的插件路由对 body 的注入方式存在差异，本方法
+        做最大兼容，可接收以下任一形态：
+          1) 整个 body 即配置字典：``{"enabled": true, ...}``（注入到 config）
+          2) body 字段按名展开为 kwargs：``config=None, enabled=True, ...``
+          3) body 包裹一层：``{"config": {"enabled": true, ...}}``
+          4) query 字符串形式的 JSON：``?config=<urlencoded json>``
+        """
+        from starlette.responses import JSONResponse
+
+        # 形态 2：字段展开为 kwargs
+        if not config and kwargs:
+            config = dict(kwargs)
+        # 形态 4：JSON 字符串
+        if isinstance(config, str):
+            try:
+                config = json.loads(config)
+            except Exception:
+                config = None
+        if not isinstance(config, dict) or not config:
+            return JSONResponse(
+                {"success": False, "message": "配置数据无效"},
+                status_code=400,
+            )
+        # 形态 3：解包 {"config": {...}}
+        if isinstance(config.get("config"), dict) and len(config) == 1:
+            config = config["config"]
+
+        try:
+            self.save_data(CONFIG_KEY, config)
+            self.init_plugin(config)
+            return JSONResponse({"success": True, "message": "配置已保存并生效"})
+        except Exception as e:
+            logger.error(f"【TG115】保存配置失败: {e}")
+            return JSONResponse(
+                {"success": False, "message": f"保存失败: {e}"},
+                status_code=500,
+            )
+
     def __check_channel_api(self, index: int = -1):
-        """API：检查指定 TG 频道连通性"""
+        """GET /check_channel?index=N：检查指定 TG 频道连通性。"""
         from starlette.responses import JSONResponse
         try:
             index = int(index)
@@ -369,7 +495,7 @@ class TgSearch115(_PluginBase):
         return JSONResponse({"success": ok, "message": f"[{ch.get('name') or ch['id']}] {msg}"})
 
     def __check_all_api(self):
-        """API：检查所有 TG 频道连通性"""
+        """GET /check_all：检查所有 TG 频道连通性。"""
         from starlette.responses import JSONResponse
         channels = self._tg_channels or []
         if not channels:
@@ -414,6 +540,69 @@ class TgSearch115(_PluginBase):
         if self._tg_channels and not any(ch.get("enabled", True) for ch in self._tg_channels):
             logger.warn("【TG115】所有 TG 频道均已关闭，订阅将直接回退到默认搜索")
 
+    # ============================ 默认配置 / 频道解析 ============================
+    @staticmethod
+    def _default_config() -> Dict[str, Any]:
+        """首次加载 / 无配置时返回的默认结构，供前端初始化。"""
+        return {
+            "enabled": False,
+            "tg_api_id": "",
+            "tg_api_hash": "",
+            "tg_session": "",
+            "tg_max_messages": 200,
+            "tg_proxy": "",
+            "p115_cookie": "",
+            "p115_target": "/电影",
+            "use_rule_groups": True,
+            "delay_seconds": 3,
+            "notify_success": True,
+            "notify_fail": False,
+            "tg_channels": [],
+        }
+
+    @staticmethod
+    def _parse_channels(raw: Any) -> List[Dict[str, Any]]:
+        """解析 TG 频道列表。
+
+        兼容自定义前端直接传入的数组，以及历史 JSON 字符串：
+          - list：[{"name":"..","id":"..","enabled":true}, ...] 或 ["@xxx", ...]
+          - str ：JSON 字符串
+        每条归一化为 {"name","id","enabled"}。
+        """
+        channels: List[Dict[str, Any]] = []
+
+        def push(name: str, cid: str, enabled: bool = True):
+            cid = (cid or "").strip()
+            if not cid:
+                return
+            channels.append({
+                "name": (name or "").strip() or cid,
+                "id": cid,
+                "enabled": bool(enabled),
+            })
+
+        if isinstance(raw, list):
+            for item in raw:
+                if isinstance(item, dict):
+                    push(
+                        str(item.get("name") or ""),
+                        str(item.get("id") or item.get("link") or item.get("channel") or ""),
+                        item.get("enabled", True),
+                    )
+                elif isinstance(item, str):
+                    push(item, item)
+        elif isinstance(raw, str):
+            text = raw.strip()
+            if text:
+                try:
+                    data = json.loads(text)
+                except Exception as e:
+                    logger.warn(f"【TG115】TG 频道列表 JSON 解析失败：{e}")
+                    data = None
+                if isinstance(data, list):
+                    return TgSearch115._parse_channels(data)
+        return channels
+
     # ============================ 静态工具 ============================
     @staticmethod
     def _safe_int(v: Any, default: int = 0) -> int:
@@ -429,257 +618,3 @@ class TgSearch115(_PluginBase):
         if isinstance(v, bool):
             return v
         return str(v).lower() in ("1", "true", "yes", "on")
-
-    @staticmethod
-    def _parse_channels(raw: Any, legacy_single: Any = None) -> List[Dict[str, Any]]:
-        """解析 TG 频道列表 JSON。保留 enabled 字段；兼容旧单频道。"""
-        channels: List[Dict[str, Any]] = []
-        text = (str(raw) if raw is not None else "").strip()
-        if text:
-            try:
-                data = json.loads(text)
-            except Exception as e:
-                logger.warn(f"【TG115】TG 频道列表 JSON 解析失败：{e}")
-                data = None
-            if isinstance(data, list):
-                for item in data:
-                    if isinstance(item, dict):
-                        cid = str(item.get("id") or item.get("channel") or "").strip()
-                        cname = str(item.get("name") or "").strip() or cid
-                        if cid:
-                            channels.append({
-                                "name": cname, "id": cid,
-                                "enabled": bool(item.get("enabled", True)),
-                            })
-                    elif isinstance(item, str):
-                        s = item.strip()
-                        if s:
-                            channels.append({"name": s, "id": s, "enabled": True})
-        if not channels and legacy_single:
-            ls = str(legacy_single).strip()
-            if ls:
-                channels.append({"name": ls, "id": ls, "enabled": True})
-        return channels
-
-    # ============================ 插件接口 ============================
-    def get_state(self) -> bool:
-        return self._enabled
-
-    @staticmethod
-    def get_command() -> List[Dict[str, Any]]:
-        return []
-
-    def get_api(self) -> List[Dict[str, Any]]:
-        return [
-            {
-                "path": "/check_channel",
-                "endpoint": self.__check_channel_api,
-                "methods": ["GET"],
-                "summary": "检查指定 TG 频道连通性",
-            },
-            {
-                "path": "/check_all",
-                "endpoint": self.__check_all_api,
-                "methods": ["GET"],
-                "summary": "检查所有 TG 频道连通性",
-            },
-        ]
-
-    @staticmethod
-    def get_page() -> Optional[List[dict]]:
-        return None
-
-    def get_form(self) -> Tuple[Optional[List[dict]], Dict[str, Any]]:
-        plugin_id = self.__class__.__name__
-        saved = self.get_config() or {}
-        channels = self._parse_channels(saved.get("tg_channels"))
-        for ch in channels:
-            ch.setdefault("enabled", True)
-
-        content: List[dict] = [
-            # 启用开关
-            {"component": "VRow", "content": [
-                {"component": "VCol", "props": {"cols": 12, "md": 6}, "content": [
-                    {"component": "VSwitch", "props": {"model": "enabled", "label": "启用插件", "color": "primary"}}
-                ]},
-                {"component": "VCol", "props": {"cols": 12, "md": 6}, "content": [
-                    {"component": "VSwitch", "props": {"model": "use_rule_groups", "label": "使用 MP 过滤规则组二次匹配", "color": "primary"}}
-                ]},
-            ]},
-            # 说明
-            {"component": "VRow", "content": [
-                {"component": "VCol", "props": {"cols": 12}, "content": [
-                    {"component": "VAlert", "props": {
-                        "type": "info", "variant": "tonal",
-                        "text": "订阅新增时优先到 TG 频道搜索 115 资源；未命中或转存失败将自动回退到 MoviePilot 默认搜索。"
-                    }}
-                ]}
-            ]},
-        ]
-
-        # ===== TG 频道管理板块（独立板块：卡片 + 开关 + 检查 + 删除）=====
-        content.append({"component": "VRow", "content": [
-            {"component": "VCol", "props": {"cols": 12}, "content": [
-                {"component": "VAlert", "props": {
-                    "type": "warning", "variant": "tonal",
-                    "text": "【TG 频道管理】每个频道一张卡片，可单独开启/关闭、检查连通性、勾选「删除」后保存即移除；新增或批量导入后点「保存」生效。"
-                }}
-            ]}
-        ]})
-        # 一键检查所有
-        content.append({"component": "VRow", "content": [
-            {"component": "VCol", "props": {"cols": 12}, "content": [
-                {"component": "VBtn", "props": {
-                    "color": "primary", "variant": "tonal", "size": "small", "class": "mb-2",
-                    "prepend-icon": "mdi-connection"
-                }, "text": "一键检查所有频道连通性", "events": {
-                    "click": {
-                        "api": f"plugin/{plugin_id}/check_all?apikey={settings.API_TOKEN}",
-                        "method": "get"
-                    }
-                }}
-            ]}
-        ]})
-        # 每个频道一张卡片
-        for i, ch in enumerate(channels):
-            content.append({"component": "VRow", "content": [
-                {"component": "VCol", "props": {"cols": 12}, "content": [
-                    {"component": "VCard", "props": {"variant": "outlined", "class": "mb-2"}, "content": [
-                        {"component": "VCardText", "content": [
-                            {"component": "VRow", "content": [
-                                {"component": "VCol", "props": {"cols": 12, "md": 5}, "content": [
-                                    {"component": "VTextField", "props": {"model": f"ch_{i}_name", "label": "频道名称", "density": "compact", "hide-details": True}}
-                                ]},
-                                {"component": "VCol", "props": {"cols": 12, "md": 5}, "content": [
-                                    {"component": "VTextField", "props": {"model": f"ch_{i}_id", "label": "频道 ID（@用户名/邀请链接/数字ID）", "density": "compact", "hide-details": True}}
-                                ]},
-                                {"component": "VCol", "props": {"cols": 6, "md": 1}, "content": [
-                                    {"component": "VSwitch", "props": {"model": f"ch_{i}_enabled", "label": "启用", "color": "primary", "density": "compact", "hide-details": True, "inline": True}}
-                                ]},
-                                {"component": "VCol", "props": {"cols": 6, "md": 1}, "content": [
-                                    {"component": "VSwitch", "props": {"model": f"ch_{i}_delete", "label": "删除", "color": "error", "density": "compact", "hide-details": True, "inline": True}}
-                                ]},
-                            ]},
-                            {"component": "VRow", "content": [
-                                {"component": "VCol", "props": {"cols": 12}, "content": [
-                                    {"component": "VBtn", "props": {
-                                        "color": "primary", "size": "small", "variant": "tonal",
-                                        "prepend-icon": "mdi-link-variant"
-                                    }, "text": "检查连通性", "events": {
-                                        "click": {
-                                            "api": f"plugin/{plugin_id}/check_channel?apikey={settings.API_TOKEN}",
-                                            "method": "get",
-                                            "params": {"index": i}
-                                        }
-                                    }}
-                                ]}
-                            ]}
-                        ]}
-                    ]}
-                ]}
-            ]})
-        # 添加新频道
-        content.append({"component": "VRow", "content": [
-            {"component": "VCol", "props": {"cols": 12}, "content": [
-                {"component": "VCard", "props": {"variant": "tonal", "color": "success", "class": "mb-2"}, "content": [
-                    {"component": "VCardText", "content": [
-                        {"component": "div", "props": {"class": "text-subtitle-2 mb-2"}, "text": "➕ 添加新频道（填写后点「保存」即可加入列表）"},
-                        {"component": "VRow", "content": [
-                            {"component": "VCol", "props": {"cols": 12, "md": 5}, "content": [
-                                {"component": "VTextField", "props": {"model": "new_ch_name", "label": "频道名称"}}
-                            ]},
-                            {"component": "VCol", "props": {"cols": 12, "md": 7}, "content": [
-                                {"component": "VTextField", "props": {"model": "new_ch_id", "label": "频道 ID（@用户名/邀请链接/数字ID）"}}
-                            ]},
-                        ]}
-                    ]}
-                ]}
-            ]}
-        ]})
-        # 批量导入
-        content.append({"component": "VRow", "content": [
-            {"component": "VCol", "props": {"cols": 12}, "content": [
-                {"component": "VTextarea", "props": {
-                    "model": "import_json",
-                    "label": "批量导入（JSON，填写后点「保存」追加到列表）",
-                    "hint": "格式：[{\"name\": \"频道1\", \"id\": \"@xxx\", \"enabled\": true}, {\"name\": \"频道2\", \"id\": \"...\"}]",
-                    "persistent-hint": True, "rows": 3
-                }}
-            ]}
-        ]})
-
-        # ===== Telegram 连接配置 =====
-        content.append({"component": "VRow", "content": [
-            {"component": "VCol", "props": {"cols": 12, "md": 6}, "content": [
-                {"component": "VTextField", "props": {"model": "tg_api_id", "label": "TG API ID", "hint": "在 https://my.telegram.org 申请的 API ID（数字）", "persistent-hint": True}}
-            ]},
-            {"component": "VCol", "props": {"cols": 12, "md": 6}, "content": [
-                {"component": "VTextField", "props": {"model": "tg_api_hash", "label": "TG API Hash", "hint": "在 https://my.telegram.org 申请的 API Hash", "persistent-hint": True}}
-            ]},
-        ]})
-        content.append({"component": "VRow", "content": [
-            {"component": "VCol", "props": {"cols": 12}, "content": [
-                {"component": "VTextarea", "props": {
-                    "model": "tg_session", "label": "TG Session String",
-                    "hint": "用 gen_tg_session.py 在本地电脑生成后粘贴（容器内无法交互登录）",
-                    "persistent-hint": True, "rows": 2
-                }}
-            ]}
-        ]})
-        content.append({"component": "VRow", "content": [
-            {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [
-                {"component": "VTextField", "props": {"model": "tg_max_messages", "label": "最大检索消息数", "placeholder": "200", "hint": "每个频道最多检索的历史消息条数", "persistent-hint": True}}
-            ]},
-            {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [
-                {"component": "VTextField", "props": {"model": "tg_proxy", "label": "TG 代理", "placeholder": "socks5://host:port", "hint": "可选；SOCKS 需另装 telethon[socks]", "persistent-hint": True}}
-            ]},
-            {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [
-                {"component": "VTextField", "props": {"model": "delay_seconds", "label": "触发延迟（秒）", "placeholder": "3", "hint": "订阅创建后等待多少秒再触发", "persistent-hint": True}}
-            ]},
-        ]})
-
-        # ===== 115 配置 =====
-        content.append({"component": "VRow", "content": [
-            {"component": "VCol", "props": {"cols": 12}, "content": [
-                {"component": "VTextarea", "props": {
-                    "model": "p115_cookie", "label": "115 Cookie",
-                    "hint": "用 115 客户端扫码登录后抓取，需含 UID/CID/SEID；网页版 Cookie 无法转存",
-                    "persistent-hint": True, "rows": 2
-                }}
-            ]}
-        ]})
-        content.append({"component": "VRow", "content": [
-            {"component": "VCol", "props": {"cols": 12, "md": 6}, "content": [
-                {"component": "VTextField", "props": {"model": "p115_target", "label": "115 转存目标目录", "placeholder": "/电影", "hint": "如 /电影；不存在会自动创建；也可填数字 cid", "persistent-hint": True}}
-            ]},
-        ]})
-
-        # ===== 通知 =====
-        content.append({"component": "VRow", "content": [
-            {"component": "VCol", "props": {"cols": 12, "md": 6}, "content": [
-                {"component": "VSwitch", "props": {"model": "notify_success", "label": "转存成功通知", "color": "primary"}}
-            ]},
-            {"component": "VCol", "props": {"cols": 12, "md": 6}, "content": [
-                {"component": "VSwitch", "props": {"model": "notify_fail", "label": "未命中/失败通知", "color": "primary"}}
-            ]},
-        ]})
-
-        # 默认值
-        defaults: Dict[str, Any] = {
-            "enabled": False, "tg_api_id": "", "tg_api_hash": "", "tg_session": "",
-            "tg_max_messages": 200, "tg_proxy": "", "p115_cookie": "", "p115_target": "/电影",
-            "use_rule_groups": True, "delay_seconds": 3, "notify_success": True, "notify_fail": False,
-            "new_ch_name": "", "new_ch_id": "", "import_json": "",
-        }
-        for i, ch in enumerate(channels):
-            defaults[f"ch_{i}_name"] = ch["name"]
-            defaults[f"ch_{i}_id"] = ch["id"]
-            defaults[f"ch_{i}_enabled"] = ch.get("enabled", True)
-            defaults[f"ch_{i}_delete"] = False
-
-        return [{"component": "VForm", "content": content}], defaults
-
-    def stop_service(self):
-        """停止插件：清理运行态。守护线程为 daemon，随主进程退出。"""
-        with self._lock:
-            self._running_ids.clear()
