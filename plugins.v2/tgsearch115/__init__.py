@@ -49,12 +49,12 @@ class TgSearch115(_PluginBase):
     """订阅新增 -> TG 频道搜索 115 -> 转存 -> 完成订阅；失败平滑回退。"""
 
     # 插件元信息
-    plugin_name = "TG频道搜索115优先转存"
+    plugin_name = "拦截mp订阅"
     plugin_desc = (
         "订阅新增时优先到指定 Telegram 频道搜索 115 资源，命中并转存成功后自动完成订阅；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "1.0.1"
+    plugin_version = "1.0.2"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"

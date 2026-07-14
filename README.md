@@ -1,10 +1,10 @@
-# TG频道搜索115优先转存 (tgsearch115)
+# 拦截mp订阅 (tgsearch115)
 
 MoviePilot 插件：**订阅新增时优先到指定 Telegram 频道搜索 115 网盘资源**，命中并转存成功后自动完成订阅；未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。
 
 ## 安装方式
 
-将本仓库地址加入 MoviePilot 的 `PLUGIN_MARKET` 环境变量（逗号分隔），重启后在「插件」页面搜索 "TG频道搜索115优先转存" 并安装。
+将本仓库地址加入 MoviePilot 的 `PLUGIN_MARKET` 环境变量（逗号分隔），重启后在「插件」页面搜索 "拦截mp订阅" 并安装。
 
 ```yaml
 environment:
