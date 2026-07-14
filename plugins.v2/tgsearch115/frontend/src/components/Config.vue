@@ -59,11 +59,7 @@
             <v-btn color="primary" variant="flat" :loading="saving" prepend-icon="mdi-refresh" @click="saveAll">
               {{ loginOk ? '更新凭证' : '登录' }}
             </v-btn>
-            <v-tooltip text="扫码登录（功能开发中）" location="top">
-              <template #activator="{ props: p }">
-                <v-btn v-bind="p" variant="outlined" prepend-icon="mdi-qrcode-scan" disabled>扫码登录</v-btn>
-              </template>
-            </v-tooltip>
+            <v-btn variant="outlined" prepend-icon="mdi-qrcode-scan" @click="openQrcode">扫码登录</v-btn>
           </v-col>
         </v-row>
       </v-card-text>
@@ -303,6 +299,41 @@
       </v-card>
     </v-dialog>
 
+    <!-- 115 扫码登录弹窗 -->
+    <v-dialog v-model="qrDialog" max-width="420" @update:model-value="onQrDialogToggle">
+      <v-card rounded="lg">
+        <v-card-title class="d-flex align-center px-4 py-3">
+          <v-icon icon="mdi-qrcode-scan" class="mr-2" />115 扫码登录
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="px-4 py-4 text-center">
+          <v-select
+            v-model="qrApp"
+            :items="qrApps"
+            label="登录端"
+            density="compact"
+            variant="outlined"
+            hide-details
+            class="mb-3 text-left"
+            @update:model-value="refreshQrcode"
+          />
+          <div v-if="qrData.qrcode_url" class="d-flex justify-center mb-3">
+            <img :src="qrData.qrcode_url" alt="115 二维码" style="max-width: 220px; width: 100%;" />
+          </div>
+          <div class="d-flex align-center justify-center">
+            <v-progress-circular v-if="qrPolling" indeterminate size="18" width="2" class="mr-2" />
+            <span class="text-body-2 text-medium-emphasis">{{ qrMsg || '请使用 115 客户端扫码' }}</span>
+          </div>
+        </v-card-text>
+        <v-divider />
+        <v-card-actions class="px-4 py-3">
+          <v-btn variant="text" prepend-icon="mdi-refresh" @click="refreshQrcode">刷新二维码</v-btn>
+          <v-spacer />
+          <v-btn variant="text" @click="closeQrcode">关闭</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <v-snackbar v-model="snackModel" :color="snackColor" location="top right" timeout="2500">
       {{ snackText }}
     </v-snackbar>
@@ -350,6 +381,15 @@ const importDialog = ref(false)
 const importJson = ref('')
 const deleteDialog = ref(false)
 const pendingDelete = ref(null)
+
+// 115 扫码登录
+const qrDialog = ref(false)
+const qrApps = ['web', 'tv', 'ipad', 'android', 'ios', 'alipaymini']
+const qrApp = ref('web')
+const qrData = reactive({ uid: '', time: '', sign: '', qrcode_url: '', app: 'web' })
+const qrMsg = ref('')
+const qrPolling = ref(false)
+let qrTimer = null
 
 const snackModel = ref(false)
 const snackText = ref('')
@@ -409,9 +449,83 @@ onMounted(async () => {
     applyConfig(props.initialConfig)
     return
   }
+  await loadConfig()
+})
+
+async function loadConfig() {
   const data = await apiGet('/config/get')
   if (data) applyConfig(data)
-})
+}
+
+/* --------------------------- 115 扫码登录 --------------------------- */
+async function openQrcode() {
+  qrDialog.value = true
+  await refreshQrcode()
+}
+async function refreshQrcode() {
+  stopQrPoll()
+  qrMsg.value = '正在获取二维码…'
+  qrData.qrcode_url = ''
+  const res = await apiGet(`/qrcode/get?app=${encodeURIComponent(qrApp.value)}`)
+  if (res && res.success) {
+    qrData.uid = res.uid
+    qrData.time = res.time
+    qrData.sign = res.sign
+    qrData.app = res.app
+    qrData.qrcode_url = res.qrcode_url
+    qrMsg.value = '请使用 115 客户端扫码'
+    startQrPoll()
+  } else {
+    qrMsg.value = (res && res.message) || '获取二维码失败'
+  }
+}
+function startQrPoll() {
+  stopQrPoll()
+  qrPolling.value = true
+  const poll = async () => {
+    if (!qrDialog.value || !qrData.uid) {
+      stopQrPoll()
+      return
+    }
+    const res = await apiGet(
+      `/qrcode/status?uid=${encodeURIComponent(qrData.uid)}&time=${encodeURIComponent(qrData.time)}`
+      + `&sign=${encodeURIComponent(qrData.sign)}&app=${encodeURIComponent(qrData.app)}`,
+    )
+    if (!res) {
+      qrTimer = setTimeout(poll, 3000)
+      return
+    }
+    qrMsg.value = res.msg || ''
+    if (res.login_ok) {
+      stopQrPoll()
+      snack('115 扫码登录成功')
+      qrDialog.value = false
+      await loadConfig()
+      return
+    }
+    if (res.status < 0) {
+      // 过期 / 取消，停止轮询，用户可点「刷新二维码」
+      stopQrPoll()
+      return
+    }
+    qrTimer = setTimeout(poll, 2000)
+  }
+  qrTimer = setTimeout(poll, 1500)
+}
+function stopQrPoll() {
+  qrPolling.value = false
+  if (qrTimer) {
+    clearTimeout(qrTimer)
+    qrTimer = null
+  }
+}
+function closeQrcode() {
+  stopQrPoll()
+  qrDialog.value = false
+}
+function onQrDialogToggle(v) {
+  if (!v) stopQrPoll()
+}
 
 /* --------------------------- 保存 --------------------------- */
 async function saveAll() {

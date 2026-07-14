@@ -52,6 +52,39 @@
 - 配置持久化改用 ``self.get_data("config")`` / ``self.save_data("config", ...)``
   （PluginData 表，自动 JSON 序列化），不再使用 VForm 的 update_config。
 """
+# ============================ 依赖动态静默安装 ============================
+# MoviePilot 运行在 Docker 容器内，容器重启后手动 pip 安装的第三方依赖会丢失。
+# 这里在导入业务包之前检测 p115client / telethon，缺失则用当前解释器静默安装，
+# 实现「开箱即用」。安装失败不阻断插件加载（业务模块均为懒导入，缺依赖时仅在
+# 实际调用时报错并由上层捕获后平滑回退，不影响 MoviePilot 主流程）。
+import subprocess as _subprocess
+import sys as _sys
+
+
+def _ensure_deps() -> None:
+    missing = []
+    for _mod, _pkg in (("p115client", "p115client"), ("telethon", "telethon")):
+        try:
+            __import__(_mod)
+        except ImportError:
+            missing.append(_pkg)
+    if not missing:
+        return
+    try:
+        _subprocess.run(
+            [_sys.executable, "-m", "pip", "install", *missing],
+            check=False,
+            stdout=_subprocess.DEVNULL,
+            stderr=_subprocess.DEVNULL,
+            timeout=600,
+        )
+    except Exception:
+        # 安装失败不抛出，避免影响 MoviePilot 插件加载
+        pass
+
+
+_ensure_deps()
+
 import json
 import threading
 import time
@@ -76,6 +109,104 @@ from .tg_searcher import TgChannelSearcher
 CONFIG_KEY = "config"
 
 
+# ============================ 115 扫码登录（直连稳定 115 二维码接口） ============================
+# 说明：p115client 的扫码方法散落在 p115qrcode 子包（非 pip 安装内容）与 client 类方法
+# 之间，随版本变化较大、 import 路径不稳定。为「最稳妥、不易报错」，这里直连 115 官方
+# 稳定的二维码接口（与 p115client.p115qrcode 走的是同一组 URL），仅用标准库 urllib，
+# 无额外依赖，且不随 p115client 版本波动。流程：
+#   1) POST /api/1.0/web/1.0/token/            -> {uid, time, sign}
+#   2) GET  /api/1.0/web/1.0/qrcode?uid=<uid>  -> 二维码图片
+#   3) GET  /get/status/?uid=&time=&sign=      -> {status, msg}  (0等待 1已扫描 2已确认 -1过期)
+#   4) POST /app/1.0/<app>/1.0/login/qrcode/   -> 登录成功，返回含 UID/CID/SEID 的 Cookie
+import re as _re
+import urllib.parse as _urlparse
+import urllib.request as _urlreq
+
+_QR_BASE = "http://qrcodeapi.115.com"
+# 不同 app 的 User-Agent（与 p115client.p115qrcode.qrcode_result 一致）
+_QR_UA_MAP = {
+    "ios": "UPhone/1.0.0",
+    "qios": "OfficePhone/1.0.0",
+    "ipad": "UPad/1.0.0",
+    "qipad": "OfficePad/1.0.0",
+}
+
+
+def _qr_normalize_app(app: str) -> str:
+    """归一化 app 名（与 p115qrcode 一致）：desktop->web，ios/qios/ipad/qipad->ios。"""
+    a = (app or "web").strip().lower()
+    if a == "desktop":
+        return "web"
+    if a in ("ios", "qios", "ipad", "qipad"):
+        return "ios"
+    return a
+
+
+def _qr_request(method: str, path: str, params: dict = None, data: dict = None,
+                headers: dict = None, timeout: int = 20):
+    url = _QR_BASE + path
+    body = None
+    hdrs = {"User-Agent": "Mozilla/5.0 (MoviePilot-TgSearch115)"}
+    if headers:
+        hdrs.update(headers)
+    if params:
+        url = f"{url}?{_urlparse.urlencode(params)}"
+    if data is not None:
+        body = _urlparse.urlencode(data).encode("utf-8")
+        hdrs["Content-Type"] = "application/x-www-form-urlencoded"
+    req = _urlreq.Request(url, data=body, headers=hdrs, method=method)
+    with _urlreq.urlopen(req, timeout=timeout) as resp:
+        raw = resp.read().decode("utf-8", "replace")
+        set_cookie = resp.headers.get("Set-Cookie", "") or ""
+        return raw, set_cookie
+
+
+def _qr_token() -> dict:
+    """获取二维码 token：{uid, time, sign, ...}。"""
+    raw, _ = _qr_request("POST", "/api/1.0/web/1.0/token/")
+    return json.loads(raw)
+
+
+def _qr_image_data_url(uid: str) -> str:
+    """拉取二维码图片并转 data URL，避免前端 HTTPS 页面引用 HTTP 图片被混合内容拦截。"""
+    import base64
+    url = f"{_QR_BASE}/api/1.0/web/1.0/qrcode?uid={uid}"
+    req = _urlreq.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with _urlreq.urlopen(req, timeout=15) as resp:
+        return "data:image/png;base64," + base64.b64encode(resp.read()).decode("ascii")
+
+
+def _qr_status(uid: str, t: str, sign: str) -> dict:
+    """轮询扫码状态：{status, msg, ...}。status: 0等待 1已扫描 2已确认 -1过期 -2取消。"""
+    raw, _ = _qr_request("GET", "/get/status/",
+                         params={"uid": uid, "time": t, "sign": sign}, timeout=35)
+    return json.loads(raw)
+
+
+def _pick_uid_cid_seid(text: str) -> str:
+    """从任意文本（响应体 / Set-Cookie 头）提取 UID、CID、SEID，拼成标准 Cookie 串。"""
+    text = text or ""
+    found = {}
+    for k in ("UID", "CID", "SEID"):
+        m = _re.search(rf"\b{k}\s*=\s*([^;,\"\s]+)", text)
+        if m:
+            found[k] = m.group(1).strip()
+    if len(found) == 3:
+        return f"UID={found['UID']}; CID={found['CID']}; SEID={found['SEID']}"
+    return ""
+
+
+def _qr_result(uid: str, app: str) -> str:
+    """扫码确认后获取 Cookie（含 UID/CID/SEID），失败返回空串。"""
+    a = _qr_normalize_app(app)
+    ua = _QR_UA_MAP.get((app or "").strip().lower(), "Mozilla/5.0 (MoviePilot-TgSearch115)")
+    raw, set_cookie = _qr_request(
+        "POST", f"/app/1.0/{a}/1.0/login/qrcode/",
+        data={"account": uid}, headers={"User-Agent": ua}, timeout=15,
+    )
+    return _pick_uid_cid_seid(raw + "\n" + set_cookie)
+
+
 class TgSearch115(_PluginBase):
     """订阅新增 -> TG 频道搜索 115 -> 转存 -> 完成订阅；失败平滑回退。"""
 
@@ -85,7 +216,7 @@ class TgSearch115(_PluginBase):
         "订阅新增时优先到指定 Telegram 频道搜索 115 资源，命中并转存成功后自动完成订阅；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "2.0.0"
+    plugin_version = "2.1.0"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -107,6 +238,7 @@ class TgSearch115(_PluginBase):
     _tg_max_messages = 200
     _tg_proxy = ""
     _p115_cookie = ""
+    _p115_app = ""
     _p115_target = "/"
     _use_rule_groups = True
     _delay_seconds = 3
@@ -148,6 +280,7 @@ class TgSearch115(_PluginBase):
         self._tg_max_messages = self._safe_int(config.get("tg_max_messages"), 200)
         self._tg_proxy = config.get("tg_proxy") or ""
         self._p115_cookie = config.get("p115_cookie") or ""
+        self._p115_app = config.get("p115_app") or ""
         self._p115_target = config.get("p115_target") or "/"
         self._use_rule_groups = self._to_bool(config.get("use_rule_groups"), True)
         self._delay_seconds = self._safe_int(config.get("delay_seconds"), 3)
@@ -212,6 +345,20 @@ class TgSearch115(_PluginBase):
                 "endpoint": self.__check_all_api,
                 "methods": ["GET"],
                 "summary": "检查所有 TG 频道连通性",
+            },
+            {
+                "path": "/qrcode/get",
+                "endpoint": self.__qrcode_get_api,
+                "methods": ["GET"],
+                "summary": "获取 115 登录二维码",
+                "description": "GET /qrcode/get?app=web|tv|ipad|android|ios，返回二维码图片(data URL)及会话凭证",
+            },
+            {
+                "path": "/qrcode/status",
+                "endpoint": self.__qrcode_status_api,
+                "methods": ["GET"],
+                "summary": "轮询 115 扫码状态",
+                "description": "GET /qrcode/status?uid=&time=&sign=&app=，扫码成功时自动提取并保存 Cookie",
             },
         ]
 
@@ -532,6 +679,68 @@ class TgSearch115(_PluginBase):
             "results": results,
         })
 
+    # ---------------------------- 115 扫码登录 API ----------------------------
+    def __qrcode_get_api(self, app: str = "web"):
+        """GET /qrcode/get?app=...：获取 115 登录二维码及会话凭证。
+
+        ``app`` 为登录端类型（web/tv/ipad/android/ios/alipaymini 等），决定最终 Cookie
+        的设备归属。返回二维码图片（data URL，规避 HTTPS 混合内容）及 uid/time/sign。
+        """
+        from starlette.responses import JSONResponse
+        try:
+            token = _qr_token()
+            uid = str(token.get("uid", "") or "")
+            if not uid:
+                return JSONResponse({"success": False, "message": "115 未返回 uid"}, status_code=502)
+            return JSONResponse({
+                "success": True,
+                "uid": uid,
+                "time": token.get("time"),
+                "sign": token.get("sign"),
+                "app": _qr_normalize_app(app),
+                "qrcode_url": _qr_image_data_url(uid),
+            })
+        except Exception as e:
+            logger.error(f"【TG115】获取 115 二维码失败: {e}")
+            return JSONResponse({"success": False, "message": f"获取二维码失败: {e}"}, status_code=500)
+
+    def __qrcode_status_api(self, uid: str = "", time: str = "", sign: str = "", app: str = "web"):
+        """GET /qrcode/status?uid=&time=&sign=&app=：轮询扫码状态，成功则提取并保存 Cookie。
+
+        status: 0=等待扫码 1=已扫描待确认 2=已确认登录 -1=已过期 -2=已取消 -99=异常。
+        status==2 时调 ``_qr_result`` 取含 UID/CID/SEID 的 Cookie，写回配置并 ``init_plugin``
+        即时生效（重建 P115Transfer）。
+        """
+        from starlette.responses import JSONResponse
+        if not uid or not sign:
+            return JSONResponse({"status": -99, "msg": "缺少 uid/sign", "login_ok": False}, status_code=400)
+        _msg_map = {0: "等待扫码", 1: "已扫描，请在手机上确认", 2: "已确认登录",
+                    -1: "二维码已过期", -2: "已取消", -99: "异常"}
+        try:
+            resp = _qr_status(uid, str(time or ""), sign)
+            status = int(resp.get("status", -99))
+            result = {
+                "status": status,
+                "msg": resp.get("msg") or _msg_map.get(status, ""),
+                "login_ok": False,
+            }
+            if status == 2:
+                cookie = _qr_result(uid, app)
+                if _pick_uid_cid_seid(cookie):  # 校验含 UID/CID/SEID
+                    cfg = self.get_data(CONFIG_KEY) or self._default_config()
+                    cfg["p115_cookie"] = cookie
+                    cfg["p115_app"] = _qr_normalize_app(app)
+                    self.save_data(CONFIG_KEY, cfg)
+                    self.init_plugin(cfg)
+                    result["login_ok"] = True
+                    result["msg"] = "扫码登录成功，Cookie 已保存并生效"
+                else:
+                    result["msg"] = "扫码已确认但未提取到完整 Cookie（UID/CID/SEID）"
+            return JSONResponse(result)
+        except Exception as e:
+            logger.error(f"【TG115】查询 115 扫码状态失败: {e}")
+            return JSONResponse({"status": -99, "msg": f"状态查询失败: {e}", "login_ok": False}, status_code=500)
+
     # ============================ 依赖检查 ============================
     def _check_deps(self):
         missing = []
@@ -566,6 +775,7 @@ class TgSearch115(_PluginBase):
             "tg_max_messages": 200,
             "tg_proxy": "",
             "p115_cookie": "",
+            "p115_app": "",
             "p115_target": "/电影",
             "use_rule_groups": True,
             "delay_seconds": 3,
