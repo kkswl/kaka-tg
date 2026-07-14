@@ -165,6 +165,13 @@ async function loadConfig() {
   if (data) applyConfig(data);
 }
 
+/* 清空 115 Cookie 并立即保存（用于清掉残留/无效值） */
+function clearCookie() {
+  config.p115_cookie = '';
+  snack('Cookie 已清空，正在保存…');
+  saveAll();
+}
+
 /* --------------------------- 115 扫码登录 --------------------------- */
 async function openQrcode() {
   qrDialog.value = true;
@@ -389,8 +396,10 @@ return (_ctx, _cache) => {
                       hint: "需用 115 客户端扫码登录后抓取，必须包含 UID / CID / SEID（网页版 Cookie 无法转存）",
                       "persistent-hint": "",
                       "append-inner-icon": showSecrets.value ? 'mdi-eye-off' : 'mdi-eye',
-                      "onClick:appendInner": _cache[1] || (_cache[1] = $event => (showSecrets.value = !showSecrets.value))
-                    }, null, 8, ["modelValue", "type", "append-inner-icon"])
+                      "onClick:appendInner": _cache[1] || (_cache[1] = $event => (showSecrets.value = !showSecrets.value)),
+                      "append-outer-icon": config.p115_cookie ? 'mdi-close-circle' : undefined,
+                      "onClick:appendOuter": clearCookie
+                    }, null, 8, ["modelValue", "type", "append-inner-icon", "append-outer-icon"])
                   ]),
                   _: 1
                 }),
@@ -1128,6 +1137,6 @@ return (_ctx, _cache) => {
 }
 
 };
-const Config = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-afc027d6"]]);
+const Config = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-85ebf33c"]]);
 
 export { Config as default };

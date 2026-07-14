@@ -221,7 +221,7 @@ class TgSearch115(_PluginBase):
         "订阅新增时优先到指定 Telegram 频道搜索 115 资源，命中并转存成功后自动完成订阅；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "2.1.8"
+    plugin_version = "2.1.9"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -607,6 +607,8 @@ class TgSearch115(_PluginBase):
         """GET /config：返回当前配置（供自定义前端 Config.vue 读取）。"""
         from starlette.responses import JSONResponse
         config = self.get_data(CONFIG_KEY) or self._default_config()
+        ck = config.get("p115_cookie", "") if isinstance(config, dict) else ""
+        logger.info(f"【TG115】/config/get p115_cookie_len={len(ck or '')} valid={bool(_pick_uid_cid_seid(ck or ''))}")
         return JSONResponse(config)
 
     def __save_config_api(self, config: dict = Body(default=None)):

@@ -43,6 +43,8 @@
               persistent-hint
               :append-inner-icon="showSecrets ? 'mdi-eye-off' : 'mdi-eye'"
               @click:append-inner="showSecrets = !showSecrets"
+              :append-outer-icon="config.p115_cookie ? 'mdi-close-circle' : undefined"
+              @click:append-outer="clearCookie"
             />
           </v-col>
           <v-col cols="12" md="8">
@@ -471,6 +473,13 @@ onMounted(async () => {
 async function loadConfig() {
   const data = await apiGet('/config/get')
   if (data) applyConfig(data)
+}
+
+/* 清空 115 Cookie 并立即保存（用于清掉残留/无效值） */
+function clearCookie() {
+  config.p115_cookie = ''
+  snack('Cookie 已清空，正在保存…')
+  saveAll()
 }
 
 /* --------------------------- 115 扫码登录 --------------------------- */
