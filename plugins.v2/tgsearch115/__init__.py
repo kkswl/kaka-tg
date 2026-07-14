@@ -27,6 +27,7 @@
    静默 ``return``，**不删除、不修改订阅**，MoviePilot 默认的定时站点搜索照常进行。
 ================================================================================
 """
+import json
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -54,7 +55,7 @@ class TgSearch115(_PluginBase):
         "订阅新增时优先到指定 Telegram 频道搜索 115 资源，命中并转存成功后自动完成订阅；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "1.0.2"
+    plugin_version = "1.0.3"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -72,7 +73,7 @@ class TgSearch115(_PluginBase):
     _tg_api_id = 0
     _tg_api_hash = ""
     _tg_session = ""
-    _tg_channel = ""
+    _tg_channels = []
     _tg_max_messages = 200
     _tg_proxy = ""
     _p115_cookie = ""
@@ -90,7 +91,7 @@ class TgSearch115(_PluginBase):
         self._tg_api_id = self._safe_int(config.get("tg_api_id"), 0)
         self._tg_api_hash = config.get("tg_api_hash") or ""
         self._tg_session = config.get("tg_session") or ""
-        self._tg_channel = config.get("tg_channel") or ""
+        self._tg_channels = self._parse_channels(config.get("tg_channels"), config.get("tg_channel"))
         self._tg_max_messages = self._safe_int(config.get("tg_max_messages"), 200)
         self._tg_proxy = config.get("tg_proxy") or ""
         self._p115_cookie = config.get("p115_cookie") or ""
@@ -104,7 +105,7 @@ class TgSearch115(_PluginBase):
             api_id=self._tg_api_id,
             api_hash=self._tg_api_hash,
             session_string=self._tg_session,
-            channel=self._tg_channel,
+            channels=self._tg_channels,
             max_messages=self._tg_max_messages,
             proxy=self._tg_proxy,
         )
@@ -373,7 +374,7 @@ class TgSearch115(_PluginBase):
             if not ok:
                 logger.warn(f"【TG115】115 Cookie 校验: {msg}")
         if self._searcher and not self._searcher.is_ready():
-            logger.warn("【TG115】TG 搜索配置不完整（需要 api_id/api_hash/session/channel）")
+            logger.warn("【TG115】TG 搜索配置不完整（需要 api_id/api_hash/session/频道列表）")
 
     # ============================ 静态工具 ============================
     @staticmethod
@@ -390,6 +391,39 @@ class TgSearch115(_PluginBase):
         if isinstance(v, bool):
             return v
         return str(v).lower() in ("1", "true", "yes", "on")
+
+    @staticmethod
+    def _parse_channels(raw: Any, legacy_single: Any = None) -> List[Dict[str, str]]:
+        """解析 TG 频道列表 JSON。
+
+        支持格式：[{"name": "频道1", "id": "@xxx"}, ...] 或 ["@xxx", ...]；
+        兼容旧的单频道字符串配置（legacy_single）。
+        """
+        channels: List[Dict[str, str]] = []
+        text = (str(raw) if raw is not None else "").strip()
+        if text:
+            try:
+                data = json.loads(text)
+            except Exception as e:
+                logger.warn(f"【TG115】TG 频道列表 JSON 解析失败：{e}")
+                data = None
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict):
+                        cid = str(item.get("id") or item.get("channel") or "").strip()
+                        cname = str(item.get("name") or "").strip() or cid
+                        if cid:
+                            channels.append({"name": cname, "id": cid})
+                    elif isinstance(item, str):
+                        item = item.strip()
+                        if item:
+                            channels.append({"name": item, "id": item})
+        # 兼容旧的单频道字段
+        if not channels and legacy_single:
+            ls = str(legacy_single).strip()
+            if ls:
+                channels.append({"name": ls, "id": ls})
+        return channels
 
     # ============================ 插件接口 ============================
     def get_state(self) -> bool:
@@ -438,42 +472,56 @@ class TgSearch115(_PluginBase):
                     ]},
                     # Telegram 配置
                     {"component": "VRow", "content": [
-                        {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [
-                            {"component": "VTextField", "props": {"model": "tg_api_id", "label": "TG API ID"}}
-                        ]},
-                        {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [
-                            {"component": "VTextField", "props": {"model": "tg_api_hash", "label": "TG API Hash"}}
-                        ]},
-                        {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [
+                        {"component": "VCol", "props": {"cols": 12, "md": 6}, "content": [
                             {"component": "VTextField", "props": {
-                                "model": "tg_channel",
-                                "label": "TG 频道（@username/链接/ID）"
+                                "model": "tg_api_id", "label": "TG API ID",
+                                "hint": "在 https://my.telegram.org 申请的 API ID（数字）", "persistent-hint": True
+                            }}
+                        ]},
+                        {"component": "VCol", "props": {"cols": 12, "md": 6}, "content": [
+                            {"component": "VTextField", "props": {
+                                "model": "tg_api_hash", "label": "TG API Hash",
+                                "hint": "在 https://my.telegram.org 申请的 API Hash", "persistent-hint": True
                             }}
                         ]},
                     ]},
                     {"component": "VRow", "content": [
                         {"component": "VCol", "props": {"cols": 12}, "content": [
                             {"component": "VTextarea", "props": {
+                                "model": "tg_channels",
+                                "label": "TG 频道列表（JSON，支持多个频道）",
+                                "hint": "格式：[{\"name\": \"频道1\", \"id\": \"@用户名或邀请链接或数字ID\"}, {\"name\": \"频道2\", \"id\": \"...\"}]；账号需已加入对应频道",
+                                "persistent-hint": True, "rows": 3
+                            }}
+                        ]}
+                    ]},
+                    {"component": "VRow", "content": [
+                        {"component": "VCol", "props": {"cols": 12}, "content": [
+                            {"component": "VTextarea", "props": {
                                 "model": "tg_session",
-                                "label": "TG Session String（Telethon User Session，用 gen_tg_session.py 本地生成）",
-                                "rows": 2
+                                "label": "TG Session String",
+                                "hint": "用 gen_tg_session.py 在本地电脑生成后粘贴（容器内无法交互登录）",
+                                "persistent-hint": True, "rows": 2
                             }}
                         ]}
                     ]},
                     {"component": "VRow", "content": [
                         {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [
                             {"component": "VTextField", "props": {
-                                "model": "tg_max_messages", "label": "最大检索消息数", "placeholder": "200"
+                                "model": "tg_max_messages", "label": "最大检索消息数", "placeholder": "200",
+                                "hint": "每个频道最多检索的历史消息条数", "persistent-hint": True
                             }}
                         ]},
                         {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [
                             {"component": "VTextField", "props": {
-                                "model": "tg_proxy", "label": "TG 代理（可选 socks5://host:port）"
+                                "model": "tg_proxy", "label": "TG 代理", "placeholder": "socks5://host:port",
+                                "hint": "可选，连接 Telegram 的代理；SOCKS 需另装 telethon[socks]", "persistent-hint": True
                             }}
                         ]},
                         {"component": "VCol", "props": {"cols": 12, "md": 4}, "content": [
                             {"component": "VTextField", "props": {
-                                "model": "delay_seconds", "label": "触发延迟（秒，留编辑窗口）", "placeholder": "3"
+                                "model": "delay_seconds", "label": "触发延迟（秒）", "placeholder": "3",
+                                "hint": "订阅创建后等待多少秒再触发，留出编辑订阅的时间窗口", "persistent-hint": True
                             }}
                         ]},
                     ]},
@@ -482,15 +530,17 @@ class TgSearch115(_PluginBase):
                         {"component": "VCol", "props": {"cols": 12}, "content": [
                             {"component": "VTextarea", "props": {
                                 "model": "p115_cookie",
-                                "label": "115 Cookie（扫码客户端 Cookie，需含 UID/CID/SEID）",
-                                "rows": 2
+                                "label": "115 Cookie",
+                                "hint": "用 115 客户端扫码登录后抓取，需含 UID/CID/SEID；网页版 Cookie 无法转存",
+                                "persistent-hint": True, "rows": 2
                             }}
                         ]}
                     ]},
                     {"component": "VRow", "content": [
                         {"component": "VCol", "props": {"cols": 12, "md": 6}, "content": [
                             {"component": "VTextField", "props": {
-                                "model": "p115_target", "label": "115 转存目标目录（路径或 cid）", "placeholder": "/电影"
+                                "model": "p115_target", "label": "115 转存目标目录", "placeholder": "/电影",
+                                "hint": "如 /电影；不存在会自动创建；也可填目录数字 cid", "persistent-hint": True
                             }}
                         ]},
                     ]},
@@ -514,7 +564,7 @@ class TgSearch115(_PluginBase):
             "tg_api_id": "",
             "tg_api_hash": "",
             "tg_session": "",
-            "tg_channel": "",
+            "tg_channels": '[{"name": "频道1", "id": ""}]',
             "tg_max_messages": 200,
             "tg_proxy": "",
             "p115_cookie": "",
