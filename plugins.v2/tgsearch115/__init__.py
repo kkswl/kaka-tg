@@ -227,6 +227,20 @@ class TgSearch115(_PluginBase):
         """详情页由自定义 Vue 前端（Page.vue）接管，这里返回空桩。"""
         return []
 
+    @staticmethod
+    def get_render_mode() -> Tuple[str, Optional[str]]:
+        """声明使用自定义 Vue 前端渲染配置页/详情页。
+
+        MoviePilot 通过 ``plugin.get_render_mode()`` 判断插件是否使用 Vue 自定义前端：
+        返回 ``("vue", dist_path)`` 时，MP 会把本插件登记进 ``plugin/remotes``，
+        前端再经 Module Federation 加载 ``{dist_path}/remoteEntry.js`` 暴露的
+        Config / Page 组件；否则回退到 ``get_form()``（本插件返回空，故表现为空白）。
+
+        ``dist_path`` 为 remoteEntry.js 所在目录（相对插件目录）。本插件构建产物在
+        ``frontend/dist/assets/remoteEntry.js``，故返回 ``frontend/dist/assets``。
+        """
+        return "vue", "frontend/dist/assets"
+
     def stop_service(self):
         """停止插件：清理运行态。守护线程为 daemon，随主进程退出。"""
         with self._lock:
