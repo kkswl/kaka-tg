@@ -82,17 +82,17 @@ const qrDialog = ref(false);
 const qrApps = [
   { title: '115 网页端', value: 'web' },
   { title: '115生活_苹果端', value: 'ios' },
-  { title: '115网盘_苹果端', value: '115ios' },
+  { title: '115_苹果端', value: '115ios' },
   { title: '115生活_安卓端', value: 'android' },
-  { title: '115网盘_安卓端', value: '115android' },
+  { title: '115_安卓端', value: '115android' },
   { title: '115生活_苹果平板端', value: 'ipad' },
-  { title: '115网盘_苹果平板端', value: '115ipad' },
+  { title: '115_苹果平板端', value: '115ipad' },
   { title: '115生活_TV端', value: 'tv' },
-  { title: '115生活_Windows端', value: 'windows' },
-  { title: '115生活_macOS端', value: 'mac' },
-  { title: '115生活_Linux端', value: 'linux' },
+  { title: '115生活_Windows端', value: 'os_windows' },
+  { title: '115生活_macOS端', value: 'os_mac' },
+  { title: '115生活_Linux端', value: 'os_linux' },
   { title: '115生活_微信小程序端', value: 'wechatmini' },
-  { title: '115生活_支付宝小程序端', value: 'alipaymini' },
+  { title: '115生活_支付宝小程序', value: 'alipaymini' },
   { title: '115_鸿蒙端', value: 'harmony' },
 ];
 const qrApp = ref('web');
@@ -1127,6 +1127,6 @@ return (_ctx, _cache) => {
 }
 
 };
-const Config = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-853b8362"]]);
+const Config = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-1d15afb5"]]);
 
 export { Config as default };
