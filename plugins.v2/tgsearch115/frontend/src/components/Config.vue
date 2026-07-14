@@ -35,12 +35,14 @@
           <v-col cols="12">
             <v-text-field
               v-model="config.p115_cookie"
-              type="text"
-              label="115 Cookie（明文显示）"
+              :type="showSecrets ? 'text' : 'password'"
+              label="115 Cookie"
               variant="outlined"
               density="comfortable"
-              hint="扫码登录后自动填入；明文显示以便核对。格式应为 UID=...; CID=...; SEID=..."
+              hint="扫码登录后自动填入；点右侧眼睛可临时显示核对。格式应为 UID=...; CID=...; SEID=..."
               persistent-hint
+              :append-inner-icon="showSecrets ? 'mdi-eye-off' : 'mdi-eye'"
+              @click:append-inner="showSecrets = !showSecrets"
               :append-outer-icon="config.p115_cookie ? 'mdi-close-circle' : undefined"
               @click:append-outer="clearCookie"
             />
@@ -374,7 +376,7 @@ const DEFAULTS = {
 const config = reactive({ ...DEFAULTS })
 const channels = ref([])
 const activeTab = ref('bot')
-const showSecrets = ref(true)
+const showSecrets = ref(false)
 const saving = ref(false)
 
 const newName = ref('')
