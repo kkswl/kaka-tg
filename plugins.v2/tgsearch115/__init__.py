@@ -90,6 +90,8 @@ import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+from fastapi import Body
+
 from app.core.config import settings
 from app.chain.subscribe import SubscribeChain, build_subscribe_meta
 from app.core.context import MediaInfo, TorrentInfo
@@ -219,7 +221,7 @@ class TgSearch115(_PluginBase):
         "订阅新增时优先到指定 Telegram 频道搜索 115 资源，命中并转存成功后自动完成订阅；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "2.1.7"
+    plugin_version = "2.1.8"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -607,47 +609,25 @@ class TgSearch115(_PluginBase):
         config = self.get_data(CONFIG_KEY) or self._default_config()
         return JSONResponse(config)
 
-    def __save_config_api(self, config: Any = None, **kwargs):
+    def __save_config_api(self, config: dict = Body(default=None)):
         """POST /config/save：保存配置并即时生效。
 
-        MoviePilot 前端通过 ``props.api.post('plugin/{id}/config/save', configDict)``
-        以 JSON body 提交。不同 MP 版本的插件路由对 body 的注入方式存在差异，本方法
-        做最大兼容，可接收以下任一形态：
-          1) 整个 body 即配置字典：``{"enabled": true, ...}``（注入到 config）
-          2) body 字段按名展开为 kwargs：``config=None, enabled=True, ...``
-          3) body 包裹一层：``{"config": {"enabled": true, ...}}``
-          4) query 字符串形式的 JSON：``?config=<urlencoded json>``
+        使用 FastAPI ``Body`` 显式声明 ``config`` 取自请求体（与官方插件 agenttokens
+        的 save_config_api 一致），避免 ``Any`` / ``**kwargs`` 导致 FastAPI 422。
         """
         from starlette.responses import JSONResponse
-
-        # 形态 2：字段展开为 kwargs
-        if not config and kwargs:
-            config = dict(kwargs)
-        # 形态 4：JSON 字符串
-        if isinstance(config, str):
-            try:
-                config = json.loads(config)
-            except Exception:
-                config = None
         if not isinstance(config, dict) or not config:
-            return JSONResponse(
-                {"success": False, "message": "配置数据无效"},
-                status_code=400,
-            )
-        # 形态 3：解包 {"config": {...}}
+            return JSONResponse({"success": False, "message": "配置数据无效"}, status_code=400)
+        # 兼容 {"config": {...}} 包裹
         if isinstance(config.get("config"), dict) and len(config) == 1:
             config = config["config"]
-
         try:
             self.save_data(CONFIG_KEY, config)
             self.init_plugin(config)
             return JSONResponse({"success": True, "message": "配置已保存并生效"})
         except Exception as e:
             logger.error(f"【TG115】保存配置失败: {e}")
-            return JSONResponse(
-                {"success": False, "message": f"保存失败: {e}"},
-                status_code=500,
-            )
+            return JSONResponse({"success": False, "message": f"保存失败: {e}"}, status_code=500)
 
     def __check_channel_api(self, index: int = -1):
         """GET /check_channel?index=N：检查指定 TG 频道连通性。"""
