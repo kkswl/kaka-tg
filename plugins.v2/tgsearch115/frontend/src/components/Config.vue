@@ -136,7 +136,7 @@
                     <div class="text-caption text-medium-emphasis mt-1" style="white-space: pre-wrap; max-height: 4.5em; overflow: hidden;">{{ r.text || r.title }}</div>
                     <div class="text-caption text-medium-emphasis mt-1">{{ r.channel }}<span v-if="r.pub_date"> · {{ r.pub_date }}</span></div>
                   </div>
-                  <v-btn color="primary" variant="tonal" size="small" prepend-icon="mdi-cloud-download" :loading="transferLoading" @click="transferFromSearch(r.share_url)" class="ml-2 mt-1">转存</v-btn>
+                  <v-btn color="primary" variant="tonal" size="small" prepend-icon="mdi-cloud-download" :loading="transferringIndex === i" @click="transferFromSearch(r.share_url, i)" class="ml-2 mt-1">转存</v-btn>
                 </div>
               </div>
             </v-card>
@@ -486,6 +486,7 @@ const searchLoading = ref(false)
 const searchResults = ref([])
 const searched = ref(false)
 const displayLimit = ref(3)
+const transferringIndex = ref(-1)  // 正在转存的结果索引（-1=无）
 // 115 目录查询/浏览
 const dirInfoName = ref('')
 const dirBrowserOpen = ref(false)
@@ -718,9 +719,11 @@ async function doTransfer() {
     transferResult.value = { success: false, message: '转存请求失败' }
   }
 }
-async function transferFromSearch(url) {
+async function transferFromSearch(url, index) {
+  transferringIndex.value = index
   transferUrl.value = url
   await doTransfer()
+  transferringIndex.value = -1
 }
 async function doSearch() {
   const kw = (searchKeyword.value || '').trim()
@@ -829,6 +832,15 @@ function addChannel() {
     snack('请填写频道 ID / 链接', 'warning')
     return
   }
+  // 查重：频道 ID 已存在则拒绝
+  const normalized = id.replace(/^@/, '').toLowerCase().trim()
+  for (const ch of channels.value) {
+    const existing = (ch.id || '').replace(/^@/, '').toLowerCase().trim()
+    if (existing === normalized) {
+      snack('该频道已存在，不可重复添加', 'warning')
+      return
+    }
+  }
   channels.value.push({ uid: ++_uid, name: (newName.value || '').trim() || id, id, enabled: true })
   newName.value = ''
   newId.value = ''
@@ -924,9 +936,18 @@ function confirmImport() {
     snack('未解析到有效频道', 'warning')
     return
   }
-  channels.value.push(...parsed)
+  // 查重：只导入不重复的
+  const existingIds = new Set(channels.value.map(ch => (ch.id || '').replace(/^@/, '').toLowerCase().trim()))
+  const unique = parsed.filter(p => {
+    const norm = (p.id || '').replace(/^@/, '').toLowerCase().trim()
+    if (existingIds.has(norm)) return false
+    existingIds.add(norm)
+    return true
+  })
+  const skipped = parsed.length - unique.length
+  channels.value.push(...unique)
   importDialog.value = false
-  snack(`已导入 ${parsed.length} 个频道，正在保存…`)
+  snack(`已导入 ${unique.length} 个频道` + (skipped ? `（跳过 ${skipped} 个重复）` : '') + '，正在保存…')
   saveAll()
 }
 </script>

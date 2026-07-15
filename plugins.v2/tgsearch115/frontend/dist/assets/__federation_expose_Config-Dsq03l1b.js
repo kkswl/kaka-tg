@@ -151,6 +151,7 @@ const searchLoading = ref(false);
 const searchResults = ref([]);
 const searched = ref(false);
 const displayLimit = ref(3);
+const transferringIndex = ref(-1);  // 正在转存的结果索引（-1=无）
 // 115 目录查询/浏览
 const dirInfoName = ref('');
 const dirBrowserOpen = ref(false);
@@ -383,9 +384,11 @@ async function doTransfer() {
     transferResult.value = { success: false, message: '转存请求失败' };
   }
 }
-async function transferFromSearch(url) {
+async function transferFromSearch(url, index) {
+  transferringIndex.value = index;
   transferUrl.value = url;
   await doTransfer();
+  transferringIndex.value = -1;
 }
 async function doSearch() {
   const kw = (searchKeyword.value || '').trim();
@@ -494,6 +497,15 @@ function addChannel() {
     snack('请填写频道 ID / 链接', 'warning');
     return
   }
+  // 查重：频道 ID 已存在则拒绝
+  const normalized = id.replace(/^@/, '').toLowerCase().trim();
+  for (const ch of channels.value) {
+    const existing = (ch.id || '').replace(/^@/, '').toLowerCase().trim();
+    if (existing === normalized) {
+      snack('该频道已存在，不可重复添加', 'warning');
+      return
+    }
+  }
   channels.value.push({ uid: ++_uid, name: (newName.value || '').trim() || id, id, enabled: true });
   newName.value = '';
   newId.value = '';
@@ -589,9 +601,18 @@ function confirmImport() {
     snack('未解析到有效频道', 'warning');
     return
   }
-  channels.value.push(...parsed);
+  // 查重：只导入不重复的
+  const existingIds = new Set(channels.value.map(ch => (ch.id || '').replace(/^@/, '').toLowerCase().trim()));
+  const unique = parsed.filter(p => {
+    const norm = (p.id || '').replace(/^@/, '').toLowerCase().trim();
+    if (existingIds.has(norm)) return false
+    existingIds.add(norm);
+    return true
+  });
+  const skipped = parsed.length - unique.length;
+  channels.value.push(...unique);
   importDialog.value = false;
-  snack(`已导入 ${parsed.length} 个频道，正在保存…`);
+  snack(`已导入 ${unique.length} 个频道` + (skipped ? `（跳过 ${skipped} 个重复）` : '') + '，正在保存…');
   saveAll();
 }
 
@@ -976,8 +997,8 @@ return (_ctx, _cache) => {
                                     variant: "tonal",
                                     size: "small",
                                     "prepend-icon": "mdi-cloud-download",
-                                    loading: transferLoading.value,
-                                    onClick: $event => (transferFromSearch(r.share_url)),
+                                    loading: transferringIndex.value === i,
+                                    onClick: $event => (transferFromSearch(r.share_url, i)),
                                     class: "ml-2 mt-1"
                                   }, {
                                     default: _withCtx(() => [...(_cache[43] || (_cache[43] = [
@@ -1801,6 +1822,6 @@ return (_ctx, _cache) => {
 }
 
 };
-const Config = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-ca1be09f"]]);
+const Config = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-bce291eb"]]);
 
 export { Config as default };
