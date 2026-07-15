@@ -225,7 +225,7 @@ class TgSearch115(_PluginBase):
         "订阅新增时优先到指定 Telegram 频道搜索 115 资源，命中并转存成功后自动完成订阅；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.1.1"
+    plugin_version = "4.1.2"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -1035,8 +1035,10 @@ class TgSearch115(_PluginBase):
             if isinstance(data, list) and data:
                 data = data[0]
             if isinstance(data, dict):
-                name = data.get("name") or data.get("n") or ""
-                return JSONResponse({"success": True, "name": name, "cid": str(data.get("cid", cid))})
+                # proapi 用 file_name/file_id，webapi 用 name/n/cid，都兼容
+                name = data.get("file_name") or data.get("name") or data.get("n") or ""
+                c = data.get("file_id") or data.get("cid") or cid
+                return JSONResponse({"success": True, "name": name, "cid": str(c)})
             return JSONResponse({"success": False, "message": "未找到该 cid 对应的目录"})
         except Exception as e:
             logger.error(f"【TG115】查询目录信息失败: {e}")

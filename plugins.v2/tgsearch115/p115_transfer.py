@@ -6,12 +6,13 @@
 （拖一堆传递依赖），在 Docker 内 ``pip install`` 很慢、拖慢插件加载。本模块改用
 ``httpx``（tg_scraper/site_scraper 已依赖，轻量）直连 115 Web API，零额外依赖。
 
-调用端点（Cookie 鉴权，与 p115client 内部走的同一组 webapi.115.com 接口）：
-  - 转存：GET  /share/snap?share_code=&receive_code=&cid=0  -> 取 file_id
-         POST /share/receive  (form: share_code,receive_code,file_id,cid,user_id)
-  - 列目录/验证 Cookie：GET /files?cid={cid}&limit=50
-  - 目录名：GET /file?file_id={cid}
-  - 建目录：POST /files/add  (form: pid, name)
+调用端点（Cookie 鉴权；转存/列目录用 webapi.115.com，目录名/建目录用 proapi 开放 API，
+均与 p115client 内部端点逐一核对一致）：
+  - 转存：GET  webapi /share/snap?share_code=&receive_code=&cid=0  -> 取 file_id
+         POST webapi /share/receive  (form: share_code,receive_code,file_id,cid,user_id)
+  - 列目录/验证 Cookie：GET webapi /files?cid={cid}&limit=50  (返回 cid/n/sha1)
+  - 目录名：GET proapi /open/folder/get_info?file_id={cid}
+  - 建目录：POST proapi /open/folder/add  (form: file_name, pid)
 """
 import re
 from typing import Any, Dict, Optional, Tuple
@@ -25,6 +26,7 @@ class P115Transfer:
 
     CLIENT_COOKIE_REQUIRED_KEYS = {"UID", "CID", "SEID"}
     _API = "https://webapi.115.com"
+    _PROAPI = "https://proapi.115.com"  # 开放 API（与 p115client 的 fs_info/fs_mkdir 一致）
 
     def __init__(self, cookie: str = "", default_target_path: str = "/") -> None:
         self.cookie = self._normalize(cookie)
@@ -151,8 +153,9 @@ class P115Transfer:
         return self._api_get("/files", {"cid": str(cid or 0), "limit": 50, "offset": 0})
 
     def fs_info(self, cid: Any) -> Dict[str, Any]:
-        """查某 cid 的信息（GET /file?file_id=）。返回 115 原始 JSON dict。"""
-        return self._api_get("/file", {"file_id": str(cid)})
+        """查某 cid 的信息（GET proapi /open/folder/get_info?file_id=，与 p115client 一致）。
+        返回 115 原始 JSON dict。"""
+        return self._api_get("/open/folder/get_info", {"file_id": str(cid)}, base=self._PROAPI)
 
     # ============================ 内部工具 ============================
     def _get_or_create_cid(self, path: str) -> str:
@@ -202,19 +205,17 @@ class P115Transfer:
         return ""
 
     def _mkdir(self, parent_cid: str, name: str) -> str:
-        """在 parent_cid 下创建子目录 name，返回新 cid（字符串）。失败返回 ''。"""
+        """在 parent_cid 下创建子目录 name（POST proapi /open/folder/add {file_name, pid}，
+        与 p115client fs_mkdir 一致）。创建后重新列父目录按名取新 cid（不依赖响应里的
+        cid 字段，避免响应格式差异），失败返回 ''。"""
         try:
-            resp = self._api_post("/files/add", {"pid": str(parent_cid), "name": name})
+            self._api_post("/open/folder/add",
+                           {"file_name": name, "pid": str(parent_cid)}, base=self._PROAPI)
         except Exception as e:
             logger.warn(f"【TG115】创建目录 {name} 异常: {e}")
             return ""
-        if not isinstance(resp, dict):
-            return ""
-        # 115 建目录响应：{state, error, cid} 或 {state, data:{cid}}
-        cid = resp.get("cid")
-        if cid is None and isinstance(resp.get("data"), dict):
-            cid = resp["data"].get("cid")
-        return str(cid or "")
+        # 重新列父目录按名找到新建目录 cid（可靠，不依赖 create 响应格式）
+        return self._find_subdir(parent_cid, name)
 
     def _client(self):
         """懒加载 httpx.Client（带 Cookie + Chrome UA + 20s 超时）。"""
@@ -234,14 +235,16 @@ class P115Transfer:
         )
         return self._http
 
-    def _api_get(self, path: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    def _api_get(self, path: str, params: Dict[str, Any], base: str = None) -> Dict[str, Any]:
         from urllib.parse import urlencode
-        url = f"{self._API}{path}?{urlencode(params)}"
+        base = base or self._API
+        url = f"{base}{path}?{urlencode(params)}"
         resp = self._client().get(url)
         return self._parse_json(resp)
 
-    def _api_post(self, path: str, data: Dict[str, Any]) -> Dict[str, Any]:
-        url = f"{self._API}{path}"
+    def _api_post(self, path: str, data: Dict[str, Any], base: str = None) -> Dict[str, Any]:
+        base = base or self._API
+        url = f"{base}{path}"
         resp = self._client().post(url, data=data,
                                    headers={"Content-Type": "application/x-www-form-urlencoded"})
         return self._parse_json(resp)
