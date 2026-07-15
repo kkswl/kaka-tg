@@ -89,12 +89,20 @@ class P115Transfer:
         except Exception as e:
             return False, f"定位 115 目标目录失败: {e}", result
 
+        # 115 share_receive 需要在表单里带 user_id（UID 的数字部分），否则报「参数错误」
+        user_id = ""
+        for _part in self.cookie.split(";"):
+            _part = _part.strip()
+            if _part.startswith("UID="):
+                user_id = _part[4:].split("_")[0].strip()
+                break
         payload = {
             "share_code": share_code,
             "receive_code": receive_code,
             "file_id": 0,
             "cid": int(parent_id),
             "is_check": 0,
+            "user_id": user_id,
         }
         logger.info(f"【TG115】转存 payload={payload}")
         try:
