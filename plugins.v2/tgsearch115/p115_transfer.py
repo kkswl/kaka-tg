@@ -104,9 +104,23 @@ class P115Transfer:
             "is_check": 0,
             "user_id": user_id,
         }
+        # 先调 shareinfo 获取分享内的真实 file_id（file_id=0 会报「参数错误」）
+        file_id = 0
+        try:
+            si = self._direct_share_info(share_code)
+            logger.info(f"【TG115】share_info 响应: {str(si)[:400]}")
+            si_data = si.get("data") if isinstance(si, dict) else None
+            if isinstance(si_data, dict):
+                fl = si_data.get("filelist") or si_data.get("file_list") or []
+                if fl and isinstance(fl[0], dict):
+                    file_id = fl[0].get("fid") or fl[0].get("cid") or fl[0].get("file_id") or 0
+            logger.info(f"【TG115】从分享信息提取 file_id={file_id}")
+        except Exception as e:
+            logger.warn(f"【TG115】获取分享信息失败（继续用 file_id=0）: {e}")
+
         logger.info(f"【TG115】转存 payload={payload}")
         try:
-            resp = self._direct_share_receive(share_code, receive_code, parent_id, user_id)
+            resp = self._direct_share_receive(share_code, receive_code, parent_id, user_id, file_id)
             logger.info(f"【TG115】share_receive 响应: {str(resp)[:300]}")
         except Exception as e:
             logger.error(f"【TG115】share_receive 异常: {e}")
@@ -130,6 +144,23 @@ class P115Transfer:
         return True, "115 转存成功", result
 
     # ============================ 内部工具 ============================
+    def _direct_share_info(self, share_code: str) -> dict:
+        """直连 115 /share/shareinfo 获取分享文件列表（含 file_id）。
+
+        115 的 share_receive 要求 file_id 是分享内的真实文件 ID，不能用 0。
+        必须先调 shareinfo 拿到 file_id，再调 share_receive。
+        """
+        import urllib.request as _ureq
+        import urllib.parse as _uparse
+        import json as _json
+        url = "https://webapi.115.com/share/shareinfo?" + _uparse.urlencode({"share_code": share_code})
+        req = _ureq.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Cookie": self.cookie,
+        })
+        with _ureq.urlopen(req, timeout=30) as resp:
+            return _json.loads(resp.read().decode("utf-8", "replace"))
+
     def _direct_share_receive(self, share_code: str, receive_code: str,
                               cid, user_id: str, file_id=0) -> dict:
         """直连 115 /share/receive（POST form data + cookie），绕过 p115client。
