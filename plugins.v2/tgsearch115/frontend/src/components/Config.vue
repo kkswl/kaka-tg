@@ -113,7 +113,7 @@
 
         <!-- ====== Tab：手动搜索 ====== -->
         <v-window-item value="search" class="pa-4">
-          <div class="section-label mb-2">手动搜索 TG 频道 115 资源</div>
+          <div class="section-label mb-2">手动搜索（TG 频道 + 资源站）</div>
           <div class="d-flex ga-2 mb-3">
             <v-text-field
               v-model="searchKeyword"
@@ -127,19 +127,25 @@
           </div>
           <div v-if="searchLoading" class="empty-state">
             <v-progress-circular indeterminate size="40" width="3" color="primary" class="mb-3" />
-            <div class="text-body-2">正在搜索 TG 频道...</div>
+            <div class="text-body-2">正在搜索...</div>
           </div>
           <div v-else-if="searchResults.length" class="channel-list">
             <v-card v-for="(r, i) in searchResults.slice(0, displayLimit)" :key="i" variant="outlined" rounded="lg" class="channel-item mb-2">
               <div class="px-3 pt-2 pb-1">
                 <div class="d-flex align-start">
-                  <v-icon icon="mdi-file-video-outline" color="primary" class="mr-3 mt-1" />
+                  <v-icon icon="mdi-file-video-outline" :color="r.pan_type === '115' ? 'success' : 'primary'" class="mr-3 mt-1" />
                   <div class="channel-meta flex-grow-1">
-                    <div class="text-body-2 font-weight-medium">{{ r.title }}</div>
+                    <div class="d-flex align-center flex-wrap ga-1">
+                      <span class="text-body-2 font-weight-medium">{{ r.title }}</span>
+                      <v-chip size="x-small" :color="panColor(r.pan_type)" variant="tonal" label>{{ panLabel(r.pan_type) }}</v-chip>
+                    </div>
                     <div class="text-caption text-medium-emphasis mt-1" style="white-space: pre-wrap; max-height: 4.5em; overflow: hidden;">{{ r.text || r.title }}</div>
                     <div class="text-caption text-medium-emphasis mt-1">{{ r.channel }}<span v-if="r.pub_date"> · {{ r.pub_date }}</span></div>
                   </div>
-                  <v-btn color="primary" variant="tonal" size="small" prepend-icon="mdi-cloud-download" :loading="transferringIndex === i" @click="transferFromSearch(r.share_url, i)" class="ml-2 mt-1">转存</v-btn>
+                  <div class="d-flex flex-column align-end ml-2 mt-1">
+                    <v-btn v-if="r.pan_type === '115'" color="success" variant="tonal" size="small" prepend-icon="mdi-cloud-download" :loading="transferringIndex === i" @click="transferFromSearch(r.share_url, i)">转存</v-btn>
+                    <v-btn v-else variant="text" size="small" prepend-icon="mdi-content-copy" @click="copyLink(r)">复制链接</v-btn>
+                  </div>
                 </div>
               </div>
             </v-card>
@@ -152,8 +158,8 @@
           </div>
           <div v-else-if="searched && !searchLoading" class="empty-state">
             <v-icon icon="mdi-magnify-close" size="48" class="mb-2" />
-            <div class="text-body-2">未找到 115 资源</div>
-            <div class="text-caption text-medium-emphasis mt-1">提示：网页预览版仅显示最近约 20 条消息</div>
+            <div class="text-body-2">未找到资源</div>
+            <div class="text-caption text-medium-emphasis mt-1">提示：TG 用片名搜全历史；资源站需在「插件设置」配置 app_auth</div>
           </div>
         </v-window-item>
 
@@ -267,6 +273,25 @@
             <v-col cols="12" md="6" class="d-flex align-center">
               <span class="text-body-2 mr-2">未命中通知</span>
               <v-switch v-model="config.notify_fail" color="primary" hide-details density="compact" />
+            </v-col>
+            <v-col cols="12" class="py-4">
+              <v-divider />
+              <div class="text-subtitle-2 mt-3 mb-1">目标资源站（xn--wcv59z.com）</div>
+              <div class="text-caption text-medium-emphasis mb-3">PoW 验证 + 全网盘资源搜索；仅 115 自动转存，其它网盘仅展示链接</div>
+            </v-col>
+            <v-col cols="12" md="6" class="d-flex align-center">
+              <div class="mr-2">
+                <div class="text-subtitle-2">启用资源站</div>
+                <div class="text-caption text-medium-emphasis">搜索时同时查该站</div>
+              </div>
+              <v-spacer />
+              <v-switch v-model="config.site_enabled" color="primary" hide-details density="compact" />
+            </v-col>
+            <v-col cols="12" md="6" class="d-flex align-center">
+              <v-btn size="small" variant="outlined" prepend-icon="mdi-connection" :loading="siteChecking" @click="checkSite">测试连通</v-btn>
+            </v-col>
+            <v-col cols="12">
+              <v-text-field v-model="config.site_app_auth" label="资源站 app_auth Cookie" variant="outlined" density="compact" hide-details hint="登录站点后从浏览器 Cookie 取 app_auth 值" persistent-hint />
             </v-col>
           </v-row>
         </v-window-item>
@@ -443,6 +468,8 @@ const DEFAULTS = {
   notify_success: true,
   notify_fail: false,
   auto_finish: true,
+  site_enabled: false,
+  site_app_auth: '',
   tg_channels: [],
 }
 
@@ -494,6 +521,8 @@ const searchResults = ref([])
 const searched = ref(false)
 const displayLimit = ref(3)
 const transferringIndex = ref(-1)  // 正在转存的结果索引（-1=无）
+// 资源站连通检查
+const siteChecking = ref(false)
 // 115 目录查询/浏览
 const dirInfoName = ref('')
 const dirBrowserOpen = ref(false)
@@ -731,6 +760,26 @@ async function transferFromSearch(url, index) {
   transferUrl.value = url
   await doTransfer()
   transferringIndex.value = -1
+}
+// 网盘类型展示
+function panColor(pt) {
+  return { '115': 'success', quark: 'info', baidu: 'error', aliyun: 'warning', xunlei: 'secondary', cloud189: 'primary', uc: 'accent' }[pt] || 'grey'
+}
+function panLabel(pt) {
+  return { '115': '115', quark: '夸克', baidu: '百度', aliyun: '阿里', xunlei: '迅雷', cloud189: '天翼', uc: 'UC', other: '其他' }[pt] || pt
+}
+function copyLink(r) {
+  const text = r.share_url + (r.receive_code ? `\n提取码: ${r.receive_code}` : '')
+  if (navigator.clipboard?.writeText) navigator.clipboard.writeText(text)
+  snack('已复制链接' + (r.receive_code ? '与提取码' : ''))
+}
+async function checkSite() {
+  if (!config.site_app_auth) { snack('请先填 app_auth', 'warning'); return }
+  await saveAll()
+  siteChecking.value = true
+  const res = await apiGet('/check_site')
+  siteChecking.value = false
+  snack((res && res.message) || '检查失败', (res && res.success) ? 'success' : 'error')
 }
 async function doSearch() {
   const kw = (searchKeyword.value || '').trim()

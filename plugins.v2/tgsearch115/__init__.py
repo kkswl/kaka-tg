@@ -16,8 +16,9 @@
    系统中并不存在 ``EventType.SearchStart`` 之类可阻断的搜索事件，
    ``SubscribeAdded`` 是实现该目标的正确且唯一的钩子。
 
-2. TG 搜索：用 Telethon User Session 读取目标频道历史消息，按订阅标题/年份检索，
-   提取其中的 115 分享链接（见 ``tg_scraper.py``）。支持多频道。
+2. TG 搜索：用网页爬虫（httpx + BeautifulSoup）抓取 ``t.me/s/{channel}`` 公开频道，
+   通过服务端搜索 ``?q=关键字`` 检索频道全部历史消息，提取其中的 115 分享链接
+   （见 ``tg_scraper.py``）。免登录、无需 TG 账号，支持多频道与 MP 代理。
 
 3. 规则匹配：每条命中构造为 ``TorrentInfo``，复用 MoviePilot 内置的
    ``SubscribeChain().filter_torrents`` 与 ``TorrentHelper.filter_torrent``，
@@ -105,6 +106,7 @@ from app.schemas.types import EventType, NotificationType, SystemConfigKey
 
 from .p115_transfer import P115Transfer
 from .tg_scraper import TgChannelScraper
+from .site_scraper import FilejinScraper
 
 
 # get_data / save_data 存储本插件配置使用的 key
@@ -221,7 +223,7 @@ class TgSearch115(_PluginBase):
         "订阅新增时优先到指定 Telegram 频道搜索 115 资源，命中并转存成功后自动完成订阅；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.0.0"
+    plugin_version = "4.1.0"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -233,6 +235,7 @@ class TgSearch115(_PluginBase):
     _lock = threading.Lock()
     _running_ids: set = set()
     _scraper: Optional[TgChannelScraper] = None
+    _site_scraper: Optional[FilejinScraper] = None
     _transfer: Optional[P115Transfer] = None
 
     # 配置项（运行态缓存）
@@ -245,6 +248,8 @@ class TgSearch115(_PluginBase):
     _notify_success = True
     _notify_fail = False
     _auto_finish = True  # True=插件直接标记完成(不用MP整理); False=只阻断搜索让MP自己整理
+    _site_enabled = False
+    _site_app_auth = ""
     # ============================ 生命周期 ============================
     def init_plugin(self, config: dict = None):
         """生效配置。
@@ -296,6 +301,15 @@ class TgSearch115(_PluginBase):
         except Exception:
             pass
         self._scraper = TgChannelScraper(channels=enabled_channels, proxy=_proxy)
+        # 目标资源站爬虫（PoW + 搜索 + 全网盘提取；仅 115 参与自动转存）
+        self._site_enabled = self._to_bool(config.get("site_enabled"), False)
+        self._site_app_auth = config.get("site_app_auth") or ""
+        if self._site_enabled and self._site_app_auth:
+            self._site_scraper = FilejinScraper(
+                app_auth=self._site_app_auth, proxy=_proxy,
+            )
+        else:
+            self._site_scraper = None
         self._transfer = P115Transfer(
             cookie=self._p115_cookie, default_target_path=self._p115_target
         )
@@ -404,6 +418,14 @@ class TgSearch115(_PluginBase):
                 "summary": "验证 115 Cookie 是否有效",
                 "description": "调 fs_files(0) 实测 Cookie 有效性",
             },
+            {
+                "path": "/check_site",
+                "endpoint": self.__check_site_api,
+                "methods": ["GET"],
+                "auth": "bear",
+                "summary": "检查目标资源站连通性与登录态",
+                "description": "解 PoW + 试搜，验证 app_auth 是否有效",
+            },
         ]
         return apis
 
@@ -487,21 +509,36 @@ class TgSearch115(_PluginBase):
                 return
 
             keyword = self._build_keyword(subscribe)
-            logger.info(f"【TG115】订阅 [{subscribe.name}] 开始搜索 TG 频道，关键字: {keyword}")
-            hits = self._scraper.search(keyword) if self._scraper else []
+            logger.info(f"【TG115】订阅 [{subscribe.name}] 开始搜索，关键字: {keyword}")
+            # 双源搜索：TG 频道（全 115）+ 目标资源站（全网盘，115 占少数）
+            hits = []
+            if self._scraper:
+                hits.extend(self._scraper.search(keyword))
+            if self._site_scraper:
+                hits.extend(self._site_scraper.search(keyword, year=subscribe.year))
             if not hits:
-                logger.info(f"【TG115】订阅 [{subscribe.name}] TG 频道未找到 115 资源，回退到默认搜索")
-                self._send_fail_notify(subscribe, "TG 频道未找到 115 资源")
+                logger.info(f"【TG115】订阅 [{subscribe.name}] 未找到资源，回退到默认搜索")
+                self._send_fail_notify(subscribe, "TG 频道与资源站均未找到资源")
                 return
 
             torrents = self._build_torrents(hits)
             matched = self._filter_resources(subscribe, mediainfo, torrents)
             if not matched:
-                logger.info(f"【TG115】订阅 [{subscribe.name}] TG 资源均不符合 MP 过滤规则，回退到默认搜索")
-                self._send_fail_notify(subscribe, "TG 资源不符合过滤规则")
+                logger.info(f"【TG115】订阅 [{subscribe.name}] 资源均不符合 MP 过滤规则，回退到默认搜索")
+                self._send_fail_notify(subscribe, "资源不符合过滤规则")
                 return
 
-            best = matched[0]
+            # 只自动转存 115 资源（非 115 如夸克/百度/阿里不自动转存，仅展示）
+            matched_115 = [t for t in matched
+                           if P115Transfer._is_115_share_url(t.page_url or "")]
+            if not matched_115:
+                logger.info(
+                    f"【TG115】订阅 [{subscribe.name}] 命中 {len(matched)} 条资源但无 115 可转存"
+                    f"（仅夸克/百度/阿里等），回退到默认搜索"
+                )
+                self._send_fail_notify(subscribe, f"命中 {len(matched)} 条但无 115 可转存")
+                return
+            best = matched_115[0]
             share_url = best.page_url or ""
             logger.info(f"【TG115】订阅 [{subscribe.name}] 命中: {best.title} -> {share_url}")
 
@@ -544,20 +581,29 @@ class TgSearch115(_PluginBase):
 
     @staticmethod
     def _build_keyword(subscribe) -> str:
-        """构建搜索关键字：片名 + 年份（空格分隔）。
-        爬虫会拆分并要求所有部分都出现在消息中。"""
-        parts = [p for p in [subscribe.name, subscribe.year] if p]
-        return " ".join(parts)
+        """构建搜索关键字：只用片名（不含年份）。
+
+        v4.0：TG 服务端 ``?q=`` 搜索频道全部历史。TG 消息里大多不写年份，
+        带年份会漏掉大量命中，故搜索词只取片名；年份 / 分辨率等精细过滤
+        交给 MoviePilot 的规则引擎 ``_filter_resources`` 处理。
+        """
+        return str(subscribe.name or "").strip()
 
     @staticmethod
     def _build_torrents(hits) -> List[TorrentInfo]:
         torrents: List[TorrentInfo] = []
         for h in hits:
+            url = h.share_url or ""
+            rc = getattr(h, "receive_code", "") or ""
+            # 115 链接：若提取码未附在 URL 上，补上（share_receive 需要 receive_code）
+            if url and P115Transfer._is_115_share_url(url) and rc \
+                    and "password=" not in url and "receive_code=" not in url and "pwd=" not in url:
+                url = url + ("&" if "?" in url else "?") + f"password={rc}"
             torrents.append(TorrentInfo(
                 title=h.resource_title or "未命名资源",
                 description=h.text,
-                page_url=h.share_url,
-                site_name="TG频道",
+                page_url=url,
+                site_name=getattr(h, "channel_name", None) or "TG频道",
                 pubdate=h.pub_date,
                 size=0.0, seeders=0, peers=0,
             ))
@@ -689,9 +735,6 @@ class TgSearch115(_PluginBase):
 
         except Exception as e:
             logger.error(f"【TG115】更新订阅状态异常（不影响 MP 默认流程）: {e}")
-
-        except Exception as e:
-            logger.error(f"【TG115】标记订阅完成异常（不影响 MP 默认流程）: {e}")
 
     @staticmethod
     def _parse_episode_info(text: str) -> str:
@@ -926,37 +969,51 @@ class TgSearch115(_PluginBase):
             return JSONResponse({"success": False, "message": f"转存失败: {e}"}, status_code=500)
 
     def __search_api(self, keyword: str = ""):
-        """GET /search?keyword=...：手动搜索 TG 频道中的 115 资源。
+        """GET /search?keyword=...：手动搜索 TG 频道 + 目标资源站的网盘资源。
 
-        Telethon 为异步库；搜索在独立线程中执行并新建事件循环，避免与 MoviePilot 主线程
-        的事件循环冲突（与订阅事件处理器在守护线程中跑搜索的做法一致）。FastAPI 的同步
-        端点本身跑在线程池里，阻塞等待搜索结果不会卡住主事件循环。
+        返回全部网盘类型（115/夸克/百度/阿里/迅雷…），前端按类型展示；仅 115 可自动转存。
+        搜索在独立线程池执行，不阻塞 FastAPI 主事件循环。
         """
         from starlette.responses import JSONResponse
         import concurrent.futures
         keyword = (keyword or "").strip()
         if not keyword:
             return JSONResponse({"success": False, "message": "请输入搜索关键字"}, status_code=400)
-        if not self._scraper or not self._tg_channels:
-            return JSONResponse({"success": False, "message": "未配置任何 TG 频道"}, status_code=400)
-        logger.info(f"【TG115】手动搜索 keyword={keyword} proxy={getattr(self._scraper, "proxy", "") or "无"} channels={len(self._tg_channels)}")
+        if (not self._scraper or not self._tg_channels) and not self._site_scraper:
+            return JSONResponse({"success": False, "message": "未配置任何搜索源（TG 频道或资源站）"}, status_code=400)
+
+        def _do_search():
+            hits = []
+            if self._scraper:
+                hits.extend(self._scraper.search(keyword))
+            if self._site_scraper:
+                hits.extend(self._site_scraper.search(keyword))
+            return hits
+
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-                hits = ex.submit(self._scraper.search, keyword).result(timeout=180)
-            results = [{
-                "title": h.resource_title or "未命名资源",
-                "share_url": h.share_url,
-                "channel": h.channel_name or "",
-                "pub_date": h.pub_date or "",
-                "text": (h.text or "")[:500],
-            } for h in hits]
+                hits = ex.submit(_do_search).result(timeout=180)
+            results = []
+            for h in hits:
+                pt = getattr(h, "pan_type", "") or ""
+                if not pt:
+                    pt = "115" if P115Transfer._is_115_share_url(h.share_url or "") else "other"
+                results.append({
+                    "title": h.resource_title or "未命名资源",
+                    "share_url": h.share_url,
+                    "receive_code": getattr(h, "receive_code", "") or "",
+                    "channel": getattr(h, "channel_name", "") or "",
+                    "pan_type": pt,
+                    "pub_date": h.pub_date or "",
+                    "text": (h.text or "")[:500],
+                })
             return JSONResponse({
                 "success": True,
-                "message": f"找到 {len(results)} 条 115 资源",
+                "message": f"找到 {len(results)} 条资源",
                 "results": results,
             })
         except concurrent.futures.TimeoutError:
-            return JSONResponse({"success": False, "message": "搜索超时（TG 连接或检索过久）"}, status_code=504)
+            return JSONResponse({"success": False, "message": "搜索超时（连接或检索过久）"}, status_code=504)
         except Exception as e:
             logger.error(f"【TG115】手动搜索异常: {e}")
             return JSONResponse({"success": False, "message": f"搜索失败: {e}"}, status_code=500)
@@ -1032,6 +1089,14 @@ class TgSearch115(_PluginBase):
             logger.error(f"【TG115】验证 Cookie 异常: {e}")
             return JSONResponse({"success": False, "valid": False, "message": f"验证失败: {e}"})
 
+    def __check_site_api(self):
+        """GET /check_site：检查目标资源站 PoW + app_auth 登录态是否有效。"""
+        from starlette.responses import JSONResponse
+        if not self._site_scraper:
+            return JSONResponse({"success": False, "message": "资源站未启用或未配置 app_auth"})
+        ok, msg = self._site_scraper.check()
+        return JSONResponse({"success": ok, "message": msg})
+
     # ============================ 依赖检查 ============================
     def _check_deps(self):
         missing = []
@@ -1066,7 +1131,10 @@ class TgSearch115(_PluginBase):
             "delay_seconds": 3,
             "notify_success": True,
             "notify_fail": False,
-            "auto_finish": True,            "tg_channels": [],
+            "auto_finish": True,
+            "site_enabled": False,
+            "site_app_auth": "",
+            "tg_channels": [],
         }
 
     @staticmethod

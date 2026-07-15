@@ -4,21 +4,26 @@
 通过 httpx 抓取 ``https://t.me/s/{channel}`` 的网页预览版，
 用 BeautifulSoup 解析消息正文，正则提取 115 分享链接和提取码。
 
-支持多页翻页（?before=消息ID），每个频道默认抓 5 页（约 100 条消息），
-大幅增加命中率（v1 只抓 1 页约 20 条）。
+v4.0 核心改进：使用 Telegram 网页预览版的 **服务端搜索** ``?q=关键字``，
+让 Telegram 服务器在频道的 **全部历史消息** 中检索（而不是只抓最近 200 条再本地过滤），
+大幅提升命中率，解决「明明有资源却搜不到」的问题。
+
+搜索词只传片名（不含年份）—— TG 消息里大多不写年份，带年份会漏掉大量命中；
+年份 / 分辨率 / 字幕组等精细过滤交给 MoviePilot 的规则引擎 ``_filter_resources`` 处理。
 
 稳定性设计：
 - 并发搜索 + Semaphore(5) 限流 + 随机延迟防 429。
 - timeout=10s + 全异常捕获，绝不崩溃主线程。
 - pub_date 从 <time datetime="..."> 提取，兜底当前时间。
 - 私有频道前置过滤。
+- 翻页用 ?before=消息ID 加载更早的搜索结果。
 """
 import asyncio
 import random
 import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import parse_qsl, urlparse
+from urllib.parse import parse_qsl, quote, urlparse
 
 from app.log import logger
 
@@ -44,7 +49,7 @@ _CHROME_UA = (
 
 _DEFAULT_PUB_DATE = "2000-01-01 00:00:00"
 
-# 每个频道最多翻多少页（每页约 20 条消息）
+# 每个频道最多翻多少页搜索结果（每页约 20 条）
 MAX_PAGES_PER_CHANNEL = 10
 
 
@@ -78,7 +83,7 @@ def _is_private_channel(cid: str) -> bool:
 
 
 class TgChannelScraper:
-    """基于网页爬虫的 TG 公开频道搜索器（免登录，多页翻页）。"""
+    """基于网页爬虫的 TG 公开频道搜索器（免登录，服务端 ?q= 搜索全历史）。"""
 
     def __init__(self, channels: Optional[List[Dict[str, str]]] = None,
                  proxy: Optional[str] = None,
@@ -143,9 +148,17 @@ class TgChannelScraper:
             return False, f"网络异常: {e}"
 
     async def _async_search(self, keyword: str) -> List[TgHit]:
-        """并发搜索所有频道（Semaphore(5) 限流 + 随机延迟防 429）。"""
-        # 拆分关键词，要求所有部分都出现（片名+年份都要匹配）
-        keywords = [k.strip().lower() for k in keyword.split() if k.strip()]
+        """并发搜索所有频道（Semaphore(5) 限流 + 随机延迟防 429）。
+
+        v4.0：用 ``?q=关键字`` 让 Telegram 服务器搜索频道全部历史，
+        而不是只抓最近 N 条再本地过滤。搜索词只取片名（不含年份）。
+        """
+        search_term = (keyword or "").strip()
+        if not search_term:
+            logger.warn("【TG115】搜索关键字为空")
+            return []
+        encoded_term = quote(search_term)
+
         sem = asyncio.Semaphore(5)
 
         # 前置过滤：跳过私有频道
@@ -168,7 +181,7 @@ class TgChannelScraper:
 
         async with self._make_client() as client:
             tasks = [
-                self._search_one_channel(client, cid, cname, keyword, keywords, sem)
+                self._search_one_channel(client, cid, cname, encoded_term, sem)
                 for cid, cname in valid_channels
             ]
             results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -181,19 +194,20 @@ class TgChannelScraper:
                 logger.error(f"【TG115】频道搜索异常: {r}")
 
         logger.info(
-            f"【TG115】共爬取 {len(valid_channels)} 个频道（每频道最多 {self.max_pages} 页），"
+            f"【TG115】共搜索 {len(valid_channels)} 个频道（TG 服务端 ?q= 搜全历史），"
             f"合计命中 {len(all_hits)} 条 115 资源"
         )
         return all_hits
 
     async def _search_one_channel(
-        self, client, cid: str, cname: str,
-        keyword: str, keywords: list, sem
+        self, client, cid: str, cname: str, encoded_term: str, sem
     ) -> List[TgHit]:
-        """搜索单个频道（多页翻页 + 并发安全 + 全异常捕获）。
+        """用 TG 网页预览版搜索功能搜索单个频道的全部历史。
 
-        t.me/s/{channel} 每页约 20 条消息。通过 ?before=消息ID 翻页，
-        最多抓 max_pages 页（默认 5 页约 100 条），大幅增加命中率。
+        使用 ``https://t.me/s/{channel}?q={keyword}`` 让 Telegram 服务器搜索，
+        翻页用 ``&before=消息ID`` 加载更早的搜索结果。每页约 20 条，
+        最多翻 max_pages 页。服务端已按关键字过滤，本地不再做关键词强匹配
+        （年份/分辨率等精细过滤交给 MP 规则引擎）。
         """
         from bs4 import BeautifulSoup
 
@@ -205,30 +219,27 @@ class TgChannelScraper:
                 before_id = None  # 翻页用：上一页最旧的消息 ID
 
                 for page in range(self.max_pages):
-                    # 构造 URL（第一页无 before，后续页带 ?before=xxx）
+                    # 构造服务端搜索 URL
                     if before_id:
-                        url = f"https://t.me/s/{cid}?before={before_id}"
+                        url = f"https://t.me/s/{cid}?q={encoded_term}&before={before_id}"
                     else:
-                        url = f"https://t.me/s/{cid}"
+                        url = f"https://t.me/s/{cid}?q={encoded_term}"
 
                     resp = await client.get(url)
                     if resp.status_code != 200:
                         logger.warn(
-                            f"【TG115】频道 [{cname}] 第 {page+1} 页请求失败: HTTP {resp.status_code}"
+                            f"【TG115】频道 [{cname}] 搜索第 {page+1} 页失败: HTTP {resp.status_code}"
                         )
                         break
 
                     soup = BeautifulSoup(resp.text, "html.parser")
-                    # 消息容器：data-post 属性在 tgme_widget_message 上（不是 _wrap）
                     msg_elements = soup.find_all("div", class_="tgme_widget_message")
                     if not msg_elements:
-                        # 兜底：用 data-post 属性直接搜
                         msg_elements = soup.find_all(attrs={"data-post": True})
                     if not msg_elements:
-                        break  # 没有更多消息
+                        break  # 没有更多搜索结果
 
                     page_oldest_id = None
-                    page_hits = 0
 
                     for msg_el in msg_elements:
                         try:
@@ -240,7 +251,6 @@ class TgChannelScraper:
                                     msg_id = int(post_attr.split("/")[-1])
                                 except Exception:
                                     pass
-                            # 兜底：从 <time> 父级 <a> 的 href 提取
                             if not msg_id:
                                 time_tag = msg_el.find("time")
                                 if time_tag and time_tag.parent:
@@ -260,15 +270,10 @@ class TgChannelScraper:
                                 continue
                             total_msgs += 1
 
-                            # 关键词过滤
-                            text_lower = text.lower()
-                            if not all(kw in text_lower for kw in keywords):
-                                continue
-
                             # 提取发布时间
                             pub_date = _extract_pub_date(msg_el)
 
-                            # 提取 115 分享链接
+                            # 提取 115 分享链接（服务端已按关键字过滤，无需本地再匹配）
                             for link in _115_LINK_RE.findall(text):
                                 share_code, receive_code = _parse_payload(link)
                                 if not share_code:
@@ -288,26 +293,24 @@ class TgChannelScraper:
                                     channel_name=cname,
                                     pub_date=pub_date,
                                 ))
-                                page_hits += 1
                         except Exception as e:
                             logger.warn(
-                                f"【TG115】频道 [{cname}] 解析单条消息出错（跳过）: {e}"
+                                f"【TG115】频道 [{cname}] 解析消息出错（跳过）: {e}"
                             )
                             continue
 
-                    # 翻页：如果没有更旧的消息，或者这一页没有消息，停止翻页
+                    # 翻页：没有更旧的消息则停止
                     if page_oldest_id is None or page_oldest_id <= 1:
                         break
                     before_id = page_oldest_id
-                    # 翻页间随机延迟
                     await asyncio.sleep(random.uniform(0.3, 0.8))
 
                 logger.info(
-                    f"【TG115】频道 [{cname}] 检索 '{keyword}' "
-                    f"扫描 {total_msgs} 条消息（{page+1} 页），命中 {len(ch_hits)} 条 115 资源"
+                    f"【TG115】频道 [{cname}] 搜索 '{encoded_term}' "
+                    f"返回 {total_msgs} 条消息（{page+1} 页），命中 {len(ch_hits)} 条 115 资源"
                 )
             except Exception as e:
-                logger.warn(f"【TG115】爬取频道 [{cname}] 出错（跳过）: {e}")
+                logger.warn(f"【TG115】搜索频道 [{cname}] 出错（跳过）: {e}")
             return ch_hits
 
     def _make_client(self):
