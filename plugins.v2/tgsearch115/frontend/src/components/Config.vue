@@ -173,11 +173,23 @@
             </v-card-text>
           </v-card>
 
-          <div class="d-flex align-center mb-2">
+          <div class="d-flex align-center mb-2 flex-wrap ga-2">
             <span class="section-label">已添加频道</span>
-            <v-chip size="small" variant="tonal" class="ml-2">{{ channels.length }}</v-chip>
+            <v-chip size="small" variant="tonal">{{ channels.length }}</v-chip>
             <v-spacer />
-            <v-btn color="secondary" variant="tonal" prepend-icon="mdi-import" @click="openImport">批量导入</v-btn>
+            <template v-if="channelSelectMode">
+              <v-btn size="small" variant="text" prepend-icon="mdi-select-all" @click="toggleSelectAll">
+                {{ selectedChannels.length === channels.length ? '取消全选' : '全选' }}
+              </v-btn>
+              <v-btn size="small" color="error" variant="tonal" prepend-icon="mdi-delete-sweep" @click="openBatchDelete">
+                删除选中 ({{ selectedChannels.length }})
+              </v-btn>
+              <v-btn size="small" variant="text" @click="exitSelectMode">退出选择</v-btn>
+            </template>
+            <template v-else>
+              <v-btn size="small" variant="text" prepend-icon="mdi-checkbox-multiple-marked-outline" @click="enterSelectMode">批量删除</v-btn>
+              <v-btn color="secondary" variant="tonal" prepend-icon="mdi-import" @click="openImport">批量导入</v-btn>
+            </template>
           </div>
 
           <div v-if="channels.length" class="channel-list">
@@ -187,14 +199,23 @@
               variant="outlined"
               rounded="lg"
               class="channel-item"
+              :class="{ 'channel-selected': selectedChannels.includes(i) }"
             >
               <div class="d-flex align-center px-3 py-2">
+                <v-checkbox
+                  v-if="channelSelectMode"
+                  :model-value="selectedChannels.includes(i)"
+                  @update:model-value="toggleChannelSelect(i)"
+                  hide-details
+                  density="compact"
+                  class="mr-2"
+                />
                 <v-icon icon="mdi-bullhorn-variant-outline" color="primary" class="mr-3" />
                 <div class="channel-meta">
                   <div class="text-body-2 font-weight-medium text-truncate">{{ ch.name }}</div>
                   <div class="text-caption text-medium-emphasis text-truncate">{{ ch.id }}</div>
                 </div>
-                <v-btn icon variant="text" color="error" size="small" @click="openDelete(i)">
+                <v-btn v-if="!channelSelectMode" icon variant="text" color="error" size="small" @click="openDelete(i)">
                   <v-icon icon="mdi-trash-can-outline" />
                   <v-tooltip activator="parent" location="top">删除</v-tooltip>
                 </v-btn>
@@ -364,6 +385,25 @@
       </v-card>
     </v-dialog>
 
+    <!-- 批量删除确认弹窗 -->
+    <v-dialog v-model="batchDeleteDialog" max-width="420">
+      <v-card rounded="lg">
+        <v-card-title class="d-flex align-center px-4 py-3">
+          <v-icon icon="mdi-delete-sweep" color="error" class="mr-2" />确认批量删除
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="text-body-2 pt-4">
+          确定要删除选中的 <strong>{{ selectedChannels.length }}</strong> 个频道吗？此操作不可撤销。
+        </v-card-text>
+        <v-divider />
+        <v-card-actions class="px-4 py-3">
+          <v-spacer />
+          <v-btn variant="text" @click="batchDeleteDialog = false">取消</v-btn>
+          <v-btn color="error" variant="flat" @click="confirmBatchDelete">确认删除</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <v-snackbar v-model="snackModel" :color="snackColor" location="top right" timeout="2500">
       {{ snackText }}
     </v-snackbar>
@@ -411,6 +451,9 @@ const importDialog = ref(false)
 const importJson = ref('')
 const deleteDialog = ref(false)
 const pendingDelete = ref(null)
+const channelSelectMode = ref(false)
+const selectedChannels = ref([])
+const batchDeleteDialog = ref(false)
 
 // 115 扫码登录
 const qrDialog = ref(false)
@@ -781,6 +824,49 @@ function openDelete(i) {
   pendingDelete.value = i
   deleteDialog.value = true
 }
+function toggleChannelSelect(i) {
+  const idx = selectedChannels.value.indexOf(i)
+  if (idx >= 0) {
+    selectedChannels.value.splice(idx, 1)
+  } else {
+    selectedChannels.value.push(i)
+  }
+}
+function toggleSelectAll() {
+  if (selectedChannels.value.length === channels.value.length) {
+    selectedChannels.value = []
+  } else {
+    selectedChannels.value = channels.value.map((_, i) => i)
+  }
+}
+function openBatchDelete() {
+  if (!selectedChannels.value.length) {
+    snack('请先选择要删除的频道', 'warning')
+    return
+  }
+  batchDeleteDialog.value = true
+}
+function confirmBatchDelete() {
+  // 从大到小排序删除，避免索引偏移
+  const sorted = [...selectedChannels.value].sort((a, b) => b - a)
+  for (const i of sorted) {
+    channels.value.splice(i, 1)
+  }
+  selectedChannels.value = []
+  channelSelectMode.value = false
+  batchDeleteDialog.value = false
+  snack(`已删除 ${sorted.length} 个频道，正在保存...`)
+  saveAll()
+}
+function enterSelectMode() {
+  channelSelectMode.value = true
+  selectedChannels.value = []
+}
+function exitSelectMode() {
+  channelSelectMode.value = false
+  selectedChannels.value = []
+}
+
 function confirmDelete() {
   const i = pendingDelete.value
   if (i !== null) {
@@ -855,6 +941,10 @@ function confirmImport() {
 .channel-item {
   background-color: rgb(var(--v-theme-surface));
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.channel-selected {
+  border-color: rgb(var(--v-theme-error)) !important;
+  background-color: rgba(var(--v-theme-error), 0.05);
 }
 .channel-item:hover {
   border-color: rgb(var(--v-theme-primary));

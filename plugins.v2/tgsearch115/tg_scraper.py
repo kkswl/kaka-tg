@@ -45,7 +45,7 @@ _CHROME_UA = (
 _DEFAULT_PUB_DATE = "2000-01-01 00:00:00"
 
 # 每个频道最多翻多少页（每页约 20 条消息）
-MAX_PAGES_PER_CHANNEL = 5
+MAX_PAGES_PER_CHANNEL = 10
 
 
 @dataclass
