@@ -221,7 +221,7 @@ class TgSearch115(_PluginBase):
         "订阅新增时优先到指定 Telegram 频道搜索 115 资源，命中并转存成功后自动完成订阅；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "2.2.1"
+    plugin_version = "2.2.2"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -388,6 +388,22 @@ class TgSearch115(_PluginBase):
                 "auth": "bear",
                 "summary": "手动搜索 TG 频道 115 资源",
                 "description": "GET /search?keyword=",
+            },
+            {
+                "path": "/dir_info",
+                "endpoint": self.__dir_info_api,
+                "methods": ["GET"],
+                "auth": "bear",
+                "summary": "根据 cid 查询 115 目录名称",
+                "description": "GET /dir_info?cid=",
+            },
+            {
+                "path": "/dirs",
+                "endpoint": self.__dirs_api,
+                "methods": ["GET"],
+                "auth": "bear",
+                "summary": "列出 115 子目录（目录浏览）",
+                "description": "GET /dirs?cid=0",
             },
         ]
         return apis
@@ -823,6 +839,58 @@ class TgSearch115(_PluginBase):
         except Exception as e:
             logger.error(f"【TG115】手动搜索异常: {e}")
             return JSONResponse({"success": False, "message": f"搜索失败: {e}"}, status_code=500)
+
+    # ---------------------------- 115 目录查询 / 浏览 API ----------------------------
+    def __dir_info_api(self, cid: str = ""):
+        """GET /dir_info?cid=...：根据 cid 查询 115 目录名称，便于用户核对。"""
+        from starlette.responses import JSONResponse
+        cid = (cid or "").strip()
+        if not cid:
+            return JSONResponse({"success": False, "message": "请输入 cid"}, status_code=400)
+        if not self._p115_cookie:
+            return JSONResponse({"success": False, "message": "未配置 115 Cookie，请先扫码登录"}, status_code=400)
+        try:
+            client = self._transfer._get_client()
+            resp = client.fs_info(cid)
+            data = resp.get("data") if isinstance(resp, dict) else None
+            if isinstance(data, list) and data:
+                data = data[0]
+            if isinstance(data, dict):
+                name = data.get("name") or data.get("n") or ""
+                return JSONResponse({"success": True, "name": name, "cid": str(data.get("cid", cid))})
+            return JSONResponse({"success": False, "message": "未找到该 cid 对应的目录"})
+        except Exception as e:
+            logger.error(f"【TG115】查询目录信息失败: {e}")
+            return JSONResponse({"success": False, "message": f"查询失败: {e}"}, status_code=500)
+
+    def __dirs_api(self, cid: str = "0"):
+        """GET /dirs?cid=...：列出某 cid 下的子目录（用于目录浏览）。cid=0 为根目录。
+
+        通过 ``fs_files(cid)`` 拿目录内容，过滤出文件夹（文件夹无 sha1，文件有）。
+        """
+        from starlette.responses import JSONResponse
+        cid = (cid or "0").strip() or "0"
+        if not self._p115_cookie:
+            return JSONResponse({"success": False, "message": "未配置 115 Cookie，请先扫码登录"}, status_code=400)
+        try:
+            client = self._transfer._get_client()
+            resp = client.fs_files(cid)
+            data = resp.get("data") if isinstance(resp, dict) else None
+            items = data if isinstance(data, list) else (data.get("data", []) if isinstance(data, dict) else [])
+            dirs = []
+            for it in items:
+                if not isinstance(it, dict):
+                    continue
+                if it.get("sha1"):  # 文件才有 sha1，跳过
+                    continue
+                name = it.get("name") or it.get("n") or ""
+                c = str(it.get("cid", it.get("id", "")))
+                if name and c:
+                    dirs.append({"cid": c, "name": name})
+            return JSONResponse({"success": True, "cid": cid, "dirs": dirs})
+        except Exception as e:
+            logger.error(f"【TG115】获取子目录失败: {e}")
+            return JSONResponse({"success": False, "message": f"获取目录失败: {e}"}, status_code=500)
 
     # ============================ 依赖检查 ============================
     def _check_deps(self):

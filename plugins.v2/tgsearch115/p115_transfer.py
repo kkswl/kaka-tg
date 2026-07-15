@@ -59,8 +59,8 @@ class P115Transfer:
         :return: (ok, message, data)
         """
         share_url = self._normalize(share_url)
-        save_path = self._normalize_path(target_path) or self.default_target_path
-        result: Dict[str, Any] = {"url": share_url, "path": save_path}
+        effective = self._normalize(target_path) or self.default_target_path
+        result: Dict[str, Any] = {"url": share_url, "path": effective}
 
         if not share_url or not self._is_115_share_url(share_url):
             return False, "不是有效的 115 分享链接", result
@@ -79,9 +79,12 @@ class P115Transfer:
         except Exception as e:
             return False, f"115 客户端初始化失败: {e}", result
 
-        # 解析/创建目标目录 cid
+        # 目标目录：纯数字视为 cid 直接用；否则按路径查找/创建
         try:
-            parent_id = self._get_or_create_cid(client, save_path)
+            if effective.isdigit():
+                parent_id = effective
+            else:
+                parent_id = self._get_or_create_cid(client, effective)
         except Exception as e:
             return False, f"定位 115 目标目录失败: {e}", result
 
