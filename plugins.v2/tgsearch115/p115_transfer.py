@@ -89,42 +89,51 @@ class P115Transfer:
         except Exception as e:
             return False, f"定位 115 目标目录失败: {e}", result
 
-        # 115 share_receive 需要在表单里带 user_id（UID 的数字部分），否则报「参数错误」
+        # 115 share_receive 需要在表单里带 user_id（UID 的数字部分）
         user_id = ""
         for _part in self.cookie.split(";"):
             _part = _part.strip()
             if _part.startswith("UID="):
                 user_id = _part[4:].split("_")[0].strip()
                 break
+
+        # 1. 用 p115client share_snap 获取分享文件列表（含 file_id）
+        #    p115client 的 request 方法自动处理 headers/cookie/session
+        #    密码分享必须带 receive_code；file_id=0 会导致 share_receive 报参数错误
+        file_id = 0
+        try:
+            snap_resp = client.share_snap({
+                "share_code": share_code,
+                "receive_code": receive_code,
+                "cid": 0,
+                "limit": 32,
+                "offset": 0,
+            })
+            logger.info(f"【TG115】share_snap 响应: {str(snap_resp)[:400]}")
+            if isinstance(snap_resp, dict) and snap_resp.get("state") not in (True, 1, "1"):
+                snap_err = snap_resp.get("error") or snap_resp.get("message") or "分享不可用"
+                return False, f"分享链接不可用：{snap_err}", result
+            snap_data = snap_resp.get("data") if isinstance(snap_resp, dict) else None
+            if isinstance(snap_data, dict):
+                fl = snap_data.get("list") or snap_data.get("filelist") or []
+                if fl and isinstance(fl[0], dict):
+                    file_id = fl[0].get("fid") or fl[0].get("cid") or 0
+            logger.info(f"【TG115】从分享信息提取 file_id={file_id}")
+        except Exception as e:
+            logger.warn(f"【TG115】share_snap 异常（继续用 file_id=0）: {e}")
+
+        # 2. 用 p115client share_receive 转存（带真实 file_id）
         payload = {
             "share_code": share_code,
             "receive_code": receive_code,
-            "file_id": 0,
+            "file_id": file_id,
             "cid": int(parent_id),
             "is_check": 0,
             "user_id": user_id,
         }
-        # 先调 shareinfo 获取分享内的真实 file_id（file_id=0 会报「参数错误」）
-        file_id = 0
-        try:
-            si = self._direct_share_info(share_code, receive_code)
-            logger.info(f"【TG115】share_snap 响应: {str(si)[:400]}")
-            # 分享已取消/过期/不存在 -> 直接返回明确错误
-            if isinstance(si, dict) and si.get("state") not in (True, 1, "1"):
-                si_err = si.get("error") or si.get("message") or "分享不可用"
-                return False, f"分享链接不可用：{si_err}", result
-            si_data = si.get("data") if isinstance(si, dict) else None
-            if isinstance(si_data, dict):
-                fl = si_data.get("list") or si_data.get("filelist") or si_data.get("file_list") or []
-                if fl and isinstance(fl[0], dict):
-                    file_id = fl[0].get("fid") or fl[0].get("cid") or fl[0].get("file_id") or 0
-            logger.info(f"【TG115】从分享信息提取 file_id={file_id}")
-        except Exception as e:
-            logger.warn(f"【TG115】获取分享信息失败（继续用 file_id=0）: {e}")
-
         logger.info(f"【TG115】转存 payload={payload}")
         try:
-            resp = self._direct_share_receive(share_code, receive_code, parent_id, user_id, file_id)
+            resp = client.share_receive(payload)
             logger.info(f"【TG115】share_receive 响应: {str(resp)[:300]}")
         except Exception as e:
             logger.error(f"【TG115】share_receive 异常: {e}")
