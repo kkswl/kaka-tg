@@ -24,14 +24,13 @@
    ``SubscribeChain().filter_torrents`` 与 ``TorrentHelper.filter_torrent``，
    按用户在 MP 中配置的过滤规则二次校验。
 
-4. 115 转存：命中后用 ``p115client`` + 用户 Cookie 调 ``share_receive`` 转存到
-   指定 115 目录（见 ``p115_transfer.py``）。
+4. 115 转存：命中后用 ``httpx`` + 用户 Cookie 直连 115 Web API（``share_snap``
+   取 file_id -> ``share_receive`` 转存）到指定 115 目录（见 ``p115_transfer.py``）。
    注意：MoviePilot 核心的 ``app.modules.filemanager.storages.u115.U115Pan``
    是基于 OAuth 的存储模块，仅提供 list/upload/download/move，**不包含**
-   分享链接转存（share_receive）接口；官方插件仓 (jxxghp/MoviePilot-Plugins)
-   中的 ``agentresourceofficer`` 同样自带 ``services/p115_transfer.py`` 走
-   ``p115client``。故本插件沿用社区标准方案，不"手写 115 请求"，
-   也无法引用一个并不存在的 MP 核心转存类。
+   分享链接转存（share_receive）接口。早期版本用 ``p115client``，但它依赖很重
+   （冷启动 pip 安装慢、拖慢插件加载），故改为 ``httpx`` 直连同一组 webapi.115.com
+   接口，零额外重依赖。
 
 5. 完成订阅：转存成功后镜像 ``SubscribeChain.__finish_subscribe``，写历史、
    删订阅、发 ``SubscribeComplete`` 事件、推送通知。
@@ -55,7 +54,7 @@
 """
 # ============================ 依赖动态静默安装 ============================
 # MoviePilot 运行在 Docker 容器内，容器重启后手动 pip 安装的第三方依赖会丢失。
-# 这里在导入业务包之前检测 p115client / beautifulsoup4，缺失则用当前解释器静默安装，
+# 这里在导入业务包之前检测 beautifulsoup4 / httpx，缺失则用当前解释器静默安装，
 # 实现「开箱即用」。安装失败不阻断插件加载（业务模块均为懒导入，缺依赖时仅在
 # 实际调用时报错并由上层捕获后平滑回退，不影响 MoviePilot 主流程）。
 import subprocess as _subprocess
@@ -64,7 +63,9 @@ import sys as _sys
 
 def _ensure_deps() -> None:
     missing = []
-    for _mod, _pkg in (("p115client", "p115client"), ("bs4", "beautifulsoup4")):
+    # 只装轻量依赖：beautifulsoup4 + httpx（httpx 多由 MP 核心预装）。
+    # 不再装 p115client（依赖很重，冷启动慢、拖慢插件加载），115 转存改用 httpx 直连。
+    for _mod, _pkg in (("bs4", "beautifulsoup4"), ("httpx", "httpx")):
         try:
             __import__(_mod)
         except ImportError:
@@ -73,11 +74,12 @@ def _ensure_deps() -> None:
         return
     try:
         _subprocess.run(
-            [_sys.executable, "-m", "pip", "install", *missing],
+            [_sys.executable, "-m", "pip", "install", "--no-input",
+             "--disable-pip-version-check", *missing],
             check=False,
             stdout=_subprocess.DEVNULL,
             stderr=_subprocess.DEVNULL,
-            timeout=600,
+            timeout=180,
         )
     except Exception:
         # 安装失败不抛出，避免影响 MoviePilot 插件加载
@@ -223,7 +225,7 @@ class TgSearch115(_PluginBase):
         "订阅新增时优先到指定 Telegram 频道搜索 115 资源，命中并转存成功后自动完成订阅；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.1.0"
+    plugin_version = "4.1.1"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -951,7 +953,7 @@ class TgSearch115(_PluginBase):
         """GET /transfer?share_url=...&target=...：手动转存 115 分享链接到指定目录。
 
         ``target`` 留空则用配置中的默认转存目录（``p115_target``）；可填路径（如 /电影）
-        或数字 cid。复用已有的 ``P115Transfer.transfer``（p115client share_receive）。
+        或数字 cid。复用已有的 ``P115Transfer.transfer``（httpx 直连 share_receive）。
         """
         from starlette.responses import JSONResponse
         share_url = (share_url or "").strip()
@@ -1028,8 +1030,7 @@ class TgSearch115(_PluginBase):
         if not self._p115_cookie:
             return JSONResponse({"success": False, "message": "未配置 115 Cookie，请先扫码登录"}, status_code=400)
         try:
-            client = self._transfer._get_client()
-            resp = client.fs_info(cid)
+            resp = self._transfer.fs_info(cid)
             data = resp.get("data") if isinstance(resp, dict) else None
             if isinstance(data, list) and data:
                 data = data[0]
@@ -1051,8 +1052,7 @@ class TgSearch115(_PluginBase):
         if not self._p115_cookie:
             return JSONResponse({"success": False, "message": "未配置 115 Cookie，请先扫码登录"}, status_code=400)
         try:
-            client = self._transfer._get_client()
-            resp = client.fs_files(cid)
+            resp = self._transfer.fs_files(cid)
             logger.info(f"【TG115】/dirs cid={cid} state={resp.get('state') if isinstance(resp, dict) else '?'} msg={(resp.get('message') or resp.get('error') or '')[:80] if isinstance(resp, dict) else ''}")
             if isinstance(resp, dict) and resp.get("state") not in (True, 1, "1"):
                 err = resp.get("error") or resp.get("message") or resp.get("msg") or "获取失败"
@@ -1080,8 +1080,7 @@ class TgSearch115(_PluginBase):
         if not self._p115_cookie:
             return JSONResponse({"success": False, "valid": False, "message": "未配置 115 Cookie"})
         try:
-            client = self._transfer._get_client()
-            resp = client.fs_files(0)
+            resp = self._transfer.fs_files(0)
             ok = isinstance(resp, dict) and resp.get("state") in (True, 1, "1")
             msg = "Cookie 有效" if ok else f"Cookie 已失效：{(resp.get('error') or resp.get('message') or '')[:80] if isinstance(resp, dict) else ''}"
             return JSONResponse({"success": True, "valid": bool(ok), "message": msg})
@@ -1105,9 +1104,9 @@ class TgSearch115(_PluginBase):
         except Exception:
             missing.append("beautifulsoup4")
         try:
-            import p115client  # noqa: F401
+            import httpx  # noqa: F401
         except Exception:
-            missing.append("p115client")
+            missing.append("httpx")
         if missing:
             logger.warn(f"【TG115】缺少依赖: {', '.join(missing)}，请安装后重启 MoviePilot 生效")
         if self._p115_cookie:
