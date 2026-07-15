@@ -117,72 +117,86 @@ class TgChannelScraper:
             return True, f"连通正常，页面含 {len(msgs)} 条消息"
 
     async def _async_search(self, keyword: str) -> List[TgHit]:
-        import httpx
-        from bs4 import BeautifulSoup
-
-        all_hits: List[TgHit] = []
+        """并发搜索所有频道（最多 10 个同时抓），大幅缩短总耗时。"""
         keywords = [k.strip().lower() for k in keyword.split() if k.strip()]
+        sem = asyncio.Semaphore(10)  # 限制并发数
+
+        # 准备频道列表
+        valid_channels = []
+        for ch in self.channels:
+            cid = (ch.get("id") or "").strip()
+            cname = (ch.get("name") or "").strip() or cid
+            if not cid:
+                continue
+            if cid.startswith("@"):
+                cid = cid[1:]
+            if cid.startswith("-") or cid.startswith("https://t.me/+") or cid.isdigit():
+                logger.warn(f"【TG115】频道 [{cname}] ({cid}) 不是公开用户名，网页爬虫跳过")
+                continue
+            valid_channels.append((cid, cname))
 
         async with self._make_client() as client:
-            for ch in self.channels:
-                cid = (ch.get("id") or "").strip()
-                cname = (ch.get("name") or "").strip() or cid
-                if not cid:
-                    continue
-                if cid.startswith("@"):
-                    cid = cid[1:]
-                # 跳过私有频道（网页版只支持公开用户名）
-                if cid.startswith("-") or cid.startswith("https://t.me/+") or cid.isdigit():
-                    logger.warn(f"【TG115】频道 [{cname}] ({cid}) 不是公开用户名，网页爬虫跳过")
-                    continue
+            tasks = [self._search_one_channel(client, cid, cname, keyword, keywords, sem)
+                     for cid, cname in valid_channels]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
 
-                ch_hits: List[TgHit] = []
-                try:
-                    url = f"https://t.me/s/{cid}"
-                    resp = await client.get(url)
-                    if resp.status_code != 200:
-                        logger.warn(f"【TG115】频道 [{cname}] 请求失败: HTTP {resp.status_code}")
+        all_hits: List[TgHit] = []
+        for r in results:
+            if isinstance(r, list):
+                all_hits.extend(r)
+            elif isinstance(r, Exception):
+                logger.error(f"【TG115】频道搜索异常: {r}")
+
+        logger.info(f"【TG115】共爬取 {len(valid_channels)} 个频道，合计命中 {len(all_hits)} 条 115 资源")
+        return all_hits
+
+    async def _search_one_channel(self, client, cid: str, cname: str,
+                                  keyword: str, keywords: list, sem) -> List[TgHit]:
+        """搜索单个频道（并发安全，受信号量限流）。"""
+        from bs4 import BeautifulSoup
+        async with sem:
+            ch_hits: List[TgHit] = []
+            try:
+                url = f"https://t.me/s/{cid}"
+                resp = await client.get(url)
+                if resp.status_code != 200:
+                    logger.warn(f"【TG115】频道 [{cname}] 请求失败: HTTP {resp.status_code}")
+                    return []
+
+                soup = BeautifulSoup(resp.text, "html.parser")
+                messages = soup.find_all("div", class_="tgme_widget_message_text")
+                # 倒序遍历（最新优先）
+                for msg in reversed(messages):
+                    text = msg.get_text(separator="\n", strip=True)
+                    if not text:
+                        continue
+                    # 关键词过滤：所有关键词都要包含（不区分大小写）
+                    text_lower = text.lower()
+                    if not all(kw in text_lower for kw in keywords):
                         continue
 
-                    soup = BeautifulSoup(resp.text, "html.parser")
-                    messages = soup.find_all("div", class_="tgme_widget_message_text")
-                    # 倒序遍历（最新优先）
-                    for msg in reversed(messages):
-                        text = msg.get_text(separator="\n", strip=True)
-                        if not text:
+                    # 提取 115 分享链接
+                    for link in _115_LINK_RE.findall(text):
+                        share_code, receive_code = _parse_payload(link)
+                        if not share_code:
                             continue
-                        # 关键词过滤：所有关键词都要包含（不区分大小写）
-                        text_lower = text.lower()
-                        if not all(kw in text_lower for kw in keywords):
-                            continue
+                        if not receive_code:
+                            code_match = _CODE_RE.search(text)
+                            if code_match:
+                                receive_code = code_match.group(1)
 
-                        # 提取 115 分享链接
-                        for link in _115_LINK_RE.findall(text):
-                            share_code, receive_code = _parse_payload(link)
-                            if not share_code:
-                                continue
-                            # 提取码：先从 URL 参数提取，再从文本正则提取
-                            if not receive_code:
-                                code_match = _CODE_RE.search(text)
-                                if code_match:
-                                    receive_code = code_match.group(1)
-
-                            ch_hits.append(TgHit(
-                                text=text,
-                                share_url=link,
-                                share_code=share_code,
-                                receive_code=receive_code,
-                                resource_title=_guess_title(text),
-                                channel_name=cname,
-                            ))
-                    logger.info(f"【TG115】频道 [{cname}] 检索 '{keyword}' 命中 {len(ch_hits)} 条 115 资源")
-                except Exception as e:
-                    logger.error(f"【TG115】爬取频道 [{cname}] 出错: {e}")
-                    continue
-                all_hits.extend(ch_hits)
-
-        logger.info(f"【TG115】共爬取 {len(self.channels)} 个频道，合计命中 {len(all_hits)} 条 115 资源")
-        return all_hits
+                        ch_hits.append(TgHit(
+                            text=text,
+                            share_url=link,
+                            share_code=share_code,
+                            receive_code=receive_code,
+                            resource_title=_guess_title(text),
+                            channel_name=cname,
+                        ))
+                logger.info(f"【TG115】频道 [{cname}] 检索 '{keyword}' 命中 {len(ch_hits)} 条 115 资源")
+            except Exception as e:
+                logger.error(f"【TG115】爬取频道 [{cname}] 出错: {e}")
+            return ch_hits
 
     def _make_client(self):
         """创建 httpx.AsyncClient，带 UA 伪装 + 代理。"""
