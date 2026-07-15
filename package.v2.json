@@ -3,10 +3,11 @@
     "name": "拦截mp订阅",
     "description": "订阅新增时优先到指定 Telegram 频道搜索 115 资源，命中并转存成功后自动完成订阅；未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。",
     "labels": "订阅,Telegram,115网盘",
-    "version": "4.1.2",
+    "version": "4.1.3",
     "author": "MoviePilot User",
     "level": 2,
     "history": {
+      "v4.1.3": "详情页(Page.vue)增加手动搜索：搜索框+响应式卡片网格(1/2/3/4列随浏览器宽度)，每卡片显示网盘类型标签/标题/来源/发布日期/文本片段，支持复制链接与一键转存(仅115)。115转存自动补提取码到URL。非115资源(夸克/百度等)只展示+复制链接。",
       "v4.1.2": "修正115目录操作端点（逐一核对p115client源码）：fs_info改用proapi /open/folder/get_info、建目录改用proapi /open/folder/add，与p115client一致。转存核心share_snap/share_receive本就用webapi.115.com（与p115client完全一致，proven）。fs_files保留webapi /files（cid/n/sha1响应结构与目录浏览解析代码匹配）。__dir_info兼容proapi file_name/file_id字段。登录(urllib直连，未改动)+转存核心端点与p115client逐一核对一致，可靠。",
       "v4.1.1": "移除 p115client 重依赖：115 转存/目录操作/Cookie验证改用 httpx 直连 webapi.115.com（share_snap+share_receive+fs_files+fs_info+files/add）。_ensure_deps 只装 beautifulsoup4+httpx（httpx 多由 MP 核心预装），解决 p115client 依赖多、冷启动 pip 安装慢导致插件加载/更新超时的问题。requirements 同步更新。",
       "v4.1.0": "新增目标资源站集成 + 修复TG搜索0命中。①tg_scraper真正改用?q=服务端搜索全历史（v4.0.0补丁未生效，本版落地），_build_keyword去掉年份避免漏匹配。②新增site_scraper：纯Python解RSW时间锁PoW(pow约1.5s)免浏览器，/res/search_suggest搜索+/res/downurl取panlist全网盘资源，按URL域名分类网盘类型。③订阅双源搜索+年份精确匹配，仅115自动转存，非115(夸克/百度/阿里/迅雷)手动搜索展示+复制链接。④新增/check_site API、前端资源站配置区+搜索结果网盘类型标签。⑤清理废弃Telethon文件、重写README。",
