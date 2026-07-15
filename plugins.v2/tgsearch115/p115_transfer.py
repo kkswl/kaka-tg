@@ -116,14 +116,24 @@ class P115Transfer:
 
     # ============================ 内部工具 ============================
     def _get_client(self):
-        """延迟导入 p115client，避免插件加载期强依赖。"""
+        """延迟导入 p115client，避免插件加载期强依赖。
+
+        p115client 不同版本 ``P115Client.__init__`` 形参有差异：新版本移除了
+        ``check_for_relogin`` / ``ensure_cookies`` / ``console_qrcode`` 等参数，
+        传了会抛 ``TypeError: unexpected keyword argument``。这里按「从全到简」
+        依次尝试，兼容各版本；最终兜底仅传 cookie。
+        """
         from p115client import P115Client
-        return P115Client(
-            self.cookie,
-            check_for_relogin=False,
-            ensure_cookies=False,
-            console_qrcode=False,
-        )
+        for kwargs in (
+            {"check_for_relogin": False, "ensure_cookies": False, "console_qrcode": False},
+            {"ensure_cookies": False, "console_qrcode": False},
+            {"ensure_cookies": False},
+        ):
+            try:
+                return P115Client(self.cookie, **kwargs)
+            except TypeError:
+                continue
+        return P115Client(self.cookie)
 
     def _get_or_create_cid(self, client, path: str) -> int:
         """根据路径获取目录 cid，不存在则创建。根目录返回 0。"""
