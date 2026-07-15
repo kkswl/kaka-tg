@@ -19,16 +19,10 @@
         <v-icon icon="mdi-cloud-outline" color="primary" class="mr-2" />
         <span class="text-subtitle-1 font-weight-bold">115 网盘登录</span>
         <v-spacer />
-        <v-chip
-          :color="loginStatusColor"
-          variant="tonal"
-          size="small"
-          class="font-weight-medium mr-2"
-          :prepend-icon="loginStatusIcon"
-        >
-          {{ loginStatusText }}
-        </v-chip>
-        <v-btn v-if="loginOk" size="small" variant="text" :loading="verifyLoading" prepend-icon="mdi-shield-check" @click="verifyCookie">验证</v-btn>
+        <v-btn size="small" color="primary" variant="flat" :loading="saving" prepend-icon="mdi-content-save" @click="saveAll">保存凭证</v-btn>
+        <v-btn size="small" variant="outlined" prepend-icon="mdi-qrcode-scan" @click="openQrcode" class="ml-2">扫码登录</v-btn>
+        <v-chip :color="loginStatusColor" variant="tonal" size="small" class="font-weight-medium ml-2" :prepend-icon="loginStatusIcon">{{ loginStatusText }}</v-chip>
+        <v-btn v-if="loginOk" size="small" variant="text" :loading="verifyLoading" @click="verifyCookie" class="ml-1">验证</v-btn>
       </v-card-title>
       <v-divider />
       <v-card-text class="px-4 py-4">
@@ -54,15 +48,13 @@
               label="115 转存目录"
               variant="outlined"
               density="comfortable"
-              hint="如 /电影；目录不存在会自动创建；也可填数字 cid"
+              :hint="targetPathName ? `📁 ${targetPathName}` : '如 /电影；目录不存在会自动创建；也可填数字 cid'"
               persistent-hint
+              @update:model-value="onTargetChange"
             />
           </v-col>
-          <v-col cols="12" md="4" class="d-flex align-center flex-wrap ga-2">
-            <v-btn color="primary" variant="flat" :loading="saving" prepend-icon="mdi-refresh" @click="saveAll">
-              {{ loginOk ? '更新凭证' : '登录' }}
-            </v-btn>
-            <v-btn variant="outlined" prepend-icon="mdi-qrcode-scan" @click="openQrcode">扫码登录</v-btn>
+          <v-col cols="12" md="4" class="d-flex align-center">
+            <v-btn variant="outlined" prepend-icon="mdi-folder-open" @click="openDirBrowser('target')">选择目录</v-btn>
           </v-col>
         </v-row>
       </v-card-text>
@@ -104,7 +96,7 @@
           <div v-if="dirInfoName" class="text-caption text-success mb-2">📁 当前 cid 目录：{{ dirInfoName }}</div>
           <div class="d-flex ga-2 mb-3">
             <v-btn color="primary" variant="flat" :loading="transferLoading" prepend-icon="mdi-cloud-download" @click="doTransfer">转存</v-btn>
-            <v-btn variant="outlined" prepend-icon="mdi-folder-open" @click="openDirBrowser">选择目录</v-btn>
+            <v-btn variant="outlined" prepend-icon="mdi-folder-open" @click="openDirBrowser('transfer')">选择目录</v-btn>
           </div>
           <v-alert
             v-if="transferResult"
@@ -414,22 +406,25 @@
       <v-card rounded="lg">
         <v-card-title class="d-flex align-center px-4 py-3">
           <v-icon icon="mdi-folder-open" class="mr-2" />选择 115 目录
-          <v-spacer />
-          <span class="text-caption text-medium-emphasis">cid: {{ dirBrowserCid }}</span>
         </v-card-title>
         <v-divider />
-        <v-card-text class="px-2 py-2" style="max-height: 60vh; overflow-y: auto;">
-          <div class="d-flex align-center px-2 py-1">
-            <v-btn variant="text" size="small" prepend-icon="mdi-home" @click="loadDirs('0')">根目录</v-btn>
-            <v-btn v-if="dirBrowserCid !== '0'" variant="text" size="small" prepend-icon="mdi-arrow-left" @click="loadDirs(dirBrowserParent)">上一级</v-btn>
+        <v-card-text class="px-2 py-2" style="max-height: 55vh; overflow-y: auto;">
+          <div class="d-flex align-center px-2 py-1 flex-wrap">
+            <v-btn variant="text" size="small" prepend-icon="mdi-home" @click="navigateRoot">根目录</v-btn>
+            <template v-for="(p, i) in dirBrowserPath.slice(1)" :key="i">
+              <v-icon size="small" class="mx-1">mdi-chevron-right</v-icon>
+              <span class="text-caption">{{ p.name }}</span>
+            </template>
+            <v-spacer />
+            <v-btn v-if="dirBrowserPath.length > 1" variant="text" size="small" prepend-icon="mdi-arrow-left" @click="navigateUp">上一级</v-btn>
           </div>
           <v-progress-circular v-if="dirBrowserLoading" indeterminate size="20" width="2" class="ma-4" />
           <v-list v-else density="compact" nav>
-            <v-list-item v-for="d in dirBrowserDirs" :key="d.cid" @click="loadDirs(d.cid)">
+            <v-list-item v-for="d in dirBrowserDirs" :key="d.cid" @click="navigateInto(d.cid, d.name)">
               <template #prepend><v-icon icon="mdi-folder" color="amber-darken-2" /></template>
               <v-list-item-title>{{ d.name }}</v-list-item-title>
               <template #append>
-                <v-btn size="small" variant="tonal" color="primary" @click.stop="selectDir(d.cid, d.name)">选择</v-btn>
+                <v-btn size="small" variant="tonal" color="primary" @click.stop="selectDir(d.cid, dirBrowserPathStr + '/' + d.name)">选择</v-btn>
               </template>
             </v-list-item>
           </v-list>
@@ -437,8 +432,10 @@
         </v-card-text>
         <v-divider />
         <v-card-actions class="px-4 py-3">
+          <span class="text-caption text-medium-emphasis text-truncate" style="max-width: 60%;">当前: {{ dirBrowserPathStr || '/' }}</span>
           <v-spacer />
           <v-btn variant="text" @click="dirBrowserOpen = false">取消</v-btn>
+          <v-btn color="primary" variant="flat" @click="selectCurrent">确认</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -528,7 +525,15 @@ const dirBrowserCid = ref('0')
 const dirBrowserParent = ref('0')
 const dirBrowserDirs = ref([])
 const dirBrowserLoading = ref(false)
+const dirBrowserPath = ref([{ cid: '0', name: '根目录' }])
+const dirBrowserMode = ref('transfer')
+const targetPathName = ref('')
 let dirInfoTimer = null
+let targetTimer = null
+const dirBrowserPathStr = computed(() => {
+  const parts = dirBrowserPath.value.slice(1).map((p) => p.name)
+  return parts.length ? '/' + parts.join('/') : ''
+})
 const transferLabel = computed(() => `115 转存目录（留空用默认：${config.p115_target || '/'}；也可填 cid）`)
 const qrData = reactive({ uid: '', time: '', sign: '', qrcode_url: '', app: 'web' })
 const qrMsg = ref('')
@@ -610,8 +615,9 @@ function applyConfig(cfg) {
 }
 
 onMounted(async () => {
-  // get_form 返回空桩，MP 传入的 initialConfig 为空；始终从 /config/get 读取真实保存的配置
   await loadConfig()
+  // 打开插件时主动验证 Cookie 是否真的生效
+  if (loginOk.value) verifyCookie()
 })
 
 async function loadConfig() {
@@ -757,13 +763,22 @@ function onTransferTargetChange() {
     if (res && res.success) dirInfoName.value = res.name
   }, 500)
 }
-async function openDirBrowser() {
+function onTargetChange() {
+  clearTimeout(targetTimer)
+  targetTimer = setTimeout(async () => {
+    const c = String(config.p115_target || '').trim()
+    if (!/^\d+$/.test(c)) { targetPathName.value = ''; return }
+    const res = await apiGet(`/dir_info?cid=${encodeURIComponent(c)}`)
+    targetPathName.value = res && res.success ? res.name : ''
+  }, 500)
+}
+async function openDirBrowser(mode = 'transfer') {
+  dirBrowserMode.value = mode
+  dirBrowserPath.value = [{ cid: '0', name: '根目录' }]
   dirBrowserOpen.value = true
   await loadDirs('0')
 }
 async function loadDirs(cid) {
-  // 记住父级用于「上一级」（粗略：根目录的父是根）
-  if (cid !== dirBrowserCid.value) dirBrowserParent.value = dirBrowserCid.value
   dirBrowserCid.value = cid
   dirBrowserLoading.value = true
   dirBrowserDirs.value = []
@@ -772,10 +787,32 @@ async function loadDirs(cid) {
   if (res && res.success) dirBrowserDirs.value = res.dirs || []
   else snack((res && res.message) || '获取目录失败', 'error')
 }
-function selectDir(cid, name) {
-  transferTarget.value = cid
-  dirInfoName.value = name
+async function navigateInto(cid, name) {
+  dirBrowserPath.value.push({ cid, name })
+  await loadDirs(cid)
+}
+async function navigateUp() {
+  if (dirBrowserPath.value.length > 1) dirBrowserPath.value.pop()
+  const cur = dirBrowserPath.value[dirBrowserPath.value.length - 1]
+  await loadDirs(cur.cid)
+}
+async function navigateRoot() {
+  dirBrowserPath.value = [{ cid: '0', name: '根目录' }]
+  await loadDirs('0')
+}
+function selectDir(cid, path) {
+  if (dirBrowserMode.value === 'transfer') {
+    transferTarget.value = cid
+    dirInfoName.value = path
+  } else {
+    config.p115_target = cid
+    targetPathName.value = path
+  }
   dirBrowserOpen.value = false
+}
+function selectCurrent() {
+  const cur = dirBrowserPath.value[dirBrowserPath.value.length - 1]
+  selectDir(cur.cid, dirBrowserPathStr.value)
 }
 
 /* --------------------------- 保存 --------------------------- */

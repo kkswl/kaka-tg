@@ -79,6 +79,7 @@ class P115Transfer:
         except Exception as e:
             return False, f"115 客户端初始化失败: {e}", result
 
+        logger.info(f"【TG115】手动转存 share_url={share_url} target={effective}")
         # 目标目录：纯数字视为 cid 直接用；否则按路径查找/创建
         try:
             if effective.isdigit():
@@ -95,9 +96,12 @@ class P115Transfer:
             "cid": int(parent_id),
             "is_check": 0,
         }
+        logger.info(f"【TG115】转存 payload={payload}")
         try:
             resp = client.share_receive(payload)
+            logger.info(f"【TG115】share_receive 响应: {str(resp)[:300]}")
         except Exception as e:
+            logger.error(f"【TG115】share_receive 异常: {e}")
             return False, f"调用 115 转存接口失败: {e}", result
 
         if not self._response_ok(resp):
