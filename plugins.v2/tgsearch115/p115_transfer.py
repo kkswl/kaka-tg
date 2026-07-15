@@ -139,6 +139,7 @@ class P115Transfer:
         """
         import urllib.request as _ureq
         import urllib.parse as _uparse
+        import json as _json
         url = "https://webapi.115.com/share/receive"
         data = _uparse.urlencode({
             "share_code": share_code,
@@ -154,7 +155,7 @@ class P115Transfer:
             "Content-Type": "application/x-www-form-urlencoded",
         })
         with _ureq.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read().decode("utf-8", "replace"))
+            return _json.loads(resp.read().decode("utf-8", "replace"))
 
     def _get_client(self):
         """延迟导入 p115client，避免插件加载期强依赖。
