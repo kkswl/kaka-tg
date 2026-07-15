@@ -218,29 +218,40 @@ class TgChannelScraper:
                         break
 
                     soup = BeautifulSoup(resp.text, "html.parser")
-                    # 消息容器（包含 data-post 属性，格式 "channel/123"）
-                    msg_wraps = soup.find_all("div", class_="tgme_widget_message_wrap")
-                    if not msg_wraps:
+                    # 消息容器：data-post 属性在 tgme_widget_message 上（不是 _wrap）
+                    msg_elements = soup.find_all("div", class_="tgme_widget_message")
+                    if not msg_elements:
+                        # 兜底：用 data-post 属性直接搜
+                        msg_elements = soup.find_all(attrs={"data-post": True})
+                    if not msg_elements:
                         break  # 没有更多消息
 
                     page_oldest_id = None
                     page_hits = 0
 
-                    for wrap in msg_wraps:
+                    for msg_el in msg_elements:
                         try:
-                            # 提取消息 ID（用于翻页）
-                            post_attr = wrap.get("data-post", "")
+                            # 提取消息 ID（data-post="channel/123"）
+                            post_attr = msg_el.get("data-post", "")
                             msg_id = 0
                             if "/" in post_attr:
                                 try:
                                     msg_id = int(post_attr.split("/")[-1])
                                 except Exception:
                                     pass
+                            # 兜底：从 <time> 父级 <a> 的 href 提取
+                            if not msg_id:
+                                time_tag = msg_el.find("time")
+                                if time_tag and time_tag.parent:
+                                    href = time_tag.parent.get("href", "")
+                                    m = re.search(r"/(\d+)$", href)
+                                    if m:
+                                        msg_id = int(m.group(1))
                             if msg_id and (page_oldest_id is None or msg_id < page_oldest_id):
                                 page_oldest_id = msg_id
 
                             # 提取消息文本
-                            text_div = wrap.find("div", class_="tgme_widget_message_text")
+                            text_div = msg_el.find("div", class_="tgme_widget_message_text")
                             if not text_div:
                                 continue
                             text = text_div.get_text(separator="\n", strip=True)
@@ -254,7 +265,7 @@ class TgChannelScraper:
                                 continue
 
                             # 提取发布时间
-                            pub_date = _extract_pub_date(wrap)
+                            pub_date = _extract_pub_date(msg_el)
 
                             # 提取 115 分享链接
                             for link in _115_LINK_RE.findall(text):
