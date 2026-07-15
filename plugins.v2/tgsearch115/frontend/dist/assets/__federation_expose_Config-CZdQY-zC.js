@@ -699,7 +699,7 @@ return (_ctx, _cache) => {
               variant: "text",
               size: "small",
               color: "error",
-              onClick: _cache[1] || (_cache[1] = $event => {config.enabled = false; saveAll();}),
+              onClick: _cache[1] || (_cache[1] = $event => (emit('close'))),
               class: "ml-1"
             }, {
               default: _withCtx(() => [
@@ -709,7 +709,7 @@ return (_ctx, _cache) => {
                   location: "top"
                 }, {
                   default: _withCtx(() => [...(_cache[31] || (_cache[31] = [
-                    _createTextVNode("关闭插件", -1)
+                    _createTextVNode("关闭", -1)
                   ]))]),
                   _: 1
                 })
@@ -722,9 +722,12 @@ return (_ctx, _cache) => {
         _createVNode(_component_v_divider),
         _createVNode(_component_v_card_text, { class: "px-4 py-4" }, {
           default: _withCtx(() => [
-            _createVNode(_component_v_row, null, {
+            _createVNode(_component_v_row, { align: "center" }, {
               default: _withCtx(() => [
-                _createVNode(_component_v_col, { cols: "12" }, {
+                _createVNode(_component_v_col, {
+                  cols: "12",
+                  md: "8"
+                }, {
                   default: _withCtx(() => [
                     _createVNode(_component_v_text_field, {
                       modelValue: config.p115_cookie,
@@ -732,12 +735,44 @@ return (_ctx, _cache) => {
                       type: "text",
                       label: "115 Cookie",
                       variant: "outlined",
-                      density: "comfortable",
-                      hint: "扫码登录后自动填入；格式应为 UID=...; CID=...; SEID=...",
-                      "persistent-hint": "",
-                      "append-outer-icon": config.p115_cookie ? 'mdi-close-circle' : undefined,
-                      "onClick:appendOuter": clearCookie
-                    }, null, 8, ["modelValue", "append-outer-icon"])
+                      density: "compact",
+                      "hide-details": "",
+                      "append-inner-icon": config.p115_cookie ? 'mdi-close-circle' : undefined,
+                      "onClick:appendInner": clearCookie
+                    }, null, 8, ["modelValue", "append-inner-icon"])
+                  ]),
+                  _: 1
+                }),
+                _createVNode(_component_v_col, {
+                  cols: "12",
+                  md: "4",
+                  class: "d-flex align-center flex-wrap ga-2"
+                }, {
+                  default: _withCtx(() => [
+                    _createVNode(_component_v_btn, {
+                      size: "small",
+                      color: "primary",
+                      variant: "flat",
+                      loading: saving.value,
+                      "prepend-icon": "mdi-content-save",
+                      onClick: saveAll
+                    }, {
+                      default: _withCtx(() => [...(_cache[33] || (_cache[33] = [
+                        _createTextVNode("保存凭证", -1)
+                      ]))]),
+                      _: 1
+                    }, 8, ["loading"]),
+                    _createVNode(_component_v_btn, {
+                      size: "small",
+                      variant: "outlined",
+                      "prepend-icon": "mdi-qrcode-scan",
+                      onClick: openQrcode
+                    }, {
+                      default: _withCtx(() => [...(_cache[34] || (_cache[34] = [
+                        _createTextVNode("扫码登录", -1)
+                      ]))]),
+                      _: 1
+                    })
                   ]),
                   _: 1
                 }),
@@ -763,7 +798,7 @@ return (_ctx, _cache) => {
                 }),
                 _createVNode(_component_v_col, {
                   cols: "12",
-                  md: "3",
+                  md: "6",
                   class: "d-flex align-center"
                 }, {
                   default: _withCtx(() => [
@@ -772,41 +807,8 @@ return (_ctx, _cache) => {
                       "prepend-icon": "mdi-folder-open",
                       onClick: _cache[4] || (_cache[4] = $event => (openDirBrowser('target')))
                     }, {
-                      default: _withCtx(() => [...(_cache[33] || (_cache[33] = [
-                        _createTextVNode("选择目录", -1)
-                      ]))]),
-                      _: 1
-                    })
-                  ]),
-                  _: 1
-                }),
-                _createVNode(_component_v_col, {
-                  cols: "12",
-                  md: "3",
-                  class: "d-flex align-center flex-wrap ga-2"
-                }, {
-                  default: _withCtx(() => [
-                    _createVNode(_component_v_btn, {
-                      size: "small",
-                      color: "primary",
-                      variant: "flat",
-                      loading: saving.value,
-                      "prepend-icon": "mdi-content-save",
-                      onClick: saveAll
-                    }, {
-                      default: _withCtx(() => [...(_cache[34] || (_cache[34] = [
-                        _createTextVNode("保存凭证", -1)
-                      ]))]),
-                      _: 1
-                    }, 8, ["loading"]),
-                    _createVNode(_component_v_btn, {
-                      size: "small",
-                      variant: "outlined",
-                      "prepend-icon": "mdi-qrcode-scan",
-                      onClick: openQrcode
-                    }, {
                       default: _withCtx(() => [...(_cache[35] || (_cache[35] = [
-                        _createTextVNode("扫码登录", -1)
+                        _createTextVNode("选择目录", -1)
                       ]))]),
                       _: 1
                     })
@@ -1867,6 +1869,6 @@ return (_ctx, _cache) => {
 }
 
 };
-const Config = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-12e1f17d"]]);
+const Config = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-8c03c448"]]);
 
 export { Config as default };

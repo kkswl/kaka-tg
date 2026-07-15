@@ -22,26 +22,29 @@
         <v-spacer />
         <v-chip :color="loginStatusColor" variant="tonal" size="small" class="font-weight-medium" :prepend-icon="loginStatusIcon">{{ loginStatusText }}</v-chip>
         <v-btn v-if="loginOk" size="small" variant="text" :loading="verifyLoading" @click="verifyCookie" class="ml-1">验证</v-btn>
-        <v-btn icon variant="text" size="small" color="error" @click="config.enabled = false; saveAll()" class="ml-1">
+        <v-btn icon variant="text" size="small" color="error" @click="emit('close')" class="ml-1">
           <v-icon icon="mdi-close" />
-          <v-tooltip activator="parent" location="top">关闭插件</v-tooltip>
+          <v-tooltip activator="parent" location="top">关闭</v-tooltip>
         </v-btn>
       </v-card-title>
       <v-divider />
       <v-card-text class="px-4 py-4">
-        <v-row>
-          <v-col cols="12">
+        <v-row align="center">
+          <v-col cols="12" md="8">
             <v-text-field
               v-model="config.p115_cookie"
               type="text"
               label="115 Cookie"
               variant="outlined"
-              density="comfortable"
-              hint="扫码登录后自动填入；格式应为 UID=...; CID=...; SEID=..."
-              persistent-hint
-              :append-outer-icon="config.p115_cookie ? 'mdi-close-circle' : undefined"
-              @click:append-outer="clearCookie"
+              density="compact"
+              hide-details
+              :append-inner-icon="config.p115_cookie ? 'mdi-close-circle' : undefined"
+              @click:append-inner="clearCookie"
             />
+          </v-col>
+          <v-col cols="12" md="4" class="d-flex align-center flex-wrap ga-2">
+            <v-btn size="small" color="primary" variant="flat" :loading="saving" prepend-icon="mdi-content-save" @click="saveAll">保存凭证</v-btn>
+            <v-btn size="small" variant="outlined" prepend-icon="mdi-qrcode-scan" @click="openQrcode">扫码登录</v-btn>
           </v-col>
           <v-col cols="12" md="6">
             <v-text-field
@@ -54,12 +57,8 @@
               @update:model-value="onTargetChange"
             />
           </v-col>
-          <v-col cols="12" md="3" class="d-flex align-center">
+          <v-col cols="12" md="6" class="d-flex align-center">
             <v-btn variant="outlined" prepend-icon="mdi-folder-open" @click="openDirBrowser('target')">选择目录</v-btn>
-          </v-col>
-          <v-col cols="12" md="3" class="d-flex align-center flex-wrap ga-2">
-            <v-btn size="small" color="primary" variant="flat" :loading="saving" prepend-icon="mdi-content-save" @click="saveAll">保存凭证</v-btn>
-            <v-btn size="small" variant="outlined" prepend-icon="mdi-qrcode-scan" @click="openQrcode">扫码登录</v-btn>
           </v-col>
         </v-row>
       </v-card-text>
