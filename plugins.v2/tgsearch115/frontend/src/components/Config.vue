@@ -240,6 +240,14 @@
           <v-row>
             <v-col cols="12" md="6" class="d-flex align-center">
               <div class="mr-2">
+                <div class="text-subtitle-2">插件直接标记完成</div>
+                <div class="text-caption text-medium-emphasis">开启=转存后插件直接标记订阅完成（不用MP整理115）；关闭=只阻断搜索，让MP整理115资源后自己完成</div>
+              </div>
+              <v-spacer />
+              <v-switch v-model="config.auto_finish" color="primary" hide-details density="compact" />
+            </v-col>
+            <v-col cols="12" md="6" class="d-flex align-center">
+              <div class="mr-2">
                 <div class="text-subtitle-2">MP 过滤规则组二次匹配</div>
                 <div class="text-caption text-medium-emphasis">复用 MoviePilot 订阅过滤规则组</div>
               </div>
@@ -431,6 +439,7 @@ const DEFAULTS = {
   delay_seconds: 3,
   notify_success: true,
   notify_fail: false,
+  auto_finish: true,
   tg_channels: [],
 }
 

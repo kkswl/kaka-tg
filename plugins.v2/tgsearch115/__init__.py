@@ -221,7 +221,7 @@ class TgSearch115(_PluginBase):
         "订阅新增时优先到指定 Telegram 频道搜索 115 资源，命中并转存成功后自动完成订阅；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "3.3.0"
+    plugin_version = "3.3.1"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -244,7 +244,7 @@ class TgSearch115(_PluginBase):
     _delay_seconds = 3
     _notify_success = True
     _notify_fail = False
-
+    _auto_finish = True  # True=插件直接标记完成(不用MP整理); False=只阻断搜索让MP自己整理
     # ============================ 生命周期 ============================
     def init_plugin(self, config: dict = None):
         """生效配置。
@@ -282,7 +282,7 @@ class TgSearch115(_PluginBase):
         self._delay_seconds = self._safe_int(config.get("delay_seconds"), 3)
         self._notify_success = self._to_bool(config.get("notify_success"), True)
         self._notify_fail = self._to_bool(config.get("notify_fail"), False)
-
+        self._auto_finish = self._to_bool(config.get("auto_finish"), True)
         # TG 频道列表：自定义前端直接以数组/JSON 字符串形式提交 tg_channels
         self._tg_channels = self._parse_channels(config.get("tg_channels"))
 
@@ -600,17 +600,17 @@ class TgSearch115(_PluginBase):
         }.items() if v}
 
     def _finish_subscribe(self, subscribe, meta, mediainfo, torrent: TorrentInfo, transfer_msg: str):
-        """转存成功后：设置 state=P 阻断 MP 搜索，让 MP 自己整理 115 资源后标记完成。
+        """转存成功后处理订阅，两种模式由 ``auto_finish`` 开关控制：
 
-        策略变更（v3.3.0）：
-          - **不删订阅、不写历史** -- 这些由 MP 整理 115 资源后自己完成。
-          - 插件只做两件事：
-            1. 设置 ``state="P"`` 阻断 MP 去BT/PT 搜索（抢跑阻断）
-            2. 剧集额外设 ``lack_episode=0`` 告诉 MP 本季已齐
-          - MP 的文件监控会检测到 115 目录中的新文件 -> 整理（刮削+重命名+入库）
-            -> 记录整理历史 -> ``finish_subscribe_or_not`` 检测到 lack_episode=0
-            -> ``__finish_subscribe``（写历史 + 删订阅 + 通知）
-          - 这样 MP 的整理历史是完整的，资源可以被正确刮削入库。
+        ``auto_finish=True``（默认，不依赖 MP 整理 115）：
+          - 电影：写历史 -> 删订阅 -> 发 SubscribeComplete -> 通知
+          - 剧集：设 lack_episode=0 + state=P -> 发 SubscribeComplete -> 通知
+          - 适合：不用 MP 整理 115 资源的用户，插件直接标记完成。
+
+        ``auto_finish=False``（让 MP 整理 115 后自己完成）：
+          - 电影/剧集统一：只设 state=P（+ 剧集 lack_episode=0），不删订阅、不写历史
+          - MP 文件监控检测 115 目录新文件 -> 整理（刮削+入库）-> 写历史 -> 删订阅
+          - 适合：用 MP 整理 115 资源的用户，MP 有完整整理历史。
         """
         try:
             oper = SubscribeOper()
@@ -618,28 +618,44 @@ class TgSearch115(_PluginBase):
                      getattr(mediainfo, "type", None) == "电视剧" or
                      getattr(meta, "type", None) == "TV")
 
-            # 解析集数信息（仅剧集有意义的展示用）
             raw_text = torrent.description or torrent.title or ""
             episode_info = self._parse_episode_info(raw_text) if is_tv else ""
             season_str = f"第 {subscribe.season or 1} 季" if subscribe.season else "当季"
 
-            # ===== 统一处理：设 state=P 阻断搜索，不删订阅、不写历史 =====
-            # MP 整理 115 资源后会自己写历史、删订阅、发通知
-            update_payload = {"state": "P"}  # P = 阻断搜索
-            if is_tv:
-                update_payload["lack_episode"] = 0  # 剧集：本季已齐
+            if self._auto_finish:
+                # ===== 模式一：插件直接标记完成 =====
+                if not is_tv:
+                    # 电影：写历史 + 删订阅
+                    oper.add_history(**subscribe.to_dict())
+                    oper.delete(subscribe.id)
+                    logger.info(f"【TG115】电影订阅 [{subscribe.name}] 已通过 TG+115 完成并标记完结")
+                else:
+                    # 剧集：设 lack_episode=0 + state=P（不删订阅）
+                    try:
+                        oper.update(subscribe.id, {
+                            "lack_episode": 0,
+                            "state": "P",
+                        })
+                        logger.info(f"【TG115】剧集订阅 [{subscribe.name}] {season_str} 已更新"
+                                    f"（lack_episode=0, state=P）")
+                    except Exception as e:
+                        logger.warn(f"【TG115】更新剧集订阅失败（不影响转存）: {e}")
+            else:
+                # ===== 模式二：只阻断搜索，让 MP 整理后自己完成 =====
+                update_payload = {"state": "P"}
+                if is_tv:
+                    update_payload["lack_episode"] = 0
+                try:
+                    oper.update(subscribe.id, update_payload)
+                    logger.info(
+                        f"【TG115】订阅 [{subscribe.name}] 已设 state=P 阻断搜索"
+                        f"{'，lack_episode=0（剧集本季已齐）' if is_tv else '（电影）'}"
+                        f"，等待 MP 整理 115 资源后自动标记完成"
+                    )
+                except Exception as e:
+                    logger.warn(f"【TG115】更新订阅状态失败（不影响转存结果）: {e}")
 
-            try:
-                oper.update(subscribe.id, update_payload)
-                logger.info(
-                    f"【TG115】订阅 [{subscribe.name}] 已设 state=P 阻断搜索"
-                    f"{'，lack_episode=0（剧集本季已齐）' if is_tv else '（电影）'}"
-                    f"，等待 MP 整理 115 资源后自动标记完成"
-                )
-            except Exception as e:
-                logger.warn(f"【TG115】更新订阅状态失败（不影响转存结果）: {e}")
-
-            # 发送 SubscribeComplete 事件（让其他插件/系统知道本订阅已通过 TG115 完成）
+            # 发送 SubscribeComplete 事件
             eventmanager.send_event(EventType.SubscribeComplete, {
                 "subscribe_id": subscribe.id,
                 "subscribe_info": subscribe.to_dict(),
@@ -655,16 +671,18 @@ class TgSearch115(_PluginBase):
                             title=f"\U0001F4FA 剧集订阅更新：{subscribe.name}",
                             text=f"TG115 插件已转存《{subscribe.name}》{season_str}的资源"
                                  f"（{episode_info}）。\n"
-                                 f"已阻断 MP 搜索，等待系统整理 115 资源并刮削入库。\n"
-                                 f"资源: {torrent.title}\n{transfer_msg}",
+                                 + (f"资源: {torrent.title}\n{transfer_msg}" if self._auto_finish
+                                    else f"已阻断 MP 搜索，等待系统整理 115 资源并刮削入库。\n"
+                                         f"资源: {torrent.title}\n{transfer_msg}"),
                         )
                     else:
                         self.post_message(
                             mtype=NotificationType.Subscribe,
                             title=f"\U0001F3AC 电影订阅完成：{subscribe.name}",
                             text=f"TG115 插件已成功将《{subscribe.name}》转存至 115 网盘。\n"
-                                 f"已阻断 MP 搜索，等待系统整理 115 资源并刮削入库。\n"
-                                 f"资源: {torrent.title}\n{transfer_msg}",
+                                 + (f"资源: {torrent.title}\n{transfer_msg}" if self._auto_finish
+                                    else f"已阻断 MP 搜索，等待系统整理 115 资源并刮削入库。\n"
+                                         f"资源: {torrent.title}\n{transfer_msg}"),
                         )
                 except Exception:
                     pass
@@ -1048,7 +1066,7 @@ class TgSearch115(_PluginBase):
             "delay_seconds": 3,
             "notify_success": True,
             "notify_fail": False,
-            "tg_channels": [],
+            "auto_finish": True,            "tg_channels": [],
         }
 
     @staticmethod
