@@ -20,14 +20,15 @@
         <span class="text-subtitle-1 font-weight-bold">115 网盘登录</span>
         <v-spacer />
         <v-chip
-          :color="loginOk ? 'success' : 'grey'"
+          :color="loginStatusColor"
           variant="tonal"
           size="small"
-          class="font-weight-medium"
-          :prepend-icon="loginOk ? 'mdi-check-circle' : 'mdi-alert-circle-outline'"
+          class="font-weight-medium mr-2"
+          :prepend-icon="loginStatusIcon"
         >
-          {{ loginOk ? '已登录' : '未登录' }}
+          {{ loginStatusText }}
         </v-chip>
+        <v-btn v-if="loginOk" size="small" variant="text" :loading="verifyLoading" prepend-icon="mdi-shield-check" @click="verifyCookie">验证</v-btn>
       </v-card-title>
       <v-divider />
       <v-card-text class="px-4 py-4">
@@ -549,6 +550,26 @@ const loginOk = computed(() => {
   return c.length > 0 && ['UID', 'CID', 'SEID'].every((k) => c.includes(k + '='))
 })
 
+// Cookie 实测有效性（点「验证」按钮调 /verify_cookie 真实验证；null=未验证）
+const verifyLoading = ref(false)
+const cookieVerified = ref(null)
+const loginStatusText = computed(() => {
+  if (!loginOk.value) return '未登录'
+  if (cookieVerified.value === true) return '已验证'
+  if (cookieVerified.value === false) return 'Cookie已失效'
+  return '已登录'
+})
+const loginStatusColor = computed(() => {
+  if (!loginOk.value) return 'grey'
+  if (cookieVerified.value === false) return 'error'
+  return 'success'
+})
+const loginStatusIcon = computed(() => {
+  if (!loginOk.value) return 'mdi-alert-circle-outline'
+  if (cookieVerified.value === false) return 'mdi-alert-circle'
+  return 'mdi-check-circle'
+})
+
 /* --------------------------- API 调用（兼容 MP 响应封装） --------------------------- */
 // MP 的 api.get 可能返回裸数据，也可能包成 {code, success, data, message}，统一兼容。
 async function apiGet(path) {
@@ -596,6 +617,7 @@ onMounted(async () => {
 async function loadConfig() {
   const data = await apiGet('/config/get')
   if (data) applyConfig(data)
+  cookieVerified.value = null
 }
 
 /* 清空 115 Cookie 并立即保存（用于清掉残留/无效值） */
@@ -603,6 +625,19 @@ function clearCookie() {
   config.p115_cookie = ''
   snack('Cookie 已清空，正在保存…')
   saveAll()
+}
+
+async function verifyCookie() {
+  verifyLoading.value = true
+  const res = await apiGet('/verify_cookie')
+  verifyLoading.value = false
+  if (res && res.success) {
+    cookieVerified.value = res.valid
+    snack(res.message, res.valid ? 'success' : 'error')
+  } else {
+    cookieVerified.value = false
+    snack((res && res.message) || '验证失败', 'error')
+  }
 }
 
 /* --------------------------- 115 扫码登录 --------------------------- */

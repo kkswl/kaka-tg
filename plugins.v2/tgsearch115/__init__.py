@@ -193,12 +193,12 @@ def _pick_uid_cid_seid(text: str) -> str:
     """从任意文本（响应体 / Set-Cookie 头）提取 UID、CID、SEID，拼成标准 Cookie 串。"""
     text = text or ""
     found = {}
-    for k in ("UID", "CID", "SEID"):
+    for k in ("UID", "CID", "SEID", "KID"):
         m = _re.search(rf"\b{k}\s*=\s*([^;,\"\s]+)", text)
         if m:
             found[k] = m.group(1).strip()
-    if len(found) == 3:
-        return f"UID={found['UID']}; CID={found['CID']}; SEID={found['SEID']}"
+    if {"UID", "CID", "SEID"} <= set(found):
+        return "; ".join(f"{k}={found[k]}" for k in ("UID", "CID", "SEID", "KID") if k in found)
     return ""
 
 
@@ -221,7 +221,7 @@ class TgSearch115(_PluginBase):
         "订阅新增时优先到指定 Telegram 频道搜索 115 资源，命中并转存成功后自动完成订阅；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "2.2.2"
+    plugin_version = "2.2.3"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -404,6 +404,14 @@ class TgSearch115(_PluginBase):
                 "auth": "bear",
                 "summary": "列出 115 子目录（目录浏览）",
                 "description": "GET /dirs?cid=0",
+            },
+            {
+                "path": "/verify_cookie",
+                "endpoint": self.__verify_cookie_api,
+                "methods": ["GET"],
+                "auth": "bear",
+                "summary": "验证 115 Cookie 是否有效",
+                "description": "调 fs_files(0) 实测 Cookie 有效性",
             },
         ]
         return apis
@@ -875,6 +883,10 @@ class TgSearch115(_PluginBase):
         try:
             client = self._transfer._get_client()
             resp = client.fs_files(cid)
+            logger.info(f"【TG115】/dirs cid={cid} state={resp.get('state') if isinstance(resp, dict) else '?'} msg={(resp.get('message') or resp.get('error') or '')[:80] if isinstance(resp, dict) else ''}")
+            if isinstance(resp, dict) and resp.get("state") not in (True, 1, "1"):
+                err = resp.get("error") or resp.get("message") or resp.get("msg") or "获取失败"
+                return JSONResponse({"success": False, "message": f"115 返回：{err}"})
             data = resp.get("data") if isinstance(resp, dict) else None
             items = data if isinstance(data, list) else (data.get("data", []) if isinstance(data, dict) else [])
             dirs = []
@@ -891,6 +903,21 @@ class TgSearch115(_PluginBase):
         except Exception as e:
             logger.error(f"【TG115】获取子目录失败: {e}")
             return JSONResponse({"success": False, "message": f"获取目录失败: {e}"}, status_code=500)
+
+    def __verify_cookie_api(self):
+        """GET /verify_cookie：实测 115 Cookie 是否有效（调 fs_files(0)）。"""
+        from starlette.responses import JSONResponse
+        if not self._p115_cookie:
+            return JSONResponse({"success": False, "valid": False, "message": "未配置 115 Cookie"})
+        try:
+            client = self._transfer._get_client()
+            resp = client.fs_files(0)
+            ok = isinstance(resp, dict) and resp.get("state") in (True, 1, "1")
+            msg = "Cookie 有效" if ok else f"Cookie 已失效：{(resp.get('error') or resp.get('message') or '')[:80] if isinstance(resp, dict) else ''}"
+            return JSONResponse({"success": True, "valid": bool(ok), "message": msg})
+        except Exception as e:
+            logger.error(f"【TG115】验证 Cookie 异常: {e}")
+            return JSONResponse({"success": False, "valid": False, "message": f"验证失败: {e}"})
 
     # ============================ 依赖检查 ============================
     def _check_deps(self):
