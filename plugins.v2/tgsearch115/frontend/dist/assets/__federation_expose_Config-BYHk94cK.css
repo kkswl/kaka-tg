@@ -1,42 +1,42 @@
 
-.tg115-config[data-v-f24f7be3] {
+.tg115-config[data-v-ca1be09f] {
   max-width: 960px;
   margin: 0 auto;
 }
-.tg115-card[data-v-f24f7be3] {
+.tg115-card[data-v-ca1be09f] {
   background-color: rgb(var(--v-theme-surface));
   border-color: rgba(var(--v-theme-on-surface), 0.12);
 }
-.section-label[data-v-f24f7be3] {
+.section-label[data-v-ca1be09f] {
   font-size: 0.8125rem;
   font-weight: 600;
   color: rgba(var(--v-theme-on-surface), 0.7);
 }
-.add-card[data-v-f24f7be3] {
+.add-card[data-v-ca1be09f] {
   background-color: rgba(var(--v-theme-primary), 0.06);
 }
-.channel-list[data-v-f24f7be3] {
+.channel-list[data-v-ca1be09f] {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-.channel-item[data-v-f24f7be3] {
+.channel-item[data-v-ca1be09f] {
   background-color: rgb(var(--v-theme-surface));
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
-.channel-selected[data-v-f24f7be3] {
+.channel-selected[data-v-ca1be09f] {
   border-color: rgb(var(--v-theme-error)) !important;
   background-color: rgba(var(--v-theme-error), 0.05);
 }
-.channel-item[data-v-f24f7be3]:hover {
+.channel-item[data-v-ca1be09f]:hover {
   border-color: rgb(var(--v-theme-primary));
   box-shadow: 0 2px 10px rgba(var(--v-theme-on-surface), 0.08);
 }
-.channel-meta[data-v-f24f7be3] {
+.channel-meta[data-v-ca1be09f] {
   min-width: 0;
   flex: 1 1 auto;
 }
-.empty-state[data-v-f24f7be3] {
+.empty-state[data-v-ca1be09f] {
   text-align: center;
   padding: 36px 16px;
   color: rgba(var(--v-theme-on-surface), 0.45);

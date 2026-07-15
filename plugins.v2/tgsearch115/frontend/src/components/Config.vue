@@ -18,6 +18,7 @@
       <v-card-title class="d-flex align-center px-4 py-3">
         <v-icon icon="mdi-cloud-outline" color="primary" class="mr-2" />
         <span class="text-subtitle-1 font-weight-bold">115 网盘登录</span>
+        <v-switch v-model="config.enabled" color="success" hide-details density="compact" inset class="ml-2" />
         <v-spacer />
         <v-btn size="small" color="primary" variant="flat" :loading="saving" prepend-icon="mdi-content-save" @click="saveAll">保存凭证</v-btn>
         <v-btn size="small" variant="outlined" prepend-icon="mdi-qrcode-scan" @click="openQrcode" class="ml-2">扫码登录</v-btn>
@@ -126,7 +127,7 @@
             <div class="text-body-2">正在搜索 TG 频道...</div>
           </div>
           <div v-else-if="searchResults.length" class="channel-list">
-            <v-card v-for="(r, i) in searchResults" :key="i" variant="outlined" rounded="lg" class="channel-item mb-2">
+            <v-card v-for="(r, i) in searchResults.slice(0, displayLimit)" :key="i" variant="outlined" rounded="lg" class="channel-item mb-2">
               <div class="px-3 pt-2 pb-1">
                 <div class="d-flex align-start">
                   <v-icon icon="mdi-file-video-outline" color="primary" class="mr-3 mt-1" />
@@ -139,6 +140,12 @@
                 </div>
               </div>
             </v-card>
+          </div>
+          <div v-if="searchResults.length > displayLimit" class="text-center mt-3 mb-2">
+            <v-btn variant="text" color="primary" size="small" @click="loadMoreResults">
+              加载更多
+              <v-icon icon="mdi-chevron-right" size="small" class="ml-1" style="transform: rotate(90deg);" />
+            </v-btn>
           </div>
           <div v-else-if="searched && !searchLoading" class="empty-state">
             <v-icon icon="mdi-magnify-close" size="48" class="mb-2" />
@@ -229,13 +236,6 @@
         </v-window-item>
         <!-- ====== Tab：插件设置 ====== -->
         <v-window-item value="settings" class="pa-4">
-          <div class="d-flex align-center mb-4">
-            <div class="mr-3">
-              <div class="text-subtitle-1 font-weight-bold">功能总开关</div>
-              <div class="text-caption text-medium-emphasis">开启后监听订阅新增事件并自动检索 TG 频道</div>
-            </div>
-            <v-switch v-model="config.enabled" color="primary" hide-details density="compact" />
-          </div>
           <v-divider class="mb-4" />
           <v-row>
             <v-col cols="12" md="6" class="d-flex align-center">
@@ -485,6 +485,7 @@ const searchKeyword = ref('')
 const searchLoading = ref(false)
 const searchResults = ref([])
 const searched = ref(false)
+const displayLimit = ref(3)
 // 115 目录查询/浏览
 const dirInfoName = ref('')
 const dirBrowserOpen = ref(false)
@@ -583,7 +584,17 @@ function applyConfig(cfg) {
 
 onMounted(async () => {
   await loadConfig()
-  if (loginOk.value) verifyCookie()
+  // 每天只验证一次 Cookie（防止频繁验证触发 115 风控）
+  if (loginOk.value) {
+    try {
+      const last = localStorage.getItem('tg115_last_verify')
+      const today = new Date().toDateString()
+      if (last !== today) {
+        verifyCookie()
+        localStorage.setItem('tg115_last_verify', today)
+      }
+    } catch (e) { verifyCookie() }
+  }
   // 恢复上次搜索记录
   try {
     const saved = JSON.parse(localStorage.getItem('tg115_last_search') || 'null')
@@ -726,6 +737,10 @@ async function doSearch() {
   } else {
     snack((res && res.message) || '搜索失败', 'error')
   }
+  displayLimit.value = 3
+}
+function loadMoreResults() {
+  displayLimit.value += 10
 }
 
 /* --------------------------- 115 目录查询 / 浏览 --------------------------- */

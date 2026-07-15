@@ -144,7 +144,8 @@ class TgChannelScraper:
 
     async def _async_search(self, keyword: str) -> List[TgHit]:
         """并发搜索所有频道（Semaphore(5) 限流 + 随机延迟防 429）。"""
-        keywords = [k.strip().lower() for k in keyword.split() if k.strip()]
+        # 不拆分关键词，整词匹配（避免"片名+年份"拆开后年份不匹配导致漏搜）
+        keywords = [keyword.strip().lower()] if keyword.strip() else []
         sem = asyncio.Semaphore(5)
 
         # 前置过滤：跳过私有频道
