@@ -197,7 +197,7 @@ class TgSearch115(_PluginBase):
         "订阅新增时优先到指定 Telegram 频道搜索 115 资源，命中并转存成功后自动完成订阅；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.2.3"
+    plugin_version = "4.2.4"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -1075,12 +1075,13 @@ class TgSearch115(_PluginBase):
             logger.error(f"【TG115】手动转存异常: {e}")
             return JSONResponse({"success": False, "message": f"转存失败: {e}"}, status_code=500)
 
-    def __search_api(self, keyword: str = "", offset: int = 0):
-        """GET /search?keyword=...&offset=N：手动搜索 TG 频道 + 观影的网盘资源。
+    def __search_api(self, keyword: str = "", offset: int = 0, source: str = "all"):
+        """GET /search?keyword=...&offset=N&source=all|tg|site：手动搜索。
 
-        返回全部网盘类型（115/夸克/百度/阿里/迅雷…），前端按类型展示；仅 115 可自动转存。
+        source：all=全部(默认) / tg=仅TG频道 / site=仅观影。
+        返回全部网盘类型（115/夸克/百度/阿里/迅雷…/磁力），前端按类型展示；仅 115 可自动转存。
         offset 用于观影翻页（按作品分批，每批 3 部）；TG 仅在首批(offset=0)搜索一次。
-        返回 has_more 标记是否还有更多观影作品可翻页。搜索在独立线程池执行，不阻塞主循环。
+        返回 has_more 标记是否还有更多观影作品可翻页；warning 携带 app_auth 失效等提示。
         """
         from starlette.responses import JSONResponse
         import concurrent.futures
@@ -1102,10 +1103,11 @@ class TgSearch115(_PluginBase):
         def _do_search():
             hits = []
             has_more = False
+            src = (source or "all").lower()
             # TG 仅首批搜索一次（已抓全 max_pages 页）；翻页(offset>0)只追加观影作品
-            if self._scraper and offset == 0:
+            if src in ("all", "tg") and self._scraper and offset == 0:
                 hits.extend(self._scraper.search(search_kw))
-            if self._site_scraper:
+            if src in ("all", "site") and self._site_scraper:
                 site_hits, has_more = self._site_scraper.search(
                     search_kw, year=manual_year, offset=offset, count=3)
                 hits.extend(site_hits)
@@ -1144,11 +1146,16 @@ class TgSearch115(_PluginBase):
                 })
             # 排序：完结优先，然后按最大集数降序
             results.sort(key=lambda r: (r["is_complete"], r["episode_num"]), reverse=True)
+            # app_auth 失效提示（观影搜不到资源时给出明确原因）
+            warning = ""
+            if self._site_scraper and not getattr(self._site_scraper, "app_auth_valid", True):
+                warning = "观影 app_auth 已失效，请在「观影」Tab 更新 app_auth 后重试"
             return JSONResponse({
                 "success": True,
                 "message": f"找到 {len(results)} 条资源",
                 "results": results,
                 "has_more": has_more,
+                "warning": warning,
             })
         except concurrent.futures.TimeoutError:
             return JSONResponse({"success": False, "message": "搜索超时（连接或检索过久）"}, status_code=504)

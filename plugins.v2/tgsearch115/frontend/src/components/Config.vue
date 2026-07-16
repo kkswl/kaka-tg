@@ -70,6 +70,7 @@
         <v-tab value="transfer" prepend-icon="mdi-cloud-download-outline">手动转存</v-tab>
         <v-tab value="search" prepend-icon="mdi-magnify">手动搜索</v-tab>
         <v-tab value="channel" prepend-icon="mdi-bullhorn-outline">TG 频道模块</v-tab>
+        <v-tab value="site" prepend-icon="mdi-movie-search-outline">观影</v-tab>
         <v-tab value="settings" prepend-icon="mdi-cog-outline">插件设置</v-tab>
       </v-tabs>
       <v-divider />
@@ -114,6 +115,14 @@
         <!-- ====== Tab：手动搜索 ====== -->
         <v-window-item value="search" class="pa-4">
           <div class="section-label mb-2">手动搜索（TG 频道 + 观影）</div>
+          <div class="d-flex align-center ga-2 mb-3">
+            <span class="text-caption text-medium-emphasis">来源</span>
+            <v-btn-toggle v-model="searchSource" mandatory color="primary" density="compact" divided>
+              <v-btn value="all" size="small">全部</v-btn>
+              <v-btn value="tg" size="small">TG</v-btn>
+              <v-btn value="site" size="small">观影</v-btn>
+            </v-btn-toggle>
+          </div>
           <div class="d-flex ga-2 mb-3">
             <v-text-field
               v-model="searchKeyword"
@@ -274,11 +283,14 @@
               <span class="text-body-2 mr-2">未命中通知</span>
               <v-switch v-model="config.notify_fail" color="primary" hide-details density="compact" />
             </v-col>
-            <v-col cols="12" class="py-4">
-              <v-divider />
-              <div class="text-subtitle-2 mt-3 mb-1">观影（xn--wcv59z.com）</div>
-              <div class="text-caption text-medium-emphasis mb-3">PoW 验证 + 全网盘资源 + 磁力链接搜索；仅 115 自动转存，其它网盘/磁力仅展示链接</div>
-            </v-col>
+          </v-row>
+        </v-window-item>
+
+        <!-- ============ Tab：观影 ============ -->
+        <v-window-item value="site" class="pa-4">
+          <div class="section-label mb-2">观影（xn--wcv59z.com）</div>
+          <div class="text-caption text-medium-emphasis mb-3">PoW 验证 + 全网盘资源 + 磁力链接搜索；仅 115 自动转存，其它网盘/磁力仅展示链接</div>
+          <v-row>
             <v-col cols="12" md="6" class="d-flex align-center">
               <div class="mr-2">
                 <div class="text-subtitle-2">启用观影</div>
@@ -516,6 +528,7 @@ const transferTarget = ref('')
 const transferLoading = ref(false)
 const transferResult = ref(null)
 const searchKeyword = ref('')
+const searchSource = ref('all')
 const searchLoading = ref(false)
 const searchResults = ref([])
 const searched = ref(false)
@@ -788,11 +801,11 @@ async function doSearch() {
   searchLoading.value = true
   searched.value = true
   searchResults.value = []
-  const res = await apiGet(`/search?keyword=${encodeURIComponent(kw)}`)
+  const res = await apiGet(`/search?keyword=${encodeURIComponent(kw)}&source=${searchSource.value}`)
   searchLoading.value = false
   if (res && res.success) {
     searchResults.value = res.results || []
-    snack(res.message || `找到 ${searchResults.value.length} 条`)
+    snack(res.warning || res.message || `找到 ${searchResults.value.length} 条`, res.warning ? 'warning' : 'success')
     try { localStorage.setItem('tg115_last_search', JSON.stringify({ kw: kw, results: searchResults.value })) } catch (e) {}
   } else {
     snack((res && res.message) || '搜索失败', 'error')

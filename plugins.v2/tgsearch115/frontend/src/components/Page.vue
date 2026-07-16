@@ -52,7 +52,7 @@
       <v-card-text class="px-4 py-4">
         <v-text-field
           v-model="keyword"
-          label="输入片名搜索（TG 频道 + 资源站，仅 115 可转存）"
+          label="输入片名搜索（TG 频道 + 观影，仅 115 可转存）"
           variant="outlined"
           density="comfortable"
           hide-details
@@ -61,6 +61,14 @@
           @click:append-inner="doSearch"
           @keyup.enter="doSearch"
         />
+        <div class="d-flex align-center ga-2 mt-2">
+          <span class="text-caption text-medium-emphasis">来源</span>
+          <v-btn-toggle v-model="searchSource" mandatory color="primary" density="compact" divided>
+            <v-btn value="all" size="small">全部</v-btn>
+            <v-btn value="tg" size="small">TG</v-btn>
+            <v-btn value="site" size="small">观影</v-btn>
+          </v-btn-toggle>
+        </div>
         <div v-if="searchMsg" class="text-caption mt-2" :class="searchOk ? 'text-success' : 'text-error'">
           {{ searchMsg }}
         </div>
@@ -147,6 +155,7 @@ function saveCache(c) {
 }
 const _init = loadCache()
 const keyword = ref(_init ? _init.keyword : '')
+const searchSource = ref('all')
 const results = ref(_init ? _init.results : [])
 const offset = ref(_init ? _init.offset || 0 : 0)
 const hasMore = ref(_init ? !!_init.has_more : false)
@@ -183,12 +192,12 @@ async function doSearch() {
   searching.value = true
   searchMsg.value = ''
   try {
-    const res = await props.api.get(`plugin/${PID.value}/search?keyword=${encodeURIComponent(kw)}`)
+    const res = await props.api.get(`plugin/${PID.value}/search?keyword=${encodeURIComponent(kw)}&source=${searchSource.value}`)
     const data = res && typeof res === 'object' && 'data' in res && ('success' in res || 'code' in res) ? res.data : res
     if (data && data.success) {
       results.value = Array.isArray(data.results) ? data.results : []
-      searchMsg.value = data.message || `找到 ${results.value.length} 条`
-      searchOk.value = true
+      searchMsg.value = data.warning || data.message || `找到 ${results.value.length} 条`
+      searchOk.value = !data.warning
       offset.value = 0
       hasMore.value = !!data.has_more
       saveCache({ keyword: kw, results: results.value, offset: 0, has_more: hasMore.value })
@@ -212,7 +221,7 @@ async function loadMore() {
   loadingMore.value = true
   try {
     const next = offset.value + PAGE_SIZE
-    const res = await props.api.get(`plugin/${PID.value}/search?keyword=${encodeURIComponent(keyword.value)}&offset=${next}`)
+    const res = await props.api.get(`plugin/${PID.value}/search?keyword=${encodeURIComponent(keyword.value)}&offset=${next}&source=${searchSource.value}`)
     const data = res && typeof res === 'object' && 'data' in res && ('success' in res || 'code' in res) ? res.data : res
     if (data && data.success) {
       const more = Array.isArray(data.results) ? data.results : []

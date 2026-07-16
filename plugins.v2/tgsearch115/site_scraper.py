@@ -114,6 +114,7 @@ class FilejinScraper:
         self._pow_solved = False
         self._cache_key = None       # (keyword, year) 缓存键
         self._cache_items = None     # search_suggest 作品列表缓存
+        self.app_auth_valid = True   # app_auth 是否有效（失效则置 False，供 /search 提示）
 
     def is_ready(self) -> bool:
         return bool(self.app_auth)
@@ -221,6 +222,7 @@ class FilejinScraper:
         try:
             resp = self._get_client().get(SITE_BASE + "/", headers={"Accept": "text/html"})
             if "未登录" in resp.text:
+                self.app_auth_valid = False
                 logger.warn("【TG115】观影 app_auth 已失效（返回未登录），请更新 app_auth")
         except Exception:
             pass
@@ -295,6 +297,8 @@ class FilejinScraper:
         url = f"{SITE_BASE}/res/downurl/{dir_}/{id_}"
         resp = self._get_client().get(url, headers={"Accept": "application/json"})
         if resp.status_code != 200:
+            if resp.status_code == 403:
+                self.app_auth_valid = False  # 403 = app_auth 失效
             logger.warn(f"【TG115】观影 downurl {dir_}/{id_} 失败: HTTP {resp.status_code}")
             return []
         try:
