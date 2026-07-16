@@ -225,7 +225,7 @@ class TgSearch115(_PluginBase):
         "订阅新增时优先到指定 Telegram 频道搜索 115 资源，命中并转存成功后自动完成订阅；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.1.4"
+    plugin_version = "4.1.5"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -808,10 +808,12 @@ class TgSearch115(_PluginBase):
         ym = _re.search(r'[(（](\d{4})[)）]', t)
         year = ym.group(1) if ym else ""
 
-        # ---- 名称：去开头装饰(emoji/符号)，截到第一个【或质量关键词 ----
-        qual = (r'4K|2160P|1080[PI]?|720P|480P|蓝光|原盘|REMUX|WEB-?DL|Blu-?Ray|H\.?26[45]'
-                r'|AVC|HEVC|x26[45]|杜比|Dolby|国语|粤语|英语|日语|中字|简繁|特效|字幕'
-                r'|完结|更新至|全集|全季|类型|无广告|正式版|内封|外挂|双音')
+        # ---- 名称：去开头装饰(emoji/符号)，截到第一个【或格式关键词或集数模式 ----
+        qual = (r'4K|2160P|1080[PI]?|720P|480P|UHD|蓝光|原盘|REMUX|WEB-?DL|WEBRip|WEB-?Rip'
+                r'|Blu-?Ray|BluRay|BD-?Rip|BR-?Rip|HDTV|PDTV|SATRip|DSR|DVD-?Rip|DVDScr'
+                r'|HDCAM|\bCAM\b|HDTC|\bTC\b|HDTS|\bTS\b|H\.?26[45]|AVC|HEVC|x26[45]'
+                r'|Dolby\s?Vision|DoVi|杜比|HDR10?\+?|国语|粤语|英语|日语|中字|简繁|特效|字幕'
+                r'|完结|更新至|全集|全季|类型|无广告|正式版|抢先版|枪版|内封|外挂|双音')
         head = _re.sub(r'^[\s\W_]+', '', t)  # 去开头非词字符(emoji/符号)
         # 名称截断点：第一个【 或质量关键词 或集数模式
         ep_pat = r'[Ss]\d{1,2}[Ee]\d{1,3}|[Ee][Pp]?\s?\d{1,3}\b|全\s*\d{1,3}\s*集|更新至\s*\d|第\s*\d{1,3}(?:[-~]\d{1,3})?\s*集'
@@ -842,19 +844,47 @@ class TgSearch115(_PluginBase):
             episode = f"EP{a:02d}-{b:02d}"; episode_num = max(a, b)
         status = "完结" if is_complete else ""
 
-        # ---- 清晰度 ----
-        qm = _re.search(r'(4K|2160P|1080[PI]?|720P|480P|蓝光|原盘)', t, _re.IGNORECASE)
+        # ---- 清晰度（分辨率）----
+        qm = _re.search(r'(4K|2160P|1080[PI]?|720P|480P|UHD)', t, _re.IGNORECASE)
         quality = qm.group(1).upper() if qm else ""
+        if quality == "UHD":
+            quality = "4K"
 
-        # ---- 来源 ----
-        sm = _re.search(r'(WEB-?DL|Blu-?Ray|BluRay|REMUX|HDTV|HDRip)', t, _re.IGNORECASE)
-        source = sm.group(1).upper() if sm else ""
-        source = {'WEBDL': 'WEB-DL', 'BLURAY': 'BluRay'}.get(source, source)
+        # ---- 来源/发布类型（电影常见格式标识，全量匹配，去重）----
+        source_tokens = []
+        for pat, label in [
+            (r'WEB-?DL', 'WEB-DL'), (r'WEBRip|WEB-?Rip', 'WEBRip'),
+            (r'Blu-?Ray|BluRay|蓝光', 'BluRay'),
+            (r'BD-?Rip', 'BDRip'), (r'BR-?Rip', 'BRRip'),
+            (r'REMUX|原盘', 'REMUX'),
+            (r'HDTV|PDTV|SATRip|DSR', 'HDTV'),
+            (r'DVD-?Rip', 'DVDRip'), (r'DVDScr', 'DVDScr'),
+            (r'HDCAM|\bCAM\b', 'CAM'), (r'HDTC|\bTC\b', 'TC'), (r'HDTS|\bTS\b', 'TS'),
+        ]:
+            if _re.search(pat, t, _re.IGNORECASE) and label not in source_tokens:
+                source_tokens.append(label)
+        source = " ".join(source_tokens)
+
+        # ---- 编码 ----
+        codec = ""
+        cm = _re.search(r'(H\.?26[45]|x\.?26[45]|HEVC|AVC)', t, _re.IGNORECASE)
+        if cm:
+            c = cm.group(1).upper().replace('.', '')
+            codec = {'X264': 'x264', 'X265': 'x265'}.get(c, c)
+
+        # ---- HDR / 杜比视界 ----
+        hdr = ""
+        if _re.search(r'Dolby\s?Vision|DoVi|杜比视界|杜比', t, _re.IGNORECASE):
+            hdr = "DV"
+        elif _re.search(r'HDR10\+|HDR10', t, _re.IGNORECASE):
+            hdr = "HDR10"
+        elif _re.search(r'\bHDR\b', t, _re.IGNORECASE):
+            hdr = "HDR"
 
         # ---- 组装 ----
         display_name = f"{name} ({year})" if name and year else (name or "")
         meta_head = " - ".join([p for p in [status, episode] if p])
-        meta_tail = "  ".join([p for p in [quality, source] if p])
+        meta_tail = "  ".join([p for p in [quality, source, codec, hdr] if p])
         meta = "  ".join([x for x in [meta_head, meta_tail] if x])
         return {"display_name": display_name, "meta": meta,
                 "is_complete": is_complete, "episode_num": episode_num}
