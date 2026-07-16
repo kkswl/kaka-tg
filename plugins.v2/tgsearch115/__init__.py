@@ -225,7 +225,7 @@ class TgSearch115(_PluginBase):
         "订阅新增时优先到指定 Telegram 频道搜索 115 资源，命中并转存成功后自动完成订阅；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.2.1"
+    plugin_version = "4.2.2"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -1121,15 +1121,21 @@ class TgSearch115(_PluginBase):
             offset = int(offset or 0)
         except Exception:
             offset = 0
+        # 从关键字分离年份（如"法警小队（2026）"->"法警小队"+2026）：观影按年份精确过滤，
+        # 去掉年份让站点能搜到（带年份会搜不到、返回模糊匹配）
+        _y = _re.search(r'[(（](\d{4})[)）]', keyword)
+        manual_year = int(_y.group(1)) if _y else None
+        search_kw = _re.sub(r'\s*[(（]\d{4}[)）]', '', keyword).strip() or keyword
 
         def _do_search():
             hits = []
             has_more = False
             # TG 仅首批搜索一次（已抓全 max_pages 页）；翻页(offset>0)只追加观影作品
             if self._scraper and offset == 0:
-                hits.extend(self._scraper.search(keyword))
+                hits.extend(self._scraper.search(search_kw))
             if self._site_scraper:
-                site_hits, has_more = self._site_scraper.search(keyword, offset=offset, count=3)
+                site_hits, has_more = self._site_scraper.search(
+                    search_kw, year=manual_year, offset=offset, count=3)
                 hits.extend(site_hits)
             return hits, has_more
 
@@ -1143,9 +1149,17 @@ class TgSearch115(_PluginBase):
                     pt = "115" if P115Transfer._is_115_share_url(h.share_url or "") else "other"
                 title = h.resource_title or h.text or "未命名资源"
                 meta = self._parse_resource_meta(h.text or title)
+                # 观影资源：用 search_suggest 的作品名(source_title)+年份做标题，
+                # 比 panlist 里杂乱的名称（含装饰/分类前缀/《》等）干净
+                src_title = getattr(h, "source_title", "") or ""
+                src_year = getattr(h, "year", None)
+                if src_title:
+                    display_name = f"{src_title} ({src_year})" if src_year else src_title
+                else:
+                    display_name = meta["display_name"] or title
                 results.append({
                     "title": title,
-                    "display_name": meta["display_name"] or title,
+                    "display_name": display_name,
                     "meta": meta["meta"],
                     "is_complete": meta["is_complete"],
                     "episode_num": meta["episode_num"],
