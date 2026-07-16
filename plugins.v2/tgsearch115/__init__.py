@@ -197,7 +197,7 @@ class TgSearch115(_PluginBase):
         "订阅新增时优先到指定 Telegram 频道搜索 115 资源，命中并转存成功后自动完成订阅；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.2.4"
+    plugin_version = "4.2.5"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -280,9 +280,12 @@ class TgSearch115(_PluginBase):
         # 观影爬虫（PoW + 搜索 + 全网盘提取；仅 115 参与自动转存）
         self._site_enabled = self._to_bool(config.get("site_enabled"), False)
         self._site_app_auth = config.get("site_app_auth") or ""
+        # 观影专用代理：优先用配置的，否则回退 MP 代理。观影站对部分 IP 封 downurl，
+        # 用户可填一个未被封的代理（如 v2rayN）让观影请求走它
+        self._site_proxy = (config.get("site_proxy") or "").strip() or _proxy
         if self._site_enabled and self._site_app_auth:
             self._site_scraper = FilejinScraper(
-                app_auth=self._site_app_auth, proxy=_proxy,
+                app_auth=self._site_app_auth, proxy=self._site_proxy,
             )
         else:
             self._site_scraper = None
@@ -1241,8 +1244,8 @@ class TgSearch115(_PluginBase):
         from starlette.responses import JSONResponse
         auth = (app_auth or "").strip()
         if auth:
-            # 临时 scraper 测当前输入的 app_auth（不依赖保存）
-            scraper = FilejinScraper(app_auth=auth, proxy=self._mp_proxy or None)
+            # 临时 scraper 测当前输入的 app_auth（不依赖保存），用观影专用代理
+            scraper = FilejinScraper(app_auth=auth, proxy=self._site_proxy or self._mp_proxy or None)
             ok, msg = scraper.check()
             return JSONResponse({"success": ok, "message": msg})
         if not self._site_scraper:
@@ -1287,6 +1290,7 @@ class TgSearch115(_PluginBase):
             "auto_finish": True,
             "site_enabled": False,
             "site_app_auth": "",
+            "site_proxy": "",
             "tg_channels": [],
         }
 

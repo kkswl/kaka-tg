@@ -305,6 +305,9 @@
             <v-col cols="12">
               <v-text-field v-model="config.site_app_auth" label="观影 app_auth Cookie" variant="outlined" density="compact" hide-details hint="登录站点后从浏览器 Cookie 取 app_auth 值" persistent-hint />
             </v-col>
+            <v-col cols="12">
+              <v-text-field v-model="config.site_proxy" label="观影专用代理（可选，解决 downurl 403）" variant="outlined" density="compact" hide-details hint="观影站对部分 IP 封 downurl(返回403)；填一个未被封的代理让观影走它。Docker 内填宿主机代理如 http://host.docker.internal:10809，留空则用 MP 全局代理" persistent-hint />
+            </v-col>
           </v-row>
         </v-window-item>
       </v-window>
@@ -482,6 +485,7 @@ const DEFAULTS = {
   auto_finish: true,
   site_enabled: false,
   site_app_auth: '',
+  site_proxy: '',
   tg_channels: [],
 }
 
