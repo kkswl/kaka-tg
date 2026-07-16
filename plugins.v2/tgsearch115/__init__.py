@@ -225,7 +225,7 @@ class TgSearch115(_PluginBase):
         "订阅新增时优先到指定 Telegram 频道搜索 115 资源，命中并转存成功后自动完成订阅；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.1.8"
+    plugin_version = "4.1.9"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -809,23 +809,42 @@ class TgSearch115(_PluginBase):
         ym = _re.search(r'[(（](\d{4})[)）]', t)
         year = ym.group(1) if ym else ""
 
-        # ---- 名称：去开头装饰(emoji/符号)，截到第一个【或格式关键词或集数模式 ----
+        # ---- 名称：优先标签取值(TG消息)，否则扫描行找像片名的 ----
         qual = (r'4K|2160P|1080[PI]?|720P|480P|UHD|蓝光|原盘|REMUX|WEB-?DL|WEBRip|WEB-?Rip'
                 r'|Blu-?Ray|BluRay|BD-?Rip|BR-?Rip|HDTV|PDTV|SATRip|DSR|DVD-?Rip|DVDScr'
                 r'|HDCAM|\bCAM\b|HDTC|\bTC\b|HDTS|\bTS\b|H\.?26[45]|AVC|HEVC|x26[45]'
                 r'|Dolby\s?Vision|DoVi|杜比|HDR10?\+?|国语|粤语|英语|日语|中字|简繁|特效|字幕'
                 r'|完结|更新至|全集|全季|类型|无广告|正式版|抢先版|枪版|内封|外挂|双音')
-        head = _re.sub(r'^[\s\W_]+', '', t)  # 去开头非词字符(emoji/符号)
-        # 名称截断点：第一个【 或质量关键词 或集数模式
         ep_pat = r'[Ss]\d{1,2}[Ee]\d{1,3}|[Ee][Pp]?\s?\d{1,3}\b|全\s*\d{1,3}\s*集|更新至\s*\d|第\s*\d{1,3}(?:[-~]\d{1,3})?\s*集'
-        m = _re.search(rf'(?:{qual})|【|(?:{ep_pat})', head)
-        name_raw = head[:m.start()] if m else head
-        name_raw = _re.sub(r'[━◀▶▉▔▂▃▅▆▇【】\[\]]', '', name_raw).strip(' -–—·•|:：')
-        name = _re.sub(r'\s*[(（]\d{4}[)）]', '', name_raw).strip(' -–—·•|:：')
-        if not name:  # 兜底：取第一个【】内容
+        name = ""
+        # 1. "名称：/资源名称：/片名：/剧名：value" 标签取值（TG 消息常见格式）
+        for _lm in _re.finditer(r'(?:资源名称|片名|剧名|名称)\s*[:：]\s*([^\n【】|]{1,60})', t):
+            nv = _re.split(rf'(?:{qual})|(?:{ep_pat})', _lm.group(1), maxsplit=1)[0]
+            nv = _re.sub(r'\s*[(（]\d{4}[)）]', '', nv).strip(' -–-·•|:：【】')
+            if nv:
+                name = nv
+                break
+        # 2. 启发式：扫描行，跳过纯符号/其它标签行，取第一条含中日文的候选
+        if not name:
+            for _line in t.splitlines():
+                ln = _re.sub(r'https?://\S+', '', _line).strip()
+                if not ln or _re.fullmatch(r'[\W\s_]+', ln):
+                    continue  # 空 / 纯符号(emoji 头部)
+                if _re.match(r'^(?:集数|清晰度|大小|链接|提取码|状态|季数|年份|类型|格式|来源|分辨率|编码|备注)\s*[:：]', ln):
+                    continue  # 其它字段标签行
+                head = _re.sub(r'^[\s\W_]+', '', ln)
+                _mm = _re.search(rf'(?:{qual})|【|(?:{ep_pat})', head)
+                name_raw = head[:_mm.start()] if _mm else head
+                name_raw = _re.sub(r'[━◀▶▉▔▂▃▅▆▇【】\[\]]', '', name_raw).strip(' -–-·•|:：')
+                name_raw = _re.sub(r'\s*[(（]\d{4}[)）]', '', name_raw).strip(' -–-·•|:：')
+                if name_raw and _re.search(r'[一-鿿぀-ヿ]', name_raw):
+                    name = name_raw
+                    break
+        # 3. 兜底：第一个【】内容
+        if not name:
             bm = _re.search(r'【([^】]{1,60})】', t)
             if bm:
-                name = _re.sub(r'\s*[(（]\d{4}[)）]', '', bm.group(1)).strip(' -–—·•|:：')
+                name = _re.sub(r'\s*[(（]\d{4}[)）]', '', bm.group(1)).strip(' -–-·•|:：')
 
         # ---- 状态 + 集数（status 只标完结；ongoing 由 episode 表达，避免重复）----
         is_complete = bool(_re.search(r'完结|全集|全季', t))
@@ -1108,8 +1127,8 @@ class TgSearch115(_PluginBase):
                 pt = getattr(h, "pan_type", "") or ""
                 if not pt:
                     pt = "115" if P115Transfer._is_115_share_url(h.share_url or "") else "other"
-                title = h.resource_title or "未命名资源"
-                meta = self._parse_resource_meta(title)
+                title = h.resource_title or h.text or "未命名资源"
+                meta = self._parse_resource_meta(h.text or title)
                 results.append({
                     "title": title,
                     "display_name": meta["display_name"] or title,
