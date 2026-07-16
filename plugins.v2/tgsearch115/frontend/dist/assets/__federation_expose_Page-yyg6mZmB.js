@@ -17,12 +17,20 @@ const _hoisted_7 = {
   key: 0,
   class: "text-caption text-primary font-weight-medium mt-1"
 };
-const _hoisted_8 = { class: "text-caption text-medium-emphasis mt-1" };
+const _hoisted_8 = {
+  key: 1,
+  class: "text-caption text-warning mt-1"
+};
 const _hoisted_9 = {
+  key: 2,
+  class: "text-caption text-medium-emphasis line-clamp-3 mt-1"
+};
+const _hoisted_10 = { class: "text-caption text-medium-emphasis mt-1" };
+const _hoisted_11 = {
   key: 0,
   class: "d-flex justify-center mt-4"
 };
-const _hoisted_10 = {
+const _hoisted_12 = {
   key: 1,
   class: "text-center text-caption text-medium-emphasis mt-3"
 };
@@ -440,7 +448,13 @@ return (_ctx, _cache) => {
                                   (r.meta)
                                     ? (_openBlock(), _createElementBlock("div", _hoisted_7, _toDisplayString(r.meta), 1))
                                     : _createCommentVNode("", true),
-                                  _createElementVNode("div", _hoisted_8, _toDisplayString(r.channel || '未知来源'), 1)
+                                  (r.pan_type === '115' && r.receive_code)
+                                    ? (_openBlock(), _createElementBlock("div", _hoisted_8, "提取码：" + _toDisplayString(r.receive_code), 1))
+                                    : _createCommentVNode("", true),
+                                  (r.text)
+                                    ? (_openBlock(), _createElementBlock("div", _hoisted_9, _toDisplayString(r.text), 1))
+                                    : _createCommentVNode("", true),
+                                  _createElementVNode("div", _hoisted_10, _toDisplayString(r.channel || '未知来源'), 1)
                                 ]),
                                 _: 2
                               }, 1024),
@@ -489,7 +503,7 @@ return (_ctx, _cache) => {
                   _: 1
                 }),
                 (hasMore.value)
-                  ? (_openBlock(), _createElementBlock("div", _hoisted_9, [
+                  ? (_openBlock(), _createElementBlock("div", _hoisted_11, [
                       _createVNode(_component_v_btn, {
                         variant: "outlined",
                         loading: loadingMore.value,
@@ -502,7 +516,7 @@ return (_ctx, _cache) => {
                         _: 1
                       }, 8, ["loading"])
                     ]))
-                  : (_openBlock(), _createElementBlock("div", _hoisted_10, "已全部加载"))
+                  : (_openBlock(), _createElementBlock("div", _hoisted_12, "已全部加载"))
               ]),
               _: 1
             }))
@@ -527,6 +541,6 @@ return (_ctx, _cache) => {
 }
 
 };
-const Page = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-44de475c"]]);
+const Page = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-940ea4aa"]]);
 
 export { Page as default };

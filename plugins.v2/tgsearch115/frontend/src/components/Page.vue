@@ -83,6 +83,8 @@
                   {{ r.display_name || r.title }}
                 </div>
                 <div v-if="r.meta" class="text-caption text-primary font-weight-medium mt-1">{{ r.meta }}</div>
+                <div v-if="r.pan_type === '115' && r.receive_code" class="text-caption text-warning mt-1">提取码：{{ r.receive_code }}</div>
+                <div v-if="r.text" class="text-caption text-medium-emphasis line-clamp-3 mt-1">{{ r.text }}</div>
                 <div class="text-caption text-medium-emphasis mt-1">{{ r.channel || '未知来源' }}</div>
               </v-card-item>
               <v-spacer />
