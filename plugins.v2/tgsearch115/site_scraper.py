@@ -55,7 +55,7 @@ from app.log import logger
 
 
 # 站点基址（punycode 域名，对应中文域）
-SITE_BASE = "https://www.xn--wcv59z.com"
+DEFAULT_SITE_BASE = "https://www.xn--wcv59z.com"  # 默认域名（可被 site_base 参数覆盖）
 _CHROME_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -106,7 +106,7 @@ class FilejinScraper:
     """目标资源站爬虫：解 PoW -> 搜索 -> 提取全网盘资源。"""
 
     def __init__(self, app_auth: str = "", proxy: Optional[str] = None,
-                 count: int = 3) -> None:
+                 count: int = 3, site_base: str = "") -> None:
         self.app_auth = (app_auth or "").strip()
         self.proxy = (proxy or "").strip() or None
         self.count = count  # 每次（每页）取多少部作品的网盘资源
@@ -115,6 +115,7 @@ class FilejinScraper:
         self._cache_key = None       # (keyword, year) 缓存键
         self._cache_items = None     # search_suggest 作品列表缓存
         self.app_auth_valid = True   # app_auth 是否有效（失效则置 False，供 /search 提示）
+        self.site_base = (site_base or DEFAULT_SITE_BASE).rstrip("/")  # 观影域名（可配置，换域名时改这里）
 
     def is_ready(self) -> bool:
         return bool(self.app_auth)
@@ -220,7 +221,7 @@ class FilejinScraper:
         self._pow_solved = True
         # 解完 PoW 后探一次首页确认登录态
         try:
-            resp = self._get_client().get(SITE_BASE + "/", headers={"Accept": "text/html"})
+            resp = self._get_client().get(self.site_base + "/", headers={"Accept": "text/html"})
             if "未登录" in resp.text:
                 self.app_auth_valid = False
                 logger.warn("【TG115】观影 app_auth 已失效（返回未登录），请更新 app_auth")
@@ -232,10 +233,10 @@ class FilejinScraper:
         import json as _json
         # 先 GET / 触发 browser_pow cookie
         try:
-            self._get_client().get(SITE_BASE + "/", headers={"Accept": "text/html"})
+            self._get_client().get(self.site_base + "/", headers={"Accept": "text/html"})
         except Exception:
             pass
-        resp = self._get_client().get(SITE_BASE + "/res/pow", headers={"Accept": "application/json"})
+        resp = self._get_client().get(self.site_base + "/res/pow", headers={"Accept": "application/json"})
         if resp.status_code != 200:
             logger.warn(f"【TG115】观影取 PoW 挑战失败: HTTP {resp.status_code}")
             return
@@ -255,7 +256,7 @@ class FilejinScraper:
         y = pow(x, 1 << t, N)
         y_hex = format(y, "x")
         resp = self._get_client().post(
-            SITE_BASE + "/res/pow",
+            self.site_base + "/res/pow",
             data={"y": y_hex},
             headers={"Content-Type": "application/x-www-form-urlencoded",
                      "Accept": "application/json"},
@@ -271,7 +272,7 @@ class FilejinScraper:
 
     def _search_suggest(self, term: str):
         """GET /res/search_suggest?q= -> 作品列表。返回 (ok, msg, items)。"""
-        url = SITE_BASE + "/res/search_suggest?q=" + quote(term)
+        url = self.site_base + "/res/search_suggest?q=" + quote(term)
         resp = self._get_client().get(url, headers={"Accept": "application/json"})
         if resp.status_code != 200:
             return False, f"HTTP {resp.status_code}", []
@@ -294,7 +295,7 @@ class FilejinScraper:
 
     def _fetch_resources(self, dir_: str, id_: str) -> List[SiteHit]:
         """GET /res/downurl/{dir}/{id} -> 提取 panlist(网盘) + downlist(磁力) 全部资源。"""
-        url = f"{SITE_BASE}/res/downurl/{dir_}/{id_}"
+        url = f"{self.site_base}/res/downurl/{dir_}/{id_}"
         resp = self._get_client().get(url, headers={"Accept": "application/json"})
         if resp.status_code != 200:
             if resp.status_code == 403:
@@ -380,7 +381,7 @@ class FilejinScraper:
                 "User-Agent": _CHROME_UA,
                 "Accept": "application/json,text/html,*/*;q=0.8",
                 "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-                "Referer": SITE_BASE + "/",
+                "Referer": self.site_base + "/",
             },
             "follow_redirects": True,
             "cookies": {"app_auth": self.app_auth} if self.app_auth else None,

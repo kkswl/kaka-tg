@@ -288,8 +288,8 @@
 
         <!-- ============ Tab：观影 ============ -->
         <v-window-item value="site" class="pa-4">
-          <div class="section-label mb-2">观影（xn--wcv59z.com）</div>
-          <div class="text-caption text-medium-emphasis mb-3">PoW 验证 + 全网盘资源 + 磁力链接搜索；仅 115 自动转存，其它网盘/磁力仅展示链接</div>
+          <div class="section-label mb-2">观影站点</div>
+          <div class="text-caption text-medium-emphasis mb-3">PoW 验证 + 全网盘资源 + 磁力链接搜索；仅 115 自动转存，其它网盘/磁力仅展示链接。换域名在下方「观影站点域名」填写</div>
           <v-row>
             <v-col cols="12" md="6" class="d-flex align-center">
               <div class="mr-2">
@@ -301,6 +301,9 @@
             </v-col>
             <v-col cols="12" md="6" class="d-flex align-center">
               <v-btn size="small" variant="outlined" prepend-icon="mdi-connection" :loading="siteChecking" @click="checkSite">测试连通</v-btn>
+            </v-col>
+            <v-col cols="12">
+              <v-text-field v-model="config.site_domain" label="观影站点域名" placeholder="https://www.xn--wcv59z.com" variant="outlined" density="compact" hide-details hint="观影站换域名时填这里；留空用默认 xn--wcv59z.com" persistent-hint />
             </v-col>
             <v-col cols="12">
               <v-text-field v-model="config.site_app_auth" label="观影 app_auth Cookie" variant="outlined" density="compact" hide-details hint="登录站点后从浏览器 Cookie 取 app_auth 值" persistent-hint />
@@ -486,6 +489,7 @@ const DEFAULTS = {
   site_enabled: false,
   site_app_auth: '',
   site_proxy: '',
+  site_domain: '',
   tg_channels: [],
 }
 
@@ -794,8 +798,9 @@ async function checkSite() {
   const auth = (config.site_app_auth || '').trim()
   if (!auth) { snack('请先填 app_auth', 'warning'); return }
   siteChecking.value = true
-  // 直接传当前输入的 app_auth 测试，不保存、不涉及 115
-  const res = await apiGet('/check_site?app_auth=' + encodeURIComponent(auth))
+  // 直接传当前输入的 app_auth + 域名 测试，不保存、不涉及 115
+  const dom = encodeURIComponent((config.site_domain || '').trim())
+  const res = await apiGet('/check_site?app_auth=' + encodeURIComponent(auth) + (dom ? '&site_domain=' + dom : ''))
   siteChecking.value = false
   snack((res && res.message) || '检查失败', (res && res.success) ? 'success' : 'error')
 }

@@ -103,6 +103,7 @@ const DEFAULTS = {
   site_enabled: false,
   site_app_auth: '',
   site_proxy: '',
+  site_domain: '',
   tg_channels: [],
 };
 
@@ -411,8 +412,9 @@ async function checkSite() {
   const auth = (config.site_app_auth || '').trim();
   if (!auth) { snack('请先填 app_auth', 'warning'); return }
   siteChecking.value = true;
-  // 直接传当前输入的 app_auth 测试，不保存、不涉及 115
-  const res = await apiGet('/check_site?app_auth=' + encodeURIComponent(auth));
+  // 直接传当前输入的 app_auth + 域名 测试，不保存、不涉及 115
+  const dom = encodeURIComponent((config.site_domain || '').trim());
+  const res = await apiGet('/check_site?app_auth=' + encodeURIComponent(auth) + (dom ? '&site_domain=' + dom : ''));
   siteChecking.value = false;
   snack((res && res.message) || '检查失败', (res && res.success) ? 'success' : 'error');
 }
@@ -687,7 +689,7 @@ return (_ctx, _cache) => {
               color: "primary",
               class: "mr-2"
             }),
-            _cache[36] || (_cache[36] = _createElementVNode("span", { class: "text-subtitle-1 font-weight-bold" }, "115 网盘登录", -1)),
+            _cache[37] || (_cache[37] = _createElementVNode("span", { class: "text-subtitle-1 font-weight-bold" }, "115 网盘登录", -1)),
             _createVNode(_component_v_switch, {
               modelValue: config.enabled,
               "onUpdate:modelValue": _cache[0] || (_cache[0] = $event => ((config.enabled) = $event)),
@@ -719,7 +721,7 @@ return (_ctx, _cache) => {
                   onClick: verifyCookie,
                   class: "ml-1"
                 }, {
-                  default: _withCtx(() => [...(_cache[34] || (_cache[34] = [
+                  default: _withCtx(() => [...(_cache[35] || (_cache[35] = [
                     _createTextVNode("验证", -1)
                   ]))]),
                   _: 1
@@ -739,7 +741,7 @@ return (_ctx, _cache) => {
                   activator: "parent",
                   location: "top"
                 }, {
-                  default: _withCtx(() => [...(_cache[35] || (_cache[35] = [
+                  default: _withCtx(() => [...(_cache[36] || (_cache[36] = [
                     _createTextVNode("关闭", -1)
                   ]))]),
                   _: 1
@@ -788,7 +790,7 @@ return (_ctx, _cache) => {
                       "prepend-icon": "mdi-content-save",
                       onClick: saveAll
                     }, {
-                      default: _withCtx(() => [...(_cache[37] || (_cache[37] = [
+                      default: _withCtx(() => [...(_cache[38] || (_cache[38] = [
                         _createTextVNode("保存凭证", -1)
                       ]))]),
                       _: 1
@@ -799,7 +801,7 @@ return (_ctx, _cache) => {
                       "prepend-icon": "mdi-qrcode-scan",
                       onClick: openQrcode
                     }, {
-                      default: _withCtx(() => [...(_cache[38] || (_cache[38] = [
+                      default: _withCtx(() => [...(_cache[39] || (_cache[39] = [
                         _createTextVNode("扫码登录", -1)
                       ]))]),
                       _: 1
@@ -838,7 +840,7 @@ return (_ctx, _cache) => {
                       "prepend-icon": "mdi-folder-open",
                       onClick: _cache[4] || (_cache[4] = $event => (openDirBrowser('target')))
                     }, {
-                      default: _withCtx(() => [...(_cache[39] || (_cache[39] = [
+                      default: _withCtx(() => [...(_cache[40] || (_cache[40] = [
                         _createTextVNode("选择目录", -1)
                       ]))]),
                       _: 1
@@ -873,7 +875,7 @@ return (_ctx, _cache) => {
               value: "transfer",
               "prepend-icon": "mdi-cloud-download-outline"
             }, {
-              default: _withCtx(() => [...(_cache[40] || (_cache[40] = [
+              default: _withCtx(() => [...(_cache[41] || (_cache[41] = [
                 _createTextVNode("手动转存", -1)
               ]))]),
               _: 1
@@ -882,7 +884,7 @@ return (_ctx, _cache) => {
               value: "search",
               "prepend-icon": "mdi-magnify"
             }, {
-              default: _withCtx(() => [...(_cache[41] || (_cache[41] = [
+              default: _withCtx(() => [...(_cache[42] || (_cache[42] = [
                 _createTextVNode("手动搜索", -1)
               ]))]),
               _: 1
@@ -891,7 +893,7 @@ return (_ctx, _cache) => {
               value: "channel",
               "prepend-icon": "mdi-bullhorn-outline"
             }, {
-              default: _withCtx(() => [...(_cache[42] || (_cache[42] = [
+              default: _withCtx(() => [...(_cache[43] || (_cache[43] = [
                 _createTextVNode("TG 频道模块", -1)
               ]))]),
               _: 1
@@ -900,7 +902,7 @@ return (_ctx, _cache) => {
               value: "site",
               "prepend-icon": "mdi-movie-search-outline"
             }, {
-              default: _withCtx(() => [...(_cache[43] || (_cache[43] = [
+              default: _withCtx(() => [...(_cache[44] || (_cache[44] = [
                 _createTextVNode("观影", -1)
               ]))]),
               _: 1
@@ -909,7 +911,7 @@ return (_ctx, _cache) => {
               value: "settings",
               "prepend-icon": "mdi-cog-outline"
             }, {
-              default: _withCtx(() => [...(_cache[44] || (_cache[44] = [
+              default: _withCtx(() => [...(_cache[45] || (_cache[45] = [
                 _createTextVNode("插件设置", -1)
               ]))]),
               _: 1
@@ -920,7 +922,7 @@ return (_ctx, _cache) => {
         _createVNode(_component_v_divider),
         _createVNode(_component_v_window, {
           modelValue: activeTab.value,
-          "onUpdate:modelValue": _cache[21] || (_cache[21] = $event => ((activeTab).value = $event))
+          "onUpdate:modelValue": _cache[22] || (_cache[22] = $event => ((activeTab).value = $event))
         }, {
           default: _withCtx(() => [
             _createVNode(_component_v_window_item, {
@@ -928,7 +930,7 @@ return (_ctx, _cache) => {
               class: "pa-4"
             }, {
               default: _withCtx(() => [
-                _cache[47] || (_cache[47] = _createElementVNode("div", { class: "section-label mb-2" }, "手动转存 115 资源", -1)),
+                _cache[48] || (_cache[48] = _createElementVNode("div", { class: "section-label mb-2" }, "手动转存 115 资源", -1)),
                 _createVNode(_component_v_text_field, {
                   modelValue: transferUrl.value,
                   "onUpdate:modelValue": _cache[6] || (_cache[6] = $event => ((transferUrl).value = $event)),
@@ -963,7 +965,7 @@ return (_ctx, _cache) => {
                     "prepend-icon": "mdi-cloud-download",
                     onClick: doTransfer
                   }, {
-                    default: _withCtx(() => [...(_cache[45] || (_cache[45] = [
+                    default: _withCtx(() => [...(_cache[46] || (_cache[46] = [
                       _createTextVNode("转存", -1)
                     ]))]),
                     _: 1
@@ -973,7 +975,7 @@ return (_ctx, _cache) => {
                     "prepend-icon": "mdi-folder-open",
                     onClick: _cache[8] || (_cache[8] = $event => (openDirBrowser('transfer')))
                   }, {
-                    default: _withCtx(() => [...(_cache[46] || (_cache[46] = [
+                    default: _withCtx(() => [...(_cache[47] || (_cache[47] = [
                       _createTextVNode("选择目录", -1)
                     ]))]),
                     _: 1
@@ -996,9 +998,9 @@ return (_ctx, _cache) => {
               class: "pa-4"
             }, {
               default: _withCtx(() => [
-                _cache[59] || (_cache[59] = _createElementVNode("div", { class: "section-label mb-2" }, "手动搜索（TG 频道 + 观影）", -1)),
+                _cache[60] || (_cache[60] = _createElementVNode("div", { class: "section-label mb-2" }, "手动搜索（TG 频道 + 观影）", -1)),
                 _createElementVNode("div", _hoisted_4, [
-                  _cache[51] || (_cache[51] = _createElementVNode("span", { class: "text-caption text-medium-emphasis" }, "来源", -1)),
+                  _cache[52] || (_cache[52] = _createElementVNode("span", { class: "text-caption text-medium-emphasis" }, "来源", -1)),
                   _createVNode(_component_v_btn_toggle, {
                     modelValue: searchSource.value,
                     "onUpdate:modelValue": _cache[9] || (_cache[9] = $event => ((searchSource).value = $event)),
@@ -1012,7 +1014,7 @@ return (_ctx, _cache) => {
                         value: "all",
                         size: "small"
                       }, {
-                        default: _withCtx(() => [...(_cache[48] || (_cache[48] = [
+                        default: _withCtx(() => [...(_cache[49] || (_cache[49] = [
                           _createTextVNode("全部", -1)
                         ]))]),
                         _: 1
@@ -1021,7 +1023,7 @@ return (_ctx, _cache) => {
                         value: "tg",
                         size: "small"
                       }, {
-                        default: _withCtx(() => [...(_cache[49] || (_cache[49] = [
+                        default: _withCtx(() => [...(_cache[50] || (_cache[50] = [
                           _createTextVNode("TG", -1)
                         ]))]),
                         _: 1
@@ -1030,7 +1032,7 @@ return (_ctx, _cache) => {
                         value: "site",
                         size: "small"
                       }, {
-                        default: _withCtx(() => [...(_cache[50] || (_cache[50] = [
+                        default: _withCtx(() => [...(_cache[51] || (_cache[51] = [
                           _createTextVNode("观影", -1)
                         ]))]),
                         _: 1
@@ -1056,7 +1058,7 @@ return (_ctx, _cache) => {
                     "prepend-icon": "mdi-magnify",
                     onClick: doSearch
                   }, {
-                    default: _withCtx(() => [...(_cache[52] || (_cache[52] = [
+                    default: _withCtx(() => [...(_cache[53] || (_cache[53] = [
                       _createTextVNode("搜索", -1)
                     ]))]),
                     _: 1
@@ -1071,7 +1073,7 @@ return (_ctx, _cache) => {
                         color: "primary",
                         class: "mb-3"
                       }),
-                      _cache[53] || (_cache[53] = _createElementVNode("div", { class: "text-body-2" }, "正在搜索...", -1))
+                      _cache[54] || (_cache[54] = _createElementVNode("div", { class: "text-body-2" }, "正在搜索...", -1))
                     ]))
                   : (searchResults.value.length)
                     ? (_openBlock(), _createElementBlock("div", _hoisted_7, [
@@ -1124,7 +1126,7 @@ return (_ctx, _cache) => {
                                           loading: transferringIndex.value === i,
                                           onClick: $event => (transferFromSearch(r.share_url, i))
                                         }, {
-                                          default: _withCtx(() => [...(_cache[54] || (_cache[54] = [
+                                          default: _withCtx(() => [...(_cache[55] || (_cache[55] = [
                                             _createTextVNode("转存", -1)
                                           ]))]),
                                           _: 1
@@ -1136,7 +1138,7 @@ return (_ctx, _cache) => {
                                           "prepend-icon": "mdi-content-copy",
                                           onClick: $event => (copyLink(r))
                                         }, {
-                                          default: _withCtx(() => [...(_cache[55] || (_cache[55] = [
+                                          default: _withCtx(() => [...(_cache[56] || (_cache[56] = [
                                             _createTextVNode("复制链接", -1)
                                           ]))]),
                                           _: 1
@@ -1159,7 +1161,7 @@ return (_ctx, _cache) => {
                         onClick: loadMoreResults
                       }, {
                         default: _withCtx(() => [
-                          _cache[56] || (_cache[56] = _createTextVNode(" 加载更多 ", -1)),
+                          _cache[57] || (_cache[57] = _createTextVNode(" 加载更多 ", -1)),
                           _createVNode(_component_v_icon, {
                             icon: "mdi-chevron-right",
                             size: "small",
@@ -1177,8 +1179,8 @@ return (_ctx, _cache) => {
                           size: "48",
                           class: "mb-2"
                         }),
-                        _cache[57] || (_cache[57] = _createElementVNode("div", { class: "text-body-2" }, "未找到资源", -1)),
-                        _cache[58] || (_cache[58] = _createElementVNode("div", { class: "text-caption text-medium-emphasis mt-1" }, "提示：TG 用片名搜全历史；观影需在「插件设置」配置 app_auth", -1))
+                        _cache[58] || (_cache[58] = _createElementVNode("div", { class: "text-body-2" }, "未找到资源", -1)),
+                        _cache[59] || (_cache[59] = _createElementVNode("div", { class: "text-caption text-medium-emphasis mt-1" }, "提示：TG 用片名搜全历史；观影需在「插件设置」配置 app_auth", -1))
                       ]))
                     : _createCommentVNode("", true)
               ]),
@@ -1189,7 +1191,7 @@ return (_ctx, _cache) => {
               class: "pa-4"
             }, {
               default: _withCtx(() => [
-                _cache[67] || (_cache[67] = _createElementVNode("div", { class: "section-label mb-2" }, "添加频道", -1)),
+                _cache[68] || (_cache[68] = _createElementVNode("div", { class: "section-label mb-2" }, "添加频道", -1)),
                 _createVNode(_component_v_card, {
                   variant: "tonal",
                   color: "primary",
@@ -1246,7 +1248,7 @@ return (_ctx, _cache) => {
                                   "prepend-icon": "mdi-plus",
                                   onClick: addChannel
                                 }, {
-                                  default: _withCtx(() => [...(_cache[60] || (_cache[60] = [
+                                  default: _withCtx(() => [...(_cache[61] || (_cache[61] = [
                                     _createTextVNode("保存 / 添加", -1)
                                   ]))]),
                                   _: 1
@@ -1264,7 +1266,7 @@ return (_ctx, _cache) => {
                   _: 1
                 }),
                 _createElementVNode("div", _hoisted_19, [
-                  _cache[64] || (_cache[64] = _createElementVNode("span", { class: "section-label" }, "已添加频道", -1)),
+                  _cache[65] || (_cache[65] = _createElementVNode("span", { class: "section-label" }, "已添加频道", -1)),
                   _createVNode(_component_v_chip, {
                     size: "small",
                     variant: "tonal"
@@ -1305,7 +1307,7 @@ return (_ctx, _cache) => {
                           variant: "text",
                           onClick: exitSelectMode
                         }, {
-                          default: _withCtx(() => [...(_cache[61] || (_cache[61] = [
+                          default: _withCtx(() => [...(_cache[62] || (_cache[62] = [
                             _createTextVNode("退出选择", -1)
                           ]))]),
                           _: 1
@@ -1318,7 +1320,7 @@ return (_ctx, _cache) => {
                           "prepend-icon": "mdi-checkbox-multiple-marked-outline",
                           onClick: enterSelectMode
                         }, {
-                          default: _withCtx(() => [...(_cache[62] || (_cache[62] = [
+                          default: _withCtx(() => [...(_cache[63] || (_cache[63] = [
                             _createTextVNode("批量删除", -1)
                           ]))]),
                           _: 1
@@ -1329,7 +1331,7 @@ return (_ctx, _cache) => {
                           "prepend-icon": "mdi-import",
                           onClick: openImport
                         }, {
-                          default: _withCtx(() => [...(_cache[63] || (_cache[63] = [
+                          default: _withCtx(() => [...(_cache[64] || (_cache[64] = [
                             _createTextVNode("批量导入", -1)
                           ]))]),
                           _: 1
@@ -1381,7 +1383,7 @@ return (_ctx, _cache) => {
                                         activator: "parent",
                                         location: "top"
                                       }, {
-                                        default: _withCtx(() => [...(_cache[65] || (_cache[65] = [
+                                        default: _withCtx(() => [...(_cache[66] || (_cache[66] = [
                                           _createTextVNode("删除", -1)
                                         ]))]),
                                         _: 1
@@ -1402,7 +1404,7 @@ return (_ctx, _cache) => {
                         size: "48",
                         class: "mb-2"
                       }),
-                      _cache[66] || (_cache[66] = _createElementVNode("div", { class: "text-body-2" }, "暂未添加任何 TG 频道", -1))
+                      _cache[67] || (_cache[67] = _createElementVNode("div", { class: "text-body-2" }, "暂未添加任何 TG 频道", -1))
                     ]))
               ]),
               _: 1
@@ -1421,7 +1423,7 @@ return (_ctx, _cache) => {
                       class: "d-flex align-center"
                     }, {
                       default: _withCtx(() => [
-                        _cache[68] || (_cache[68] = _createElementVNode("div", { class: "mr-2" }, [
+                        _cache[69] || (_cache[69] = _createElementVNode("div", { class: "mr-2" }, [
                           _createElementVNode("div", { class: "text-subtitle-2" }, "插件直接标记完成"),
                           _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "开启=转存后插件直接标记订阅完成（不用MP整理115）；关闭=只阻断搜索，让MP整理115资源后自己完成")
                         ], -1)),
@@ -1442,7 +1444,7 @@ return (_ctx, _cache) => {
                       class: "d-flex align-center"
                     }, {
                       default: _withCtx(() => [
-                        _cache[69] || (_cache[69] = _createElementVNode("div", { class: "mr-2" }, [
+                        _cache[70] || (_cache[70] = _createElementVNode("div", { class: "mr-2" }, [
                           _createElementVNode("div", { class: "text-subtitle-2" }, "MP 过滤规则组二次匹配"),
                           _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "复用 MoviePilot 订阅过滤规则组")
                         ], -1)),
@@ -1482,7 +1484,7 @@ return (_ctx, _cache) => {
                       class: "d-flex align-center"
                     }, {
                       default: _withCtx(() => [
-                        _cache[70] || (_cache[70] = _createElementVNode("span", { class: "text-body-2 mr-2" }, "转存成功通知", -1)),
+                        _cache[71] || (_cache[71] = _createElementVNode("span", { class: "text-body-2 mr-2" }, "转存成功通知", -1)),
                         _createVNode(_component_v_switch, {
                           modelValue: config.notify_success,
                           "onUpdate:modelValue": _cache[16] || (_cache[16] = $event => ((config.notify_success) = $event)),
@@ -1499,7 +1501,7 @@ return (_ctx, _cache) => {
                       class: "d-flex align-center"
                     }, {
                       default: _withCtx(() => [
-                        _cache[71] || (_cache[71] = _createElementVNode("span", { class: "text-body-2 mr-2" }, "未命中通知", -1)),
+                        _cache[72] || (_cache[72] = _createElementVNode("span", { class: "text-body-2 mr-2" }, "未命中通知", -1)),
                         _createVNode(_component_v_switch, {
                           modelValue: config.notify_fail,
                           "onUpdate:modelValue": _cache[17] || (_cache[17] = $event => ((config.notify_fail) = $event)),
@@ -1521,8 +1523,8 @@ return (_ctx, _cache) => {
               class: "pa-4"
             }, {
               default: _withCtx(() => [
-                _cache[74] || (_cache[74] = _createElementVNode("div", { class: "section-label mb-2" }, "观影（xn--wcv59z.com）", -1)),
-                _cache[75] || (_cache[75] = _createElementVNode("div", { class: "text-caption text-medium-emphasis mb-3" }, "PoW 验证 + 全网盘资源 + 磁力链接搜索；仅 115 自动转存，其它网盘/磁力仅展示链接", -1)),
+                _cache[75] || (_cache[75] = _createElementVNode("div", { class: "section-label mb-2" }, "观影站点", -1)),
+                _cache[76] || (_cache[76] = _createElementVNode("div", { class: "text-caption text-medium-emphasis mb-3" }, "PoW 验证 + 全网盘资源 + 磁力链接搜索；仅 115 自动转存，其它网盘/磁力仅展示链接。换域名在下方「观影站点域名」填写", -1)),
                 _createVNode(_component_v_row, null, {
                   default: _withCtx(() => [
                     _createVNode(_component_v_col, {
@@ -1531,7 +1533,7 @@ return (_ctx, _cache) => {
                       class: "d-flex align-center"
                     }, {
                       default: _withCtx(() => [
-                        _cache[72] || (_cache[72] = _createElementVNode("div", { class: "mr-2" }, [
+                        _cache[73] || (_cache[73] = _createElementVNode("div", { class: "mr-2" }, [
                           _createElementVNode("div", { class: "text-subtitle-2" }, "启用观影"),
                           _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "搜索时同时查该站")
                         ], -1)),
@@ -1559,7 +1561,7 @@ return (_ctx, _cache) => {
                           loading: siteChecking.value,
                           onClick: checkSite
                         }, {
-                          default: _withCtx(() => [...(_cache[73] || (_cache[73] = [
+                          default: _withCtx(() => [...(_cache[74] || (_cache[74] = [
                             _createTextVNode("测试连通", -1)
                           ]))]),
                           _: 1
@@ -1570,8 +1572,24 @@ return (_ctx, _cache) => {
                     _createVNode(_component_v_col, { cols: "12" }, {
                       default: _withCtx(() => [
                         _createVNode(_component_v_text_field, {
+                          modelValue: config.site_domain,
+                          "onUpdate:modelValue": _cache[19] || (_cache[19] = $event => ((config.site_domain) = $event)),
+                          label: "观影站点域名",
+                          placeholder: "https://www.xn--wcv59z.com",
+                          variant: "outlined",
+                          density: "compact",
+                          "hide-details": "",
+                          hint: "观影站换域名时填这里；留空用默认 xn--wcv59z.com",
+                          "persistent-hint": ""
+                        }, null, 8, ["modelValue"])
+                      ]),
+                      _: 1
+                    }),
+                    _createVNode(_component_v_col, { cols: "12" }, {
+                      default: _withCtx(() => [
+                        _createVNode(_component_v_text_field, {
                           modelValue: config.site_app_auth,
-                          "onUpdate:modelValue": _cache[19] || (_cache[19] = $event => ((config.site_app_auth) = $event)),
+                          "onUpdate:modelValue": _cache[20] || (_cache[20] = $event => ((config.site_app_auth) = $event)),
                           label: "观影 app_auth Cookie",
                           variant: "outlined",
                           density: "compact",
@@ -1586,7 +1604,7 @@ return (_ctx, _cache) => {
                       default: _withCtx(() => [
                         _createVNode(_component_v_text_field, {
                           modelValue: config.site_proxy,
-                          "onUpdate:modelValue": _cache[20] || (_cache[20] = $event => ((config.site_proxy) = $event)),
+                          "onUpdate:modelValue": _cache[21] || (_cache[21] = $event => ((config.site_proxy) = $event)),
                           label: "观影专用代理（可选，解决 downurl 403）",
                           variant: "outlined",
                           density: "compact",
@@ -1611,7 +1629,7 @@ return (_ctx, _cache) => {
     }),
     _createVNode(_component_v_dialog, {
       modelValue: importDialog.value,
-      "onUpdate:modelValue": _cache[24] || (_cache[24] = $event => ((importDialog).value = $event)),
+      "onUpdate:modelValue": _cache[25] || (_cache[25] = $event => ((importDialog).value = $event)),
       "max-width": "640"
     }, {
       default: _withCtx(() => [
@@ -1623,7 +1641,7 @@ return (_ctx, _cache) => {
                   icon: "mdi-import",
                   class: "mr-2"
                 }),
-                _cache[76] || (_cache[76] = _createTextVNode("批量导入频道 ", -1))
+                _cache[77] || (_cache[77] = _createTextVNode("批量导入频道 ", -1))
               ]),
               _: 1
             }),
@@ -1632,7 +1650,7 @@ return (_ctx, _cache) => {
               default: _withCtx(() => [
                 _createVNode(_component_v_textarea, {
                   modelValue: importJson.value,
-                  "onUpdate:modelValue": _cache[22] || (_cache[22] = $event => ((importJson).value = $event)),
+                  "onUpdate:modelValue": _cache[23] || (_cache[23] = $event => ((importJson).value = $event)),
                   label: "粘贴 JSON 格式的频道数据",
                   variant: "outlined",
                   rows: "8",
@@ -1650,9 +1668,9 @@ return (_ctx, _cache) => {
                 _createVNode(_component_v_spacer),
                 _createVNode(_component_v_btn, {
                   variant: "text",
-                  onClick: _cache[23] || (_cache[23] = $event => (importDialog.value = false))
+                  onClick: _cache[24] || (_cache[24] = $event => (importDialog.value = false))
                 }, {
-                  default: _withCtx(() => [...(_cache[77] || (_cache[77] = [
+                  default: _withCtx(() => [...(_cache[78] || (_cache[78] = [
                     _createTextVNode("取消", -1)
                   ]))]),
                   _: 1
@@ -1663,7 +1681,7 @@ return (_ctx, _cache) => {
                   loading: saving.value,
                   onClick: confirmImport
                 }, {
-                  default: _withCtx(() => [...(_cache[78] || (_cache[78] = [
+                  default: _withCtx(() => [...(_cache[79] || (_cache[79] = [
                     _createTextVNode("确认导入", -1)
                   ]))]),
                   _: 1
@@ -1679,7 +1697,7 @@ return (_ctx, _cache) => {
     }, 8, ["modelValue"]),
     _createVNode(_component_v_dialog, {
       modelValue: deleteDialog.value,
-      "onUpdate:modelValue": _cache[26] || (_cache[26] = $event => ((deleteDialog).value = $event)),
+      "onUpdate:modelValue": _cache[27] || (_cache[27] = $event => ((deleteDialog).value = $event)),
       "max-width": "420"
     }, {
       default: _withCtx(() => [
@@ -1692,16 +1710,16 @@ return (_ctx, _cache) => {
                   color: "error",
                   class: "mr-2"
                 }),
-                _cache[79] || (_cache[79] = _createTextVNode("确认删除 ", -1))
+                _cache[80] || (_cache[80] = _createTextVNode("确认删除 ", -1))
               ]),
               _: 1
             }),
             _createVNode(_component_v_divider),
             _createVNode(_component_v_card_text, { class: "text-body-2 pt-4" }, {
               default: _withCtx(() => [
-                _cache[80] || (_cache[80] = _createTextVNode(" 确定要永久删除频道「", -1)),
+                _cache[81] || (_cache[81] = _createTextVNode(" 确定要永久删除频道「", -1)),
                 _createElementVNode("strong", null, _toDisplayString(pendingDelete.value !== null ? channels.value[pendingDelete.value]?.name : ''), 1),
-                _cache[81] || (_cache[81] = _createTextVNode("」吗？此操作不可撤销。 ", -1))
+                _cache[82] || (_cache[82] = _createTextVNode("」吗？此操作不可撤销。 ", -1))
               ]),
               _: 1
             }),
@@ -1711,9 +1729,9 @@ return (_ctx, _cache) => {
                 _createVNode(_component_v_spacer),
                 _createVNode(_component_v_btn, {
                   variant: "text",
-                  onClick: _cache[25] || (_cache[25] = $event => (deleteDialog.value = false))
+                  onClick: _cache[26] || (_cache[26] = $event => (deleteDialog.value = false))
                 }, {
-                  default: _withCtx(() => [...(_cache[82] || (_cache[82] = [
+                  default: _withCtx(() => [...(_cache[83] || (_cache[83] = [
                     _createTextVNode("取消", -1)
                   ]))]),
                   _: 1
@@ -1723,7 +1741,7 @@ return (_ctx, _cache) => {
                   variant: "flat",
                   onClick: confirmDelete
                 }, {
-                  default: _withCtx(() => [...(_cache[83] || (_cache[83] = [
+                  default: _withCtx(() => [...(_cache[84] || (_cache[84] = [
                     _createTextVNode("确认删除", -1)
                   ]))]),
                   _: 1
@@ -1740,7 +1758,7 @@ return (_ctx, _cache) => {
     _createVNode(_component_v_dialog, {
       modelValue: qrDialog.value,
       "onUpdate:modelValue": [
-        _cache[28] || (_cache[28] = $event => ((qrDialog).value = $event)),
+        _cache[29] || (_cache[29] = $event => ((qrDialog).value = $event)),
         onQrDialogToggle
       ],
       "max-width": "420"
@@ -1754,7 +1772,7 @@ return (_ctx, _cache) => {
                   icon: "mdi-qrcode-scan",
                   class: "mr-2"
                 }),
-                _cache[84] || (_cache[84] = _createTextVNode("115 扫码登录 ", -1))
+                _cache[85] || (_cache[85] = _createTextVNode("115 扫码登录 ", -1))
               ]),
               _: 1
             }),
@@ -1764,7 +1782,7 @@ return (_ctx, _cache) => {
                 _createVNode(_component_v_select, {
                   modelValue: qrApp.value,
                   "onUpdate:modelValue": [
-                    _cache[27] || (_cache[27] = $event => ((qrApp).value = $event)),
+                    _cache[28] || (_cache[28] = $event => ((qrApp).value = $event)),
                     refreshQrcode
                   ],
                   items: qrApps,
@@ -1808,7 +1826,7 @@ return (_ctx, _cache) => {
                   "prepend-icon": "mdi-refresh",
                   onClick: refreshQrcode
                 }, {
-                  default: _withCtx(() => [...(_cache[85] || (_cache[85] = [
+                  default: _withCtx(() => [...(_cache[86] || (_cache[86] = [
                     _createTextVNode("刷新二维码", -1)
                   ]))]),
                   _: 1
@@ -1818,7 +1836,7 @@ return (_ctx, _cache) => {
                   variant: "text",
                   onClick: closeQrcode
                 }, {
-                  default: _withCtx(() => [...(_cache[86] || (_cache[86] = [
+                  default: _withCtx(() => [...(_cache[87] || (_cache[87] = [
                     _createTextVNode("关闭", -1)
                   ]))]),
                   _: 1
@@ -1834,7 +1852,7 @@ return (_ctx, _cache) => {
     }, 8, ["modelValue"]),
     _createVNode(_component_v_dialog, {
       modelValue: dirBrowserOpen.value,
-      "onUpdate:modelValue": _cache[30] || (_cache[30] = $event => ((dirBrowserOpen).value = $event)),
+      "onUpdate:modelValue": _cache[31] || (_cache[31] = $event => ((dirBrowserOpen).value = $event)),
       "max-width": "560"
     }, {
       default: _withCtx(() => [
@@ -1846,7 +1864,7 @@ return (_ctx, _cache) => {
                   icon: "mdi-folder-open",
                   class: "mr-2"
                 }),
-                _cache[87] || (_cache[87] = _createTextVNode("选择 115 目录 ", -1))
+                _cache[88] || (_cache[88] = _createTextVNode("选择 115 目录 ", -1))
               ]),
               _: 1
             }),
@@ -1863,7 +1881,7 @@ return (_ctx, _cache) => {
                     "prepend-icon": "mdi-home",
                     onClick: navigateRoot
                   }, {
-                    default: _withCtx(() => [...(_cache[88] || (_cache[88] = [
+                    default: _withCtx(() => [...(_cache[89] || (_cache[89] = [
                       _createTextVNode("根目录", -1)
                     ]))]),
                     _: 1
@@ -1874,7 +1892,7 @@ return (_ctx, _cache) => {
                         size: "small",
                         class: "mx-1"
                       }, {
-                        default: _withCtx(() => [...(_cache[89] || (_cache[89] = [
+                        default: _withCtx(() => [...(_cache[90] || (_cache[90] = [
                           _createTextVNode("mdi-chevron-right", -1)
                         ]))]),
                         _: 1
@@ -1891,7 +1909,7 @@ return (_ctx, _cache) => {
                         "prepend-icon": "mdi-arrow-left",
                         onClick: navigateUp
                       }, {
-                        default: _withCtx(() => [...(_cache[90] || (_cache[90] = [
+                        default: _withCtx(() => [...(_cache[91] || (_cache[91] = [
                           _createTextVNode("上一级", -1)
                         ]))]),
                         _: 1
@@ -1930,7 +1948,7 @@ return (_ctx, _cache) => {
                                 color: "primary",
                                 onClick: _withModifiers($event => (selectDir(d.cid, dirBrowserPathStr.value + '/' + d.name)), ["stop"])
                               }, {
-                                default: _withCtx(() => [...(_cache[91] || (_cache[91] = [
+                                default: _withCtx(() => [...(_cache[92] || (_cache[92] = [
                                   _createTextVNode("选择", -1)
                                 ]))]),
                                 _: 1
@@ -1963,9 +1981,9 @@ return (_ctx, _cache) => {
                 _createVNode(_component_v_spacer),
                 _createVNode(_component_v_btn, {
                   variant: "text",
-                  onClick: _cache[29] || (_cache[29] = $event => (dirBrowserOpen.value = false))
+                  onClick: _cache[30] || (_cache[30] = $event => (dirBrowserOpen.value = false))
                 }, {
-                  default: _withCtx(() => [...(_cache[92] || (_cache[92] = [
+                  default: _withCtx(() => [...(_cache[93] || (_cache[93] = [
                     _createTextVNode("取消", -1)
                   ]))]),
                   _: 1
@@ -1975,7 +1993,7 @@ return (_ctx, _cache) => {
                   variant: "flat",
                   onClick: selectCurrent
                 }, {
-                  default: _withCtx(() => [...(_cache[93] || (_cache[93] = [
+                  default: _withCtx(() => [...(_cache[94] || (_cache[94] = [
                     _createTextVNode("确认", -1)
                   ]))]),
                   _: 1
@@ -1991,7 +2009,7 @@ return (_ctx, _cache) => {
     }, 8, ["modelValue"]),
     _createVNode(_component_v_dialog, {
       modelValue: batchDeleteDialog.value,
-      "onUpdate:modelValue": _cache[32] || (_cache[32] = $event => ((batchDeleteDialog).value = $event)),
+      "onUpdate:modelValue": _cache[33] || (_cache[33] = $event => ((batchDeleteDialog).value = $event)),
       "max-width": "420"
     }, {
       default: _withCtx(() => [
@@ -2004,16 +2022,16 @@ return (_ctx, _cache) => {
                   color: "error",
                   class: "mr-2"
                 }),
-                _cache[94] || (_cache[94] = _createTextVNode("确认批量删除 ", -1))
+                _cache[95] || (_cache[95] = _createTextVNode("确认批量删除 ", -1))
               ]),
               _: 1
             }),
             _createVNode(_component_v_divider),
             _createVNode(_component_v_card_text, { class: "text-body-2 pt-4" }, {
               default: _withCtx(() => [
-                _cache[95] || (_cache[95] = _createTextVNode(" 确定要删除选中的 ", -1)),
+                _cache[96] || (_cache[96] = _createTextVNode(" 确定要删除选中的 ", -1)),
                 _createElementVNode("strong", null, _toDisplayString(selectedChannels.value.length), 1),
-                _cache[96] || (_cache[96] = _createTextVNode(" 个频道吗？此操作不可撤销。 ", -1))
+                _cache[97] || (_cache[97] = _createTextVNode(" 个频道吗？此操作不可撤销。 ", -1))
               ]),
               _: 1
             }),
@@ -2023,9 +2041,9 @@ return (_ctx, _cache) => {
                 _createVNode(_component_v_spacer),
                 _createVNode(_component_v_btn, {
                   variant: "text",
-                  onClick: _cache[31] || (_cache[31] = $event => (batchDeleteDialog.value = false))
+                  onClick: _cache[32] || (_cache[32] = $event => (batchDeleteDialog.value = false))
                 }, {
-                  default: _withCtx(() => [...(_cache[97] || (_cache[97] = [
+                  default: _withCtx(() => [...(_cache[98] || (_cache[98] = [
                     _createTextVNode("取消", -1)
                   ]))]),
                   _: 1
@@ -2035,7 +2053,7 @@ return (_ctx, _cache) => {
                   variant: "flat",
                   onClick: confirmBatchDelete
                 }, {
-                  default: _withCtx(() => [...(_cache[98] || (_cache[98] = [
+                  default: _withCtx(() => [...(_cache[99] || (_cache[99] = [
                     _createTextVNode("确认删除", -1)
                   ]))]),
                   _: 1
@@ -2051,7 +2069,7 @@ return (_ctx, _cache) => {
     }, 8, ["modelValue"]),
     _createVNode(_component_v_snackbar, {
       modelValue: snackModel.value,
-      "onUpdate:modelValue": _cache[33] || (_cache[33] = $event => ((snackModel).value = $event)),
+      "onUpdate:modelValue": _cache[34] || (_cache[34] = $event => ((snackModel).value = $event)),
       color: snackColor.value,
       location: "top right",
       timeout: "2500"
@@ -2066,6 +2084,6 @@ return (_ctx, _cache) => {
 }
 
 };
-const Config = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-8301a1ce"]]);
+const Config = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-83fee8eb"]]);
 
 export { Config as default };
