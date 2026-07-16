@@ -225,7 +225,7 @@ class TgSearch115(_PluginBase):
         "订阅新增时优先到指定 Telegram 频道搜索 115 资源，命中并转存成功后自动完成订阅；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.1.3"
+    plugin_version = "4.1.4"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -790,6 +790,75 @@ class TgSearch115(_PluginBase):
 
         return "本季合集"
 
+    @staticmethod
+    def _parse_resource_meta(text: str) -> dict:
+        """从资源标题解析展示元数据，供详情页卡片展示与排序。
+
+        返回:
+          - display_name: "片名 (年份)"（无年份则只片名）
+          - meta: "完结 - S01E177  4K  WEB-DL" 风格的元信息行
+          - is_complete: 是否完结（排序用）
+          - episode_num: 最大集数（排序用，0 表示无集数信息）
+        """
+        t = (text or "").strip()
+        if not t:
+            return {"display_name": "", "meta": "", "is_complete": False, "episode_num": 0}
+
+        # ---- 年份 ----
+        ym = _re.search(r'[(（](\d{4})[)）]', t)
+        year = ym.group(1) if ym else ""
+
+        # ---- 名称：去开头装饰(emoji/符号)，截到第一个【或质量关键词 ----
+        qual = (r'4K|2160P|1080[PI]?|720P|480P|蓝光|原盘|REMUX|WEB-?DL|Blu-?Ray|H\.?26[45]'
+                r'|AVC|HEVC|x26[45]|杜比|Dolby|国语|粤语|英语|日语|中字|简繁|特效|字幕'
+                r'|完结|更新至|全集|全季|类型|无广告|正式版|内封|外挂|双音')
+        head = _re.sub(r'^[\s\W_]+', '', t)  # 去开头非词字符(emoji/符号)
+        # 名称截断点：第一个【 或质量关键词 或集数模式
+        ep_pat = r'[Ss]\d{1,2}[Ee]\d{1,3}|[Ee][Pp]?\s?\d{1,3}\b|全\s*\d{1,3}\s*集|更新至\s*\d|第\s*\d{1,3}(?:[-~]\d{1,3})?\s*集'
+        m = _re.search(rf'(?:{qual})|【|(?:{ep_pat})', head)
+        name_raw = head[:m.start()] if m else head
+        name_raw = _re.sub(r'[━◀▶▉▔▂▃▅▆▇【】\[\]]', '', name_raw).strip(' -–—·•|:：')
+        name = _re.sub(r'\s*[(（]\d{4}[)）]', '', name_raw).strip(' -–—·•|:：')
+        if not name:  # 兜底：取第一个【】内容
+            bm = _re.search(r'【([^】]{1,60})】', t)
+            if bm:
+                name = _re.sub(r'\s*[(（]\d{4}[)）]', '', bm.group(1)).strip(' -–—·•|:：')
+
+        # ---- 状态 + 集数（status 只标完结；ongoing 由 episode 表达，避免重复）----
+        is_complete = bool(_re.search(r'完结|全集|全季', t))
+        episode = ""
+        episode_num = 0
+        m = _re.search(r'[Ss]\d{1,2}[Ee](\d{1,3})\s*(?:[-~]\s*[Ee]?(\d{1,3}))?', t)
+        if m:
+            a = int(m.group(1)); b = int(m.group(2)) if m.group(2) else a
+            episode = _re.sub(r'\s+', '', m.group(0))
+            episode_num = max(a, b)
+        elif (m := _re.search(r'全\s*(\d{1,3})\s*集', t)):
+            episode = _re.sub(r'\s+', '', m.group(0)); episode_num = int(m.group(1)); is_complete = True
+        elif (m := _re.search(r'更新至\s*(\d{1,3})\s*集', t)):
+            episode = _re.sub(r'\s+', '', m.group(0)); episode_num = int(m.group(1))
+        elif (m := _re.search(r'(?:EP|E|第)(\d{1,3})\s*[-~]\s*(\d{1,3})', t, _re.IGNORECASE)):
+            a = int(m.group(1)); b = int(m.group(2))
+            episode = f"EP{a:02d}-{b:02d}"; episode_num = max(a, b)
+        status = "完结" if is_complete else ""
+
+        # ---- 清晰度 ----
+        qm = _re.search(r'(4K|2160P|1080[PI]?|720P|480P|蓝光|原盘)', t, _re.IGNORECASE)
+        quality = qm.group(1).upper() if qm else ""
+
+        # ---- 来源 ----
+        sm = _re.search(r'(WEB-?DL|Blu-?Ray|BluRay|REMUX|HDTV|HDRip)', t, _re.IGNORECASE)
+        source = sm.group(1).upper() if sm else ""
+        source = {'WEBDL': 'WEB-DL', 'BLURAY': 'BluRay'}.get(source, source)
+
+        # ---- 组装 ----
+        display_name = f"{name} ({year})" if name and year else (name or "")
+        meta_head = " - ".join([p for p in [status, episode] if p])
+        meta_tail = "  ".join([p for p in [quality, source] if p])
+        meta = "  ".join([x for x in [meta_head, meta_tail] if x])
+        return {"display_name": display_name, "meta": meta,
+                "is_complete": is_complete, "episode_num": episode_num}
+
     def _send_fail_notify(self, subscribe, reason: str):
         if not self._notify_fail:
             return
@@ -1000,8 +1069,14 @@ class TgSearch115(_PluginBase):
                 pt = getattr(h, "pan_type", "") or ""
                 if not pt:
                     pt = "115" if P115Transfer._is_115_share_url(h.share_url or "") else "other"
+                title = h.resource_title or "未命名资源"
+                meta = self._parse_resource_meta(title)
                 results.append({
-                    "title": h.resource_title or "未命名资源",
+                    "title": title,
+                    "display_name": meta["display_name"] or title,
+                    "meta": meta["meta"],
+                    "is_complete": meta["is_complete"],
+                    "episode_num": meta["episode_num"],
                     "share_url": h.share_url,
                     "receive_code": getattr(h, "receive_code", "") or "",
                     "channel": getattr(h, "channel_name", "") or "",
@@ -1009,6 +1084,8 @@ class TgSearch115(_PluginBase):
                     "pub_date": h.pub_date or "",
                     "text": (h.text or "")[:500],
                 })
+            # 排序：完结优先，然后按最大集数降序（电影无集数则保持原序）
+            results.sort(key=lambda r: (r["is_complete"], r["episode_num"]), reverse=True)
             return JSONResponse({
                 "success": True,
                 "message": f"找到 {len(results)} 条资源",

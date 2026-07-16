@@ -9,12 +9,15 @@ const _hoisted_2 = { class: "text-h6" };
 const _hoisted_3 = { class: "text-h6" };
 const _hoisted_4 = { class: "d-flex align-center mb-2" };
 const _hoisted_5 = {
-  key: 0,
-  class: "text-caption text-medium-emphasis"
+  key: 1,
+  class: "text-caption text-medium-emphasis ml-auto"
 };
 const _hoisted_6 = ["title"];
-const _hoisted_7 = { class: "text-caption text-medium-emphasis mt-1" };
-const _hoisted_8 = { class: "text-caption text-medium-emphasis line-clamp-3" };
+const _hoisted_7 = {
+  key: 0,
+  class: "text-caption text-primary font-weight-medium mt-1"
+};
+const _hoisted_8 = { class: "text-caption text-medium-emphasis mt-1" };
 
 const {computed,onMounted,reactive,ref} = await importShared('vue');
 
@@ -334,29 +337,36 @@ return (_ctx, _cache) => {
                                       ]),
                                       _: 2
                                     }, 1032, ["color"]),
+                                    (r.is_complete)
+                                      ? (_openBlock(), _createBlock(_component_v_chip, {
+                                          key: 0,
+                                          size: "x-small",
+                                          variant: "flat",
+                                          color: "success",
+                                          class: "mr-2"
+                                        }, {
+                                          default: _withCtx(() => [...(_cache[8] || (_cache[8] = [
+                                            _createTextVNode("完结", -1)
+                                          ]))]),
+                                          _: 1
+                                        }))
+                                      : _createCommentVNode("", true),
                                     (r.pub_date)
                                       ? (_openBlock(), _createElementBlock("span", _hoisted_5, _toDisplayString(r.pub_date.slice(0, 10)), 1))
                                       : _createCommentVNode("", true)
                                   ]),
                                   _createElementVNode("div", {
-                                    class: "text-body-2 font-weight-medium line-clamp-2",
-                                    title: r.title
-                                  }, _toDisplayString(r.title), 9, _hoisted_6),
-                                  _createElementVNode("div", _hoisted_7, _toDisplayString(r.channel || '未知来源'), 1)
+                                    class: "text-body-1 font-weight-bold line-clamp-2",
+                                    title: r.display_name || r.title
+                                  }, _toDisplayString(r.display_name || r.title), 9, _hoisted_6),
+                                  (r.meta)
+                                    ? (_openBlock(), _createElementBlock("div", _hoisted_7, _toDisplayString(r.meta), 1))
+                                    : _createCommentVNode("", true),
+                                  _createElementVNode("div", _hoisted_8, _toDisplayString(r.channel || '未知来源'), 1)
                                 ]),
                                 _: 2
                               }, 1024),
-                              (r.text)
-                                ? (_openBlock(), _createBlock(_component_v_card_text, {
-                                    key: 0,
-                                    class: "py-0 flex-grow-1"
-                                  }, {
-                                    default: _withCtx(() => [
-                                      _createElementVNode("div", _hoisted_8, _toDisplayString(r.text), 1)
-                                    ]),
-                                    _: 2
-                                  }, 1024))
-                                : _createCommentVNode("", true),
+                              _createVNode(_component_v_spacer),
                               _createVNode(_component_v_card_actions, { class: "pt-2" }, {
                                 default: _withCtx(() => [
                                   _createVNode(_component_v_btn, {
@@ -365,7 +375,7 @@ return (_ctx, _cache) => {
                                     "prepend-icon": "mdi-content-copy",
                                     onClick: $event => (copy(r))
                                   }, {
-                                    default: _withCtx(() => [...(_cache[8] || (_cache[8] = [
+                                    default: _withCtx(() => [...(_cache[9] || (_cache[9] = [
                                       _createTextVNode("复制链接", -1)
                                     ]))]),
                                     _: 1
@@ -381,7 +391,7 @@ return (_ctx, _cache) => {
                                         loading: transferringIdx.value === i,
                                         onClick: $event => (transfer(r, i))
                                       }, {
-                                        default: _withCtx(() => [...(_cache[9] || (_cache[9] = [
+                                        default: _withCtx(() => [...(_cache[10] || (_cache[10] = [
                                           _createTextVNode("转存", -1)
                                         ]))]),
                                         _: 1
@@ -424,6 +434,6 @@ return (_ctx, _cache) => {
 }
 
 };
-const Page = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-7f864f3a"]]);
+const Page = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-b0a09713"]]);
 
 export { Page as default };

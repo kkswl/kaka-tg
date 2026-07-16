@@ -75,14 +75,16 @@
                   <v-chip :color="panColor(r.pan_type)" size="x-small" variant="flat" class="mr-2">
                     {{ panLabel(r.pan_type) }}
                   </v-chip>
-                  <span v-if="r.pub_date" class="text-caption text-medium-emphasis">{{ r.pub_date.slice(0, 10) }}</span>
+                  <v-chip v-if="r.is_complete" size="x-small" variant="flat" color="success" class="mr-2">完结</v-chip>
+                  <span v-if="r.pub_date" class="text-caption text-medium-emphasis ml-auto">{{ r.pub_date.slice(0, 10) }}</span>
                 </div>
-                <div class="text-body-2 font-weight-medium line-clamp-2" :title="r.title">{{ r.title }}</div>
+                <div class="text-body-1 font-weight-bold line-clamp-2" :title="r.display_name || r.title">
+                  {{ r.display_name || r.title }}
+                </div>
+                <div v-if="r.meta" class="text-caption text-primary font-weight-medium mt-1">{{ r.meta }}</div>
                 <div class="text-caption text-medium-emphasis mt-1">{{ r.channel || '未知来源' }}</div>
               </v-card-item>
-              <v-card-text v-if="r.text" class="py-0 flex-grow-1">
-                <div class="text-caption text-medium-emphasis line-clamp-3">{{ r.text }}</div>
-              </v-card-text>
+              <v-spacer />
               <v-card-actions class="pt-2">
                 <v-btn size="small" variant="text" prepend-icon="mdi-content-copy" @click="copy(r)">复制链接</v-btn>
                 <v-spacer />
