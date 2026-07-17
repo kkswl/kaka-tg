@@ -327,6 +327,9 @@ class TgChannelScraper:
         }
         if self.proxy:
             kwargs["proxy"] = self.proxy
+            kwargs["trust_env"] = False
+        else:
+            kwargs["trust_env"] = False
         return httpx.AsyncClient(**kwargs)
 
 
