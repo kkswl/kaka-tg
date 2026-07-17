@@ -299,7 +299,9 @@ class FilejinScraper:
         resp = self._get_client().get(url, headers={"Accept": "application/json"})
         if resp.status_code != 200:
             if resp.status_code == 403:
-                self.app_auth_valid = False  # 403 = app_auth 失效
+                # 注：403 通常是因为观影站对代理 IP/国外机房封锁 downurl 接口，
+                # 不是 app_auth 失效。取消这里的 app_auth_valid = False 覆盖
+                pass
             logger.warn(f"【TG115】观影 downurl {dir_}/{id_} 失败: HTTP {resp.status_code}")
             return []
         try:
