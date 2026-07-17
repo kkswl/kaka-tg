@@ -1,0 +1,5 @@
+# 本插件不声明 pip 依赖（避免触发 MP 主程序依赖健康检查导致安装失败）。
+# 运行所需 beautifulsoup4 + httpx 由 MP 环境提供（懒导入，缺失时功能降级而非崩溃）：
+#   - httpx：MP 核心必带，观影搜索 / 115 转存依赖它
+#   - beautifulsoup4：MP 通常自带；若缺失，TG 频道搜索不可用（观影/转存不受影响）
+# 手动安装（仅在缺 bs4 时）：docker exec -it moviepilot pip install beautifulsoup4
