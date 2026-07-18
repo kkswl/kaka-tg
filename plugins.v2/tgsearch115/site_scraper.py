@@ -393,7 +393,7 @@ class FilejinScraper:
         return hits
 
     def _extract_resources_from_page(self, dir_: str, id_: str) -> List[SiteHit]:
-        """当 downurl API 被 403 时，尝试从资源页面提取网盘链接。"""
+        """当 downurl API 被 403 时，尝试从资源页面提取磁力链接和网盘链接。"""
         try:
             page_url = f"{self.site_base}/res/downurl/{dir_}/{id_}"
             resp = self._get_client().get(page_url, headers={"Accept": "text/html"})
@@ -401,17 +401,38 @@ class FilejinScraper:
                 return []
             text = resp.text
             hits: List[SiteHit] = []
-            # 提取所有网盘链接
+            
+            # 1. 优先提取磁力链接（观影站主要提供磁力资源）
+            for m in re.finditer(r'magnet:\?xt=urn:btih:[a-fA-F0-9]{40}(?:&[^"\s<>]*)?', text):
+                magnet = m.group(0)
+                # 提取标题
+                title_match = re.search(r'dn=([^&]+)', magnet)
+                title = title_match.group(1) if title_match else ""
+                if not title:
+                    # 从页面上下文提取标题
+                    title_match = re.search(r'<title[^>]*>([^<]+)</title>', text)
+                    title = title_match.group(1) if title_match else ""
+                hits.append(SiteHit(
+                    share_url=magnet,
+                    resource_title=_clean_title(title) or title[:200],
+                    text=title,
+                    pan_type="magnet",
+                    pan_label="磁力",
+                ))
+            
+            # 2. 提取网盘链接（如果有）
             for m in re.finditer(r'https?://(?:pan\.)?(?:quark\.cn|pan\.baidu\.com|yun\.baidu\.com|aliyundrive\.com|alipan\.com|pan\.xunlei\.com|115\.com|anxia\.com)[^\s"\'<>]+', text):
                 u = m.group(0)
                 hits.append(SiteHit(share_url=u, pan_type=_classify_pan(u)))
-            # 提取提取码
+            
+            # 3. 提取提取码
             codes = re.findall(r'提取码[：:\s]*([A-Za-z0-9]{4})', text)
             for i, h in enumerate(hits):
                 if i < len(codes):
                     h.receive_code = codes[i]
+            
             if hits:
-                logger.info(f"【TG115】观影 downurl 403，从页面提取 {len(hits)} 条资源")
+                logger.info(f"【TG115】观影 downurl 403，从页面提取 {len(hits)} 条资源（磁力 {sum(1 for h in hits if h.pan_type == 'magnet')}）")
             return hits
         except Exception:
             return []
