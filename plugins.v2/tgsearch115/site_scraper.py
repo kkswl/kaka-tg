@@ -372,11 +372,18 @@ class FilejinScraper:
 
     def _make_client(self):
         """创建 httpx.Client（同步），带 Chrome UA + 代理 + cookie jar。
-
+        
+        关键：无论是否配置代理，都彻底禁用环境变量代理（trust_env=False + mounts）。
+        解决 Windows/Docker 下 HTTP_PROXY 环境变量污染导致 403 的问题。
+        
         app_auth 通过 cookies jar 注入（不用手动 Cookie 头），以便服务端 Set-Cookie
         下发的 browser_pow / browser_verified 与 app_auth 共存于同一 jar。
         """
         import httpx
+        # 禁用所有协议的环境代理（彻底切断 Docker/Windows 系统代理污染）
+        no_proxy_mount = httpx.Mount("https://", httpx.HTTPTransport(trust_env=False))
+        no_proxy_mount_http = httpx.Mount("http://", httpx.HTTPTransport(trust_env=False))
+        
         kwargs = {
             "timeout": 20.0,
             "headers": {
@@ -392,17 +399,15 @@ class FilejinScraper:
             },
             "follow_redirects": True,
             "cookies": {"app_auth": self.app_auth} if self.app_auth else None,
+            # 关键修复：即使 proxy=None 也强制直连，不读取环境变量
+            "mounts": {"https://": no_proxy_mount, "http://": no_proxy_mount_http},
         }
         if self.proxy:
-            # 解决 docker 内部 requests/httpx 环境代理穿越问题：
-            # httpx 发现如果传入了 proxy 参数，可能会因为环境变量 HTTP_PROXY 导致
-            # 内部网络隔离机制无法生效。这里显式给 trust_env=False，确保 proxy 参
-            # 数绝对生效。
+            # 如果用户配置了专用代理（如 http://host.docker.internal:10809），则使用该代理
             kwargs["proxy"] = self.proxy
-            kwargs["trust_env"] = False
-        else:
-            # 用户选直连时，强制不使用环境变量里的全局代理
-            kwargs["trust_env"] = False
+            # 注意：mounts 已设置 trust_env=False，proxy 参数与 mounts 共存时，
+            # httpx 会优先使用 proxy 参数指定的代理，且仍不读取环境变量
+        # 否则 proxy 为 None，mouts 确保不读取任何环境代理，真正直连
         return httpx.Client(**kwargs)
 
 

@@ -198,7 +198,7 @@ class TgSearch115(_PluginBase):
         "订阅新增时优先到指定 Telegram 频道搜索 115 资源，命中并转存成功后自动完成订阅；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.2.14"
+    plugin_version = "4.2.15"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -1277,8 +1277,9 @@ class TgSearch115(_PluginBase):
         auth = (app_auth or "").strip()
         dom = (site_domain or "").strip() or self._site_domain
         if auth:
-            # 临时 scraper 测当前输入的 app_auth（不依赖保存），用观影专用代理+域名
-            sp = (config.get("site_proxy") or "").strip()
+            # 临时 scraper 测当前输入的 app_auth（不依赖保存），从配置读取 site_proxy
+            _cfg = self.get_data(CONFIG_KEY) or {}
+            sp = (_cfg.get("site_proxy") or "").strip()
             proxy = None if sp == 'direct' else (sp or None)
             scraper = FilejinScraper(app_auth=auth, proxy=proxy, site_base=dom)
             ok, msg = scraper.check()

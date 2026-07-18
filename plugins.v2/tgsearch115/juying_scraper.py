@@ -150,15 +150,21 @@ class JuyingApi:
     def _client(self):
         if self._http is None:
             import httpx
+            # 禁用所有协议的环境代理（彻底切断 Docker/Windows 系统代理污染）
+            no_proxy_mount = httpx.Mount("https://", httpx.HTTPTransport(trust_env=False))
+            no_proxy_mount_http = httpx.Mount("http://", httpx.HTTPTransport(trust_env=False))
+            
             kwargs = {
                 "timeout": 20.0,
                 "headers": {"User-Agent": "Mozilla/5.0 (MoviePilot-TgSearch115)"},
                 "follow_redirects": True,
+                # 关键修复：即使 proxy=None 也强制直连，不读取环境变量
+                "mounts": {"https://": no_proxy_mount, "http://": no_proxy_mount_http},
             }
             if self.proxy:
                 kwargs["proxy"] = self.proxy
-                kwargs["trust_env"] = False
-            else:
-                kwargs["trust_env"] = False
+                # 注意：mounts 已设置 trust_env=False，proxy 参数与 mounts 共存时，
+                # httpx 会优先使用 proxy 参数指定的代理，且仍不读取环境变量
+            # 否则 proxy 为 None，mounts 确保不读取任何环境代理，真正直连
             self._http = httpx.Client(**kwargs)
         return self._http
