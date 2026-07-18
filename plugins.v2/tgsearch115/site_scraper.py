@@ -381,9 +381,7 @@ class FilejinScraper:
         """
         import httpx
         # 禁用所有协议的环境代理（彻底切断 Docker/Windows 系统代理污染）
-        no_proxy_mount = httpx.Mount("https://", httpx.HTTPTransport(trust_env=False))
-        no_proxy_mount_http = httpx.Mount("http://", httpx.HTTPTransport(trust_env=False))
-        
+        # httpx 0.28.x 没有 Mount 类，直接将 HTTPTransport 传给 mounts 参数
         kwargs = {
             "timeout": 20.0,
             "headers": {
@@ -399,15 +397,18 @@ class FilejinScraper:
             },
             "follow_redirects": True,
             "cookies": {"app_auth": self.app_auth} if self.app_auth else None,
-            # 关键修复：即使 proxy=None 也强制直连，不读取环境变量
-            "mounts": {"https://": no_proxy_mount, "http://": no_proxy_mount_http},
+            # 关键修复：所有协议都禁用环境代理
+            "mounts": {
+                "https://": httpx.HTTPTransport(trust_env=False),
+                "http://": httpx.HTTPTransport(trust_env=False),
+            },
         }
         if self.proxy:
             # 如果用户配置了专用代理（如 http://host.docker.internal:10809），则使用该代理
             kwargs["proxy"] = self.proxy
-            # 注意：mounts 已设置 trust_env=False，proxy 参数与 mounts 共存时，
-            # httpx 会优先使用 proxy 参数指定的代理，且仍不读取环境变量
-        # 否则 proxy 为 None，mouts 确保不读取任何环境代理，真正直连
+            # mounts 已设置 trust_env=False，proxy 与 mounts 共存时，httpx 会优先使用 proxy，
+            # 且仍不读取环境变量
+        # 否则 proxy 为 None，mounts 确保不读取任何环境代理，真正直连
         return httpx.Client(**kwargs)
 
 
