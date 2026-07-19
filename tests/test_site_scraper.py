@@ -51,6 +51,18 @@ class _Client:
 
 
 class SiteScraperTest(unittest.TestCase):
+    def test_normalizes_full_app_auth_cookie(self):
+        scraper = site_scraper.FilejinScraper(
+            app_auth="Cookie: PHPSESSID=session; app_auth=token-value; theme=dark"
+        )
+
+        self.assertEqual("token-value", scraper.app_auth)
+
+    def test_preserves_raw_app_auth_value(self):
+        scraper = site_scraper.FilejinScraper(app_auth="token-value")
+
+        self.assertEqual("token-value", scraper.app_auth)
+
     def test_year_filter_does_not_fall_back_to_fuzzy_results(self):
         scraper = site_scraper.FilejinScraper(app_auth="test")
         scraper._ensure_access = lambda: None

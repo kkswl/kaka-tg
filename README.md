@@ -2,7 +2,7 @@
 
 MoviePilot v2 插件：订阅新增时优先搜索 Telegram 公开频道、观影资源站和聚影 API，命中 115 分享后自动转存；未命中或转存失败时回退到 MoviePilot 默认搜索。
 
-当前本地版本：`v4.3.1`。该版本基于上游 `kkswl/kaka-tg v4.2.18`，增加 MoviePilot 原生媒体身份确认、手动搜索精准过滤和观影 urllib 客户端降级。
+当前本地版本：`v4.3.2`。该版本基于上游 `kkswl/kaka-tg v4.2.18`，增加 MoviePilot 原生媒体身份确认、手动搜索精准过滤、观影 urllib 客户端降级和完整 Cookie 自动规范化。
 
 ## 目录结构
 
@@ -111,3 +111,11 @@ P0 观影止血与诊断
 - 新增 urllib 独立 CookieJar + PoW + downurl 直连降级，仅在原 httpx/HTML 路径失败后启用。
 - v2rayN `192.168.1.9:10808` 出口测试仍为 403，故观影不依赖该代理；Git 推送仍可在需要时使用它。
 - 测试扩展到 15 个，全部通过。
+
+### 2026-07-19 阶段七：观影 app_auth Cookie 规范化
+
+- `v4.3.1` 在 MoviePilot 实机中已正确进入 urllib 降级，但详情仍返回 `urllib HTTP 403`。
+- 对比配置和成功探针后确认，用户保存的是 `app_auth=值` 完整 Cookie 片段，插件却把整段作为 Cookie 值，导致请求实际登录态无效。
+- 新增输入规范化：同时接受纯 token、`app_auth=token` 和 `Cookie: ...; app_auth=token; ...`。
+- Windows 直连对照验证：规范化前 `downurl` 为 403，规范化后为 HTTP 200，并取得 33 条网盘链接。
+- 插件版本升级为 `v4.3.2`，新增两项 Cookie 格式回归测试。

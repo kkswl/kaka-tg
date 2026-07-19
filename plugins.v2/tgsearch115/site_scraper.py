@@ -67,6 +67,13 @@ _CHROME_UA = (
     "Chrome/125.0.0.0 Safari/537.36"
 )
 
+
+def _normalize_app_auth(value: str) -> str:
+    """Accept either the raw token or a copied Cookie header fragment."""
+    raw = str(value or "").strip()
+    match = re.search(r"(?:^|[;\s])app_auth\s*=\s*([^;\s]+)", raw, re.IGNORECASE)
+    return match.group(1).strip() if match else raw
+
 # 网盘类型判定（按 URL 域名，可靠；tname 不可靠仅作展示）
 _PAN_DOMAINS: List[Tuple[str, str]] = [
     ("115.com", "115"), ("anxia.com", "115"), ("115cdn.com", "115"),
@@ -112,7 +119,7 @@ class FilejinScraper:
 
     def __init__(self, app_auth: str = "", proxy: Optional[str] = None,
                  count: int = 3, site_base: str = "") -> None:
-        self.app_auth = (app_auth or "").strip()
+        self.app_auth = _normalize_app_auth(app_auth)
         self.proxy = (proxy or "").strip() or None
         self.count = count  # 每次（每页）取多少部作品的网盘资源
         self._http = None            # 持久 httpx.Client（复用 PoW 会话）
