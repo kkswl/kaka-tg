@@ -204,7 +204,7 @@ class TgSearch115(_PluginBase):
         "并支持 115 分享直接转存；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.4.0"
+    plugin_version = "4.4.1"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -1090,7 +1090,9 @@ class TgSearch115(_PluginBase):
     def __get_config_api(self):
         """GET /config：返回当前配置（供自定义前端 Config.vue 读取）。"""
         from starlette.responses import JSONResponse
-        config = self.get_data(CONFIG_KEY) or self._default_config()
+        stored = self.get_data(CONFIG_KEY) or {}
+        config = {**self._default_config(), **stored} if isinstance(stored, dict) \
+            else self._default_config()
         ck = config.get("p115_cookie", "") if isinstance(config, dict) else ""
         logger.info(f"【TG115】/config/get p115_cookie_len={len(ck or '')} valid={bool(_pick_uid_cid_seid(ck or ''))}")
         return JSONResponse(config)
