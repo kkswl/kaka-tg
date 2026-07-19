@@ -68,8 +68,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastapi import Body
 
 from app.core.config import settings
+from app.chain.download import DownloadChain
 from app.chain.subscribe import SubscribeChain, build_subscribe_meta
-from app.core.context import MediaInfo, TorrentInfo
+from app.core.context import Context, MediaInfo, TorrentInfo
+from app.core.metainfo import MetaInfo
 from app.core.event import Event, eventmanager
 from app.db.subscribe_oper import SubscribeOper
 from app.db.systemconfig_oper import SystemConfigOper
@@ -84,6 +86,7 @@ from .site_scraper import FilejinScraper
 from .juying_scraper import JuyingApi
 from .identity_matcher import confirm_candidate_identity
 from .search_relevance import extract_year, is_relevant_result
+from .resource_strategy import is_magnet_url, select_auto_candidates
 
 
 # get_data / save_data 存储本插件配置使用的 key
@@ -197,10 +200,11 @@ class TgSearch115(_PluginBase):
     # ============================ 插件元信息 ============================
     plugin_name = "拦截mp订阅"
     plugin_desc = (
-        "订阅新增时优先到指定 Telegram 频道搜索 115 资源，命中并转存成功后自动完成订阅；"
+        "订阅新增时搜索 Telegram、观影和聚影，优先将确认匹配的观影磁力交给 MoviePilot 下载整理，"
+        "并支持 115 分享直接转存；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.3.2"
+    plugin_version = "4.4.0"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -229,6 +233,7 @@ class TgSearch115(_PluginBase):
     _auto_finish = True  # True=插件直接标记完成(不用MP整理); False=只阻断搜索让MP自己整理
     _site_enabled = False
     _site_app_auth = ""
+    _site_magnet_priority = True
     # ============================ 生命周期 ============================
     def init_plugin(self, config: dict = None):
         """生效配置。
@@ -284,6 +289,9 @@ class TgSearch115(_PluginBase):
         # 观影爬虫（PoW + 搜索 + 全网盘提取；仅 115 参与自动转存）
         self._site_enabled = self._to_bool(config.get("site_enabled"), False)
         self._site_app_auth = config.get("site_app_auth") or ""
+        self._site_magnet_priority = self._to_bool(
+            config.get("site_magnet_priority"), True
+        )
         # 观影专用代理：优先用配置的，否则默认不走代理（与 TG 区分开）。
         # 因为观影站对国外代理节点/机房IP往往会封锁 downurl 导致 403，直连反而更稳。
         # 如果填了 'proxy' 则强制用全局代理，留空或填 direct 都是直连。
@@ -540,21 +548,31 @@ class TgSearch115(_PluginBase):
                 self._send_fail_notify(subscribe, "资源不符合过滤规则")
                 return
 
-            # 只自动转存 115 资源（非 115 如夸克/百度/阿里不自动转存，仅展示）
-            matched_115 = self._deduplicate_115_torrents([
-                t for t in matched
+            is_tv = str(getattr(subscribe, "type", "") or "") == "TV"
+            auto_candidates = select_auto_candidates(
+                torrents=matched,
+                prefer_site_magnet=self._site_magnet_priority,
+                is_tv=is_tv,
+                is_115_url=P115Transfer._is_115_share_url,
+            )
+            magnet_candidates = [
+                t for t in auto_candidates if is_magnet_url(t.page_url or "")
+            ]
+            share_candidates = self._deduplicate_115_torrents([
+                t for t in auto_candidates
                 if P115Transfer._is_115_share_url(t.page_url or "")
             ])
-            if not matched_115:
+            auto_candidates = magnet_candidates + share_candidates
+            if not auto_candidates:
                 logger.info(
-                    f"【TG115】订阅 [{subscribe.name}] 命中 {len(matched)} 条资源但无 115 可转存"
-                    f"（仅夸克/百度/阿里等），回退到默认搜索"
+                    f"【TG115】订阅 [{subscribe.name}] 命中 {len(matched)} 条资源，"
+                    "但没有可安全自动处理的完整观影磁力或 115 分享，回退到默认搜索"
                 )
-                self._send_fail_notify(subscribe, f"命中 {len(matched)} 条但无 115 可转存")
+                self._send_fail_notify(subscribe, f"命中 {len(matched)} 条但无可自动处理资源")
                 return
             best = None
             recognition_attempts = 0
-            for candidate in matched_115:
+            for candidate in auto_candidates:
                 identity = confirm_candidate_identity(
                     subscribe=subscribe,
                     target_media=mediainfo,
@@ -574,7 +592,7 @@ class TgSearch115(_PluginBase):
                         break
             if not best:
                 logger.warn(
-                    f"【TG115】订阅 [{subscribe.name}] 已检查 {len(matched_115)} 条 115 候选，"
+                    f"【TG115】订阅 [{subscribe.name}] 已检查 {len(auto_candidates)} 条自动候选，"
                     f"其中 {recognition_attempts} 条进入 MoviePilot 识别，"
                     "均未通过 MoviePilot 媒体身份确认，回退到默认搜索"
                 )
@@ -583,17 +601,29 @@ class TgSearch115(_PluginBase):
             share_url = best.page_url or ""
             logger.info(f"【TG115】订阅 [{subscribe.name}] 命中: {best.title} -> {share_url}")
 
-            ok, msg, _data = (
-                self._transfer.transfer(share_url, self._p115_target)
-                if self._transfer
-                else (False, "转存模块未初始化", {})
-            )
+            via_mp_magnet = is_magnet_url(share_url)
+            if via_mp_magnet:
+                ok, msg = self._submit_magnet_download(
+                    subscribe=subscribe,
+                    mediainfo=mediainfo,
+                    torrent=best,
+                )
+            else:
+                ok, msg, _data = (
+                    self._transfer.transfer(share_url, self._p115_target)
+                    if self._transfer
+                    else (False, "转存模块未初始化", {})
+                )
             if not ok:
-                logger.warn(f"【TG115】订阅 [{subscribe.name}] 115 转存失败: {msg}，回退到默认搜索")
-                self._send_fail_notify(subscribe, f"115 转存失败: {msg}")
+                action = "MoviePilot 磁力任务提交" if via_mp_magnet else "115 转存"
+                logger.warn(f"【TG115】订阅 [{subscribe.name}] {action}失败: {msg}，回退到默认搜索")
+                self._send_fail_notify(subscribe, f"{action}失败: {msg}")
                 return
 
-            self._finish_subscribe(subscribe, meta, mediainfo, best, msg)
+            self._finish_subscribe(
+                subscribe, meta, mediainfo, best, msg,
+                via_mp_magnet=via_mp_magnet,
+            )
         except Exception as e:
             logger.error(f"【TG115】处理订阅 {subscribe_id} 异常，回退到默认搜索: {e}")
         finally:
@@ -651,9 +681,12 @@ class TgSearch115(_PluginBase):
             display_title = identity_title or resource_title or "未命名资源"
             if resource_title and resource_title not in display_title:
                 display_title = f"{display_title} {resource_title}"
+            pan_type = str(getattr(h, "pan_type", "") or "").lower()
+            parsed_meta = TgSearch115._parse_resource_meta(h.text or resource_title)
             torrent = TorrentInfo(
                 title=display_title,
                 description=h.text,
+                enclosure=url if pan_type == "magnet" else None,
                 page_url=url,
                 site_name=getattr(h, "channel_name", None) or "TG频道",
                 pubdate=h.pub_date,
@@ -661,8 +694,48 @@ class TgSearch115(_PluginBase):
             )
             # 身份识别只使用干净标题；质量过滤仍使用包含资源格式的完整 title。
             setattr(torrent, "_tg115_identity_title", identity_title)
+            setattr(torrent, "_tg115_pan_type", pan_type)
+            setattr(torrent, "_tg115_is_complete", bool(parsed_meta.get("is_complete")))
             torrents.append(torrent)
         return torrents
+
+    @staticmethod
+    def _submit_magnet_download(subscribe, mediainfo, torrent: TorrentInfo) -> Tuple[bool, str]:
+        """Submit a confirmed magnet to MoviePilot's downloader and organize pipeline."""
+        magnet = str(torrent.enclosure or torrent.page_url or "").strip()
+        if not is_magnet_url(magnet):
+            return False, "磁力链接无效"
+        try:
+            identity_title = str(
+                getattr(torrent, "_tg115_identity_title", "") or torrent.title or ""
+            ).strip()
+            candidate_meta = MetaInfo(
+                title=identity_title,
+                subtitle=str(torrent.description or ""),
+            )
+            torrent.enclosure = magnet
+            context = Context(
+                meta_info=candidate_meta,
+                media_info=mediainfo,
+                torrent_info=torrent,
+            )
+            download_id, error_msg = DownloadChain().download_single(
+                context=context,
+                source=SubscribeChain.get_subscribe_source_keyword(subscribe),
+                downloader=getattr(subscribe, "downloader", None),
+                save_path=getattr(subscribe, "save_path", None),
+                username=getattr(subscribe, "username", None) or "TGSearch115",
+                return_detail=True,
+            )
+            if not download_id:
+                return False, error_msg or "MoviePilot 未返回下载任务 ID"
+            return True, (
+                f"已提交 MoviePilot 下载任务 {download_id}，"
+                "完成后按 MoviePilot 目录与整理规则写入 115"
+            )
+        except Exception as e:
+            logger.warn(f"【TG115】提交 MoviePilot 磁力任务异常: {e}")
+            return False, str(e)
 
     def _filter_resources(self, subscribe, mediainfo, torrents: List[TorrentInfo]) -> List[TorrentInfo]:
         """复用 MP 内置过滤规则：先规则组，再 include/exclude/清晰度等参数。"""
@@ -715,7 +788,9 @@ class TgSearch115(_PluginBase):
             "effect": subscribe.effect,
         }.items() if v}
 
-    def _finish_subscribe(self, subscribe, meta, mediainfo, torrent: TorrentInfo, transfer_msg: str):
+    def _finish_subscribe(
+            self, subscribe, meta, mediainfo, torrent: TorrentInfo,
+            transfer_msg: str, via_mp_magnet: bool = False):
         """转存成功后处理订阅，两种模式由 ``auto_finish`` 开关控制：
 
         ``auto_finish=True``（默认，不依赖 MP 整理 115）：
@@ -785,8 +860,13 @@ class TgSearch115(_PluginBase):
                         self.post_message(
                             mtype=NotificationType.Subscribe,
                             title=f"\U0001F4FA 剧集订阅更新：{subscribe.name}",
-                            text=f"TG115 插件已转存《{subscribe.name}》{season_str}的资源"
-                                 f"（{episode_info}）。\n"
+                            text=(
+                                f"TG115 插件已将《{subscribe.name}》{season_str}的完整磁力资源"
+                                f"（{episode_info}）提交 MoviePilot 下载，完成后按系统整理规则写入 115。\n"
+                                if via_mp_magnet else
+                                f"TG115 插件已转存《{subscribe.name}》{season_str}的资源"
+                                f"（{episode_info}）。\n"
+                            )
                                  + (f"资源: {torrent.title}\n{transfer_msg}" if self._auto_finish
                                     else f"已阻断 MP 搜索，等待系统整理 115 资源并刮削入库。\n"
                                          f"资源: {torrent.title}\n{transfer_msg}"),
@@ -795,7 +875,12 @@ class TgSearch115(_PluginBase):
                         self.post_message(
                             mtype=NotificationType.Subscribe,
                             title=f"\U0001F3AC 电影订阅完成：{subscribe.name}",
-                            text=f"TG115 插件已成功将《{subscribe.name}》转存至 115 网盘。\n"
+                            text=(
+                                f"TG115 插件已将《{subscribe.name}》提交 MoviePilot 磁力下载，"
+                                "完成后按系统整理规则写入 115。\n"
+                                if via_mp_magnet else
+                                f"TG115 插件已成功将《{subscribe.name}》转存至 115 网盘。\n"
+                            )
                                  + (f"资源: {torrent.title}\n{transfer_msg}" if self._auto_finish
                                     else f"已阻断 MP 搜索，等待系统整理 115 资源并刮削入库。\n"
                                          f"资源: {torrent.title}\n{transfer_msg}"),
@@ -1430,6 +1515,7 @@ class TgSearch115(_PluginBase):
             "auto_finish": True,
             "site_enabled": False,
             "site_app_auth": "",
+            "site_magnet_priority": True,
             "site_proxy": "",
             "site_domain": "",
             "juying_enabled": False,

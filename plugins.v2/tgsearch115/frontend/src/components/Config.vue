@@ -136,18 +136,33 @@
             />
             <v-btn color="primary" variant="flat" :loading="searchLoading" prepend-icon="mdi-magnify" @click="doSearch">搜索</v-btn>
           </div>
+          <div class="filter-row mb-2">
+            <span class="filter-label">资源</span>
+            <v-btn-toggle v-model="resourceFilter" mandatory color="primary" density="compact" divided class="filter-toggle">
+              <v-btn v-for="item in RESOURCE_FILTERS" :key="item.value" :value="item.value" size="small">{{ item.title }}</v-btn>
+            </v-btn-toggle>
+          </div>
+          <div class="filter-row mb-3">
+            <span class="filter-label">画质</span>
+            <v-btn-toggle v-model="qualityFilter" mandatory color="primary" density="compact" divided class="filter-toggle">
+              <v-btn v-for="item in QUALITY_FILTERS" :key="item.value" :value="item.value" size="small">{{ item.title }}</v-btn>
+            </v-btn-toggle>
+            <v-chip v-if="searchResults.length" size="x-small" variant="tonal" color="primary">
+              {{ filteredSearchResults.length }}/{{ searchResults.length }} 条
+            </v-chip>
+          </div>
           <div v-if="searchLoading" class="empty-state">
             <v-progress-circular indeterminate size="40" width="3" color="primary" class="mb-3" />
             <div class="text-body-2">正在搜索...</div>
           </div>
-          <div v-else-if="searchResults.length" class="channel-list">
-            <v-card v-for="(r, i) in searchResults.slice(0, displayLimit)" :key="i" variant="outlined" rounded="lg" class="channel-item mb-2">
+          <div v-else-if="filteredSearchResults.length" class="channel-list">
+            <v-card v-for="(r, i) in filteredSearchResults.slice(0, displayLimit)" :key="r.share_url || i" variant="outlined" rounded="lg" class="channel-item mb-2">
               <div class="px-3 pt-2 pb-1">
                 <div class="d-flex align-start">
                   <v-icon icon="mdi-file-video-outline" :color="r.pan_type === '115' ? 'success' : 'primary'" class="mr-3 mt-1" />
                   <div class="channel-meta flex-grow-1">
                     <div class="d-flex align-center flex-wrap ga-1">
-                      <span class="text-body-2 font-weight-medium">{{ r.title }}</span>
+                      <span class="text-body-2 font-weight-medium">{{ r.display_name || r.title }}</span>
                       <v-chip size="x-small" :color="panColor(r.pan_type)" variant="tonal" label>{{ panLabel(r.pan_type) }}</v-chip>
                     </div>
                     <div class="text-caption text-medium-emphasis mt-1" style="white-space: pre-wrap; max-height: 4.5em; overflow: hidden;">{{ r.text || r.title }}</div>
@@ -161,7 +176,7 @@
               </div>
             </v-card>
           </div>
-          <div v-if="searchResults.length > displayLimit" class="text-center mt-3 mb-2">
+          <div v-if="filteredSearchResults.length > displayLimit" class="text-center mt-3 mb-2">
             <v-btn variant="text" color="primary" size="small" @click="loadMoreResults">
               加载更多
               <v-icon icon="mdi-chevron-right" size="small" class="ml-1" style="transform: rotate(90deg);" />
@@ -291,7 +306,7 @@
         <!-- ============ Tab：观影 ============ -->
         <v-window-item value="site" class="pa-4">
           <div class="section-label mb-2">观影站点</div>
-          <div class="text-caption text-medium-emphasis mb-3">PoW 验证 + 全网盘资源 + 磁力链接搜索；仅 115 自动转存，其它网盘/磁力仅展示链接。换域名在下方「观影站点域名」填写</div>
+          <div class="text-caption text-medium-emphasis mb-3">PoW 验证 + 全网盘资源 + 磁力链接搜索；完整磁力可优先交给 MoviePilot 下载并按系统整理规则写入 115。</div>
           <v-row>
             <v-col cols="12" md="6" class="d-flex align-center">
               <div class="mr-2">
@@ -303,6 +318,14 @@
             </v-col>
             <v-col cols="12" md="6" class="d-flex align-center">
               <v-btn size="small" variant="outlined" prepend-icon="mdi-connection" :loading="siteChecking" @click="checkSite">测试连通</v-btn>
+            </v-col>
+            <v-col cols="12" class="d-flex align-center">
+              <div class="mr-3">
+                <div class="text-subtitle-2">完整磁力优先交给 MoviePilot</div>
+                <div class="text-caption text-medium-emphasis">先用 MP 规则与媒体 ID确认；电影或完整剧集磁力优先于 115 分享，下载完成后按 MP 目录规则整理到 115</div>
+              </div>
+              <v-spacer />
+              <v-switch v-model="config.site_magnet_priority" color="primary" hide-details density="compact" />
             </v-col>
             <v-col cols="12">
               <v-text-field v-model="config.site_domain" label="观影站点域名" placeholder="https://www.xn--wcv59z.com" variant="outlined" density="compact" hide-details hint="观影站换域名时填这里；留空用默认 xn--wcv59z.com" persistent-hint />
@@ -499,6 +522,7 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
+import { filterSearchResults, QUALITY_FILTERS, RESOURCE_FILTERS } from '../searchFilters.js'
 
 const props = defineProps({
   pluginId: { type: String, default: 'TgSearch115' },
@@ -521,6 +545,7 @@ const DEFAULTS = {
   auto_finish: true,
   site_enabled: false,
   site_app_auth: '',
+  site_magnet_priority: true,
   site_proxy: '',
   site_domain: '',
   juying_enabled: false,
@@ -574,8 +599,15 @@ const transferLoading = ref(false)
 const transferResult = ref(null)
 const searchKeyword = ref('')
 const searchSource = ref('all')
+const resourceFilter = ref('all')
+const qualityFilter = ref('all')
 const searchLoading = ref(false)
 const searchResults = ref([])
+const filteredSearchResults = computed(() => filterSearchResults(
+  searchResults.value,
+  resourceFilter.value,
+  qualityFilter.value,
+))
 const searched = ref(false)
 const displayLimit = ref(3)
 const transferringIndex = ref(-1)  // 正在转存的结果索引（-1=无）
@@ -821,10 +853,10 @@ async function transferFromSearch(url, index) {
 }
 // 网盘类型展示
 function panColor(pt) {
-  return { '115': 'success', quark: 'info', baidu: 'error', aliyun: 'warning', xunlei: 'secondary', cloud189: 'primary', uc: 'accent' }[pt] || 'grey'
+  return { '115': 'success', quark: 'info', baidu: 'error', aliyun: 'warning', xunlei: 'secondary', cloud189: 'primary', uc: 'accent', magnet: 'deep-purple' }[pt] || 'grey'
 }
 function panLabel(pt) {
-  return { '115': '115', quark: '夸克', baidu: '百度', aliyun: '阿里', xunlei: '迅雷', cloud189: '天翼', uc: 'UC', other: '其他' }[pt] || pt
+  return { '115': '115', quark: '夸克', baidu: '百度', aliyun: '阿里', xunlei: '迅雷', cloud189: '天翼', uc: 'UC', magnet: '磁力', other: '其他' }[pt] || pt
 }
 function copyLink(r) {
   const text = r.share_url + (r.receive_code ? `\n提取码: ${r.receive_code}` : '')
@@ -1120,5 +1152,20 @@ function confirmImport() {
   text-align: center;
   padding: 36px 16px;
   color: rgba(var(--v-theme-on-surface), 0.45);
+}
+.filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.filter-label {
+  flex: 0 0 32px;
+  font-size: 0.75rem;
+  color: rgba(var(--v-theme-on-surface), 0.62);
+}
+.filter-toggle {
+  max-width: calc(100% - 40px);
+  overflow-x: auto;
 }
 </style>

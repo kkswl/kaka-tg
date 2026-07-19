@@ -1,12 +1,13 @@
 {
   "TgSearch115": {
     "name": "拦截mp订阅",
-    "description": "订阅新增时优先到指定 Telegram 频道搜索 115 资源，命中并转存成功后自动完成订阅；未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。",
+    "description": "订阅新增时搜索 Telegram、观影和聚影；完整观影磁力经 MoviePilot 规则与媒体身份确认后优先交给下载整理链，115 分享可直接转存，失败则回退默认搜索。",
     "labels": "订阅,Telegram,115网盘",
-    "version": "4.3.2",
+    "version": "4.4.0",
     "author": "MoviePilot User",
     "level": 2,
     "history": {
+      "v4.4.0": "观影磁力优先与手动搜索筛选：自动订阅继续复用 MoviePilot 规则组、include/exclude/画质过滤和 TMDB/豆瓣身份确认，完整观影磁力按 BTIH 去重后优先于 115 分享，并通过 DownloadChain 使用订阅下载器、保存路径和整理规则写入 115；不完整剧集及非观影磁力不自动提交。配置页新增磁力优先开关；两处手动搜索新增资源类型（全部/磁力/网盘/115）与画质（全部/4K/1080P/高帧率/排除 HDR）筛选。",
       "v4.3.2": "修复观影详情 403 的实际根因：兼容用户从浏览器复制的完整 Cookie 片段（app_auth=值 或 Cookie: ...），自动提取真正的 app_auth 值，避免此前把整段字符串作为 Cookie 值导致 app_auth=app_auth=...。Windows 实测规范化前 downurl 403，规范化后同作品返回 HTTP 200 并取得 33 条网盘资源。",
       "v4.3.1": "运行时精准搜索与观影客户端降级：手动搜索按规范化片名和年份硬过滤，支持“电视剧：换行片名”等结构化 TG 消息，并按 115 share_code/资源 URL 去重；解决搜索法警小队返回双姝美探、雪迷宫等无关结果。观影 downurl 在 httpx/HTML 重试仍被 WAF 403 时，使用独立 urllib CookieJar 重新完成 app_auth、PoW 和详情请求，适配同凭证 urllib 可用而 httpx 被拒绝的宿主环境。",
       "v4.3.0": "资源身份确认与观影详情修复：自动转存前使用 MoviePilot MetaInfo/TorrentHelper 初筛，并用 MediaChain 识别候选，只有 TMDB/豆瓣 ID 与订阅一致且季号匹配才允许转存；最多调用 3 次媒体识别，无法确认则回退默认搜索。TG/观影/聚影统一参与订阅召回，115 分享按 share_code 去重。观影 downurl 增加 JSON/HTML 分流、403/404 页面重试、磁力及网盘链接兜底提取、严格年份过滤和可见错误诊断；修复 check_site 配置变量及仅聚影配置判断。",

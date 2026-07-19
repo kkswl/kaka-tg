@@ -42,7 +42,7 @@
         <v-icon icon="mdi-magnify" color="primary" class="mr-2" />
         手动搜索网盘资源
         <v-chip v-if="results.length" size="x-small" variant="tonal" color="primary" class="ml-2">
-          {{ results.length }} 条
+          {{ filteredResults.length }}/{{ results.length }} 条
         </v-chip>
         <v-spacer />
         <v-chip v-if="has115" size="x-small" variant="tonal" color="success" class="mr-1">含 115 可转存</v-chip>
@@ -70,6 +70,18 @@
             <v-btn value="juying" size="small">聚影</v-btn>
           </v-btn-toggle>
         </div>
+        <div class="filter-row mt-3">
+          <span class="filter-label">资源</span>
+          <v-btn-toggle v-model="resourceFilter" mandatory color="primary" density="compact" divided class="filter-toggle">
+            <v-btn v-for="item in RESOURCE_FILTERS" :key="item.value" :value="item.value" size="small">{{ item.title }}</v-btn>
+          </v-btn-toggle>
+        </div>
+        <div class="filter-row mt-2">
+          <span class="filter-label">画质</span>
+          <v-btn-toggle v-model="qualityFilter" mandatory color="primary" density="compact" divided class="filter-toggle">
+            <v-btn v-for="item in QUALITY_FILTERS" :key="item.value" :value="item.value" size="small">{{ item.title }}</v-btn>
+          </v-btn-toggle>
+        </div>
         <div v-if="searchMsg" class="text-caption mt-2" :class="searchOk ? 'text-success' : 'text-error'">
           {{ searchMsg }}
         </div>
@@ -78,7 +90,7 @@
       <!-- 搜索结果：响应式卡片网格（1/2/3/4 列） -->
       <v-card-text v-if="results.length" class="px-4 pb-4 pt-0">
         <v-row dense>
-          <v-col v-for="(r, i) in results" :key="i" cols="12" sm="6" md="4" lg="3">
+          <v-col v-for="(r, i) in filteredResults" :key="r.share_url || i" cols="12" sm="6" md="4" lg="3">
             <v-card variant="tonal" rounded="lg" class="result-card h-100 d-flex flex-column">
               <v-card-item class="pb-2">
                 <div class="d-flex align-center mb-2">
@@ -110,6 +122,7 @@
             </v-card>
           </v-col>
         </v-row>
+        <div v-if="!filteredResults.length" class="filter-empty">当前筛选条件下没有资源</div>
         <div v-if="hasMore" class="d-flex justify-center mt-4">
           <v-btn variant="outlined" :loading="loadingMore" prepend-icon="mdi-chevron-down" @click="loadMore">
             查看更多历史
@@ -125,6 +138,7 @@
 
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
+import { filterSearchResults, QUALITY_FILTERS, RESOURCE_FILTERS } from '../searchFilters.js'
 
 const props = defineProps({
   pluginId: { type: String, default: 'TgSearch115' },
@@ -157,6 +171,8 @@ function saveCache(c) {
 const _init = loadCache()
 const keyword = ref(_init ? _init.keyword : '')
 const searchSource = ref('all')
+const resourceFilter = ref(_init?.resource_filter || 'all')
+const qualityFilter = ref(_init?.quality_filter || 'all')
 const results = ref(_init ? _init.results : [])
 const offset = ref(_init ? _init.offset || 0 : 0)
 const hasMore = ref(_init ? !!_init.has_more : false)
@@ -166,6 +182,11 @@ const searchMsg = ref(_init ? `已恢复上次搜索「${_init.keyword}」的结
 const searchOk = ref(!!_init)
 const transferringIdx = ref(-1)
 const has115 = computed(() => results.value.some((r) => r.pan_type === '115'))
+const filteredResults = computed(() => filterSearchResults(
+  results.value,
+  resourceFilter.value,
+  qualityFilter.value,
+))
 
 function clearResults() {
   results.value = []
@@ -201,7 +222,7 @@ async function doSearch() {
       searchOk.value = !data.warning
       offset.value = 0
       hasMore.value = !!data.has_more
-      saveCache({ keyword: kw, results: results.value, offset: 0, has_more: hasMore.value })
+      saveCache({ keyword: kw, results: results.value, offset: 0, has_more: hasMore.value, resource_filter: resourceFilter.value, quality_filter: qualityFilter.value })
     } else {
       results.value = []
       searchMsg.value = (data && data.message) || '搜索失败'
@@ -231,7 +252,7 @@ async function loadMore() {
       hasMore.value = !!data.has_more
       // 全局重排：完结优先，集数降序
       results.value.sort((a, b) => (b.is_complete - a.is_complete) || (b.episode_num - a.episode_num))
-      saveCache({ keyword: keyword.value, results: results.value, offset: offset.value, has_more: hasMore.value })
+      saveCache({ keyword: keyword.value, results: results.value, offset: offset.value, has_more: hasMore.value, resource_filter: resourceFilter.value, quality_filter: qualityFilter.value })
       searchMsg.value = `共 ${results.value.length} 条`
     } else {
       showSnack(data?.message || '加载更多失败', 'error')
@@ -314,5 +335,26 @@ onMounted(async () => {
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+.filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.filter-label {
+  flex: 0 0 32px;
+  font-size: 0.75rem;
+  color: rgba(var(--v-theme-on-surface), 0.62);
+}
+.filter-toggle {
+  max-width: calc(100% - 40px);
+  overflow-x: auto;
+}
+.filter-empty {
+  padding: 28px 12px;
+  text-align: center;
+  color: rgba(var(--v-theme-on-surface), 0.55);
+  font-size: 0.875rem;
 }
 </style>
