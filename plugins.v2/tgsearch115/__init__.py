@@ -203,7 +203,7 @@ class TgSearch115(_PluginBase):
         "并支持 115 分享直接转存；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.5.0"
+    plugin_version = "4.5.1"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -414,7 +414,7 @@ class TgSearch115(_PluginBase):
             {
                 "path": "/check_cms",
                 "endpoint": self.__check_cms_api,
-                "methods": ["GET"],
+                "methods": ["POST"],
                 "auth": "bear",
                 "summary": "检查 CMS 服务连通性",
                 "description": "只检查服务与配置，不创建磁力任务",
@@ -1305,12 +1305,15 @@ class TgSearch115(_PluginBase):
         logger.info(f"【TG115】手动提交 CMS 115 磁力任务 [{title}]: ok={ok}")
         return JSONResponse({"success": ok, "message": message})
 
-    def __check_cms_api(self):
-        """GET /check_cms：只读检查 CMS 服务，不提交离线任务。"""
+    def __check_cms_api(self, payload: dict = Body(default=None)):
+        """POST /check_cms：只读检查表单中的 CMS 服务，不保存或提交任务。"""
         from starlette.responses import JSONResponse
-        if not self._cms_client:
-            return JSONResponse({"success": False, "message": "CMS 模块未初始化"})
-        ok, message = self._cms_client.check()
+        payload = payload if isinstance(payload, dict) else {}
+        client = Cms115Client(
+            base_url=payload.get("cms_url") or self._cms_url,
+            token=payload.get("cms_token") or self._cms_token,
+        )
+        ok, message = client.check()
         return JSONResponse({"success": ok, "message": message})
 
     def __search_api(self, keyword: str = "", offset: int = 0, source: str = "all"):

@@ -900,10 +900,12 @@ async function checkCms() {
     return
   }
   cmsChecking.value = true
-  const saved = await saveAll(false)
-  const res = saved === false ? null : await apiGet('/check_cms')
+  const res = await apiPost('/check_cms', {
+    cms_url: config.cms_url.trim(),
+    cms_token: config.cms_token.trim(),
+  })
   cmsChecking.value = false
-  snack((res && res.message) || '检查失败', (res && res.success) ? 'success' : 'error')
+  snack(res.message || '检查失败', res.success ? 'success' : 'error')
 }
 async function checkJuying() {
   const aid = (config.juying_app_id || '').trim()
