@@ -136,6 +136,7 @@ class JuyingApi:
                 pan_label=rtype,
                 source_title=movie_title,
                 channel_name="聚影",
+                year=year,
             ))
         logger.info(f"【TG115】聚影搜索 '{kw}' 命中 {len(hits)} 条资源")
         return hits

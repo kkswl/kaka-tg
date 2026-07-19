@@ -1,12 +1,13 @@
 # 拦截mp订阅（tgsearch115）
 
-MoviePilot 插件：**订阅新增时，优先到 Telegram 频道 + 目标资源站搜索 115 网盘资源**，命中并转存成功后自动完成订阅；未命中或转存失败则**平滑回退**到 MoviePilot 默认的 BT/PT 站点搜索流程，不影响主程序。
+MoviePilot 插件：订阅新增时优先从 Telegram、观影和聚影搜索资源，经 MoviePilot 原生媒体识别确认后转存匹配的 115 分享；未命中、身份不一致或转存失败时平滑回退到 MoviePilot 默认搜索。
 
 ---
 
 ## 一、核心特性
 
-- **双源搜索**：① TG 公开频道（网页爬虫，免 TG 账号）；② 目标资源站 `xn--wcv59z.com`（PoW 验证 + 全网盘资源）
+- **三源搜索**：TG 公开频道、观影资源站和聚影开发者 API
+- **媒体身份确认**：使用 `MetaInfo`、`TorrentHelper` 和 `MediaChain` 校验标题、年份、类型、季号及 TMDB/豆瓣 ID
 - **TG 服务端搜索**：用 `t.me/s/{channel}?q=片名` 让 Telegram 服务器搜频道**全部历史**（不是只看最近 200 条），解决「明明有资源却搜不到」
 - **资源站 PoW 破解**：站点用 RSW 时间锁 PoW 反机器人，本插件用纯 Python `pow(x,1<<t,N)` 约 1.5 秒解出（C 层快速模幂），**无需浏览器、无新依赖**
 - **115 自动转存**：命中 115 链接后用 `p115client` 的 `share_snap` + `share_receive` 转存到指定目录
@@ -24,6 +25,8 @@ tgsearch115/
 ├── __init__.py          # 插件主类：事件监听 / 流程编排 / 12 个 API / 115 扫码登录
 ├── tg_scraper.py        # TG 频道爬虫：httpx + BS4，?q= 服务端搜全历史
 ├── site_scraper.py      # 目标资源站爬虫：解 PoW + 搜索 + 全网盘资源提取
+├── juying_scraper.py    # 聚影开发者 API
+├── identity_matcher.py  # MoviePilot 原生媒体身份确认
 ├── p115_transfer.py     # 115 转存：p115client share_snap + share_receive
 ├── requirements.txt     # beautifulsoup4 / p115client（httpx 随 p115client 安装）
 ├── README.md
@@ -44,12 +47,16 @@ tgsearch115/
   → 守护线程 _handle_subscribe（延迟 delay_seconds 抢跑 MP 默认搜索）
   → recognize_media 识别媒体
   → _build_keyword → 只用片名（不含年份）
-  → 双源搜索：
+  → 三源搜索：
       · TG 频道 scraper.search(keyword)          → 全 115 链接
       · 资源站 site_scraper.search(keyword, year) → 全网盘（115 占少数）
+      · 聚影 juying_api.search(keyword, year)     → 官方 API 资源
   → _build_torrents 构造 TorrentInfo（115 链接自动补提取码）
   → _filter_resources 复用 MP 规则组 + include/exclude
-  → 仅 115 资源参与自动转存（非 115 跳过）
+  → 115 分享按 share_code 去重
+  → 本地标题/别名/年份/类型/季号初筛
+  → MediaChain 识别候选，TMDB/豆瓣 ID 与订阅一致
+  → 仅通过身份确认的 115 资源参与自动转存
   → transfer.transfer() → share_snap 取 file_id → share_receive 转存
   → _finish_subscribe（auto_finish 双模式）+ SubscribeComplete + 通知
   任何环节失败 → 静默 return，MP 默认搜索照常（平滑回退）

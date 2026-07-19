@@ -44,12 +44,13 @@ app_auth 失效时站点返回「未登录，访问受限」，本模块会日�
 站点资源大多是夸克/百度/阿里/迅雷，115 占比很小；本模块提取**全部网盘**链接并标注类型，
 转存层自行决定只转 115（见 ``__init__.py`` 的订阅流程）。
 """
+import html
 import random
 import re
 import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from app.log import logger
 
@@ -115,6 +116,7 @@ class FilejinScraper:
         self._cache_key = None       # (keyword, year) 缓存键
         self._cache_items = None     # search_suggest 作品列表缓存
         self.app_auth_valid = True   # app_auth 是否有效（失效则置 False，供 /search 提示）
+        self.last_detail_error = ""  # 最近一次详情失败原因，供 API/连通测试展示
         self.site_base = (site_base or DEFAULT_SITE_BASE).rstrip("/")  # 观影域名（可配置，换域名时改这里）
 
     def is_ready(self) -> bool:
@@ -137,6 +139,7 @@ class FilejinScraper:
         term = (keyword or "").strip()
         if not term:
             return [], False
+        self.last_detail_error = ""
         cnt = count or self.count
         try:
             items = self._get_items(term, year)
@@ -175,10 +178,22 @@ class FilejinScraper:
             return False, "未配置 app_auth"
         try:
             self._ensure_access()
-            ok, msg, _ = self._search_suggest("测试")
+            ok, msg, items = self._search_suggest("测试")
             if not ok and "未登录" in msg:
                 return False, "app_auth 已失效（站点返回未登录）"
-            return True, "连通正常，登录态有效"
+            if not ok:
+                return False, f"搜索接口不可用：{msg}"
+            if items:
+                item = items[0]
+                dir_ = str(item.get("dir") or "")
+                id_ = str(item.get("id") or "")
+                if dir_ and id_:
+                    hits = self._fetch_resources(dir_, id_)
+                    if hits:
+                        return True, f"连通正常，搜索和详情均可用（样本 {len(hits)} 条资源）"
+                    if self.last_detail_error:
+                        return False, f"搜索可用，但详情不可用：{self.last_detail_error}"
+            return True, "搜索可用，登录态有效；测试词无详情样本"
         except Exception as e:
             return False, f"检查异常: {e}"
 
@@ -203,8 +218,7 @@ class FilejinScraper:
         if year:
             yr = str(year)
             year_items = [it for it in items if str(it.get("year", "")) == yr]
-            if year_items:
-                items = year_items
+            items = year_items
         logger.info(
             f"【TG115】观影搜索 '{term}' 命中 {len(items)} 部作品"
             + (f"（年份 {year} 匹配）" if year else "")
@@ -296,45 +310,84 @@ class FilejinScraper:
     def _fetch_resources(self, dir_: str, id_: str) -> List[SiteHit]:
         """GET /res/downurl/{dir}/{id} -> 提取 panlist(网盘) + downlist(磁力) 全部资源。"""
         url = f"{self.site_base}/res/downurl/{dir_}/{id_}"
-        
-        # 方案1：标准 JSON 请求
-        resp = self._get_client().get(url, headers={"Accept": "application/json"})
-        if resp.status_code == 200:
-            return self._parse_downurl(resp)
-        
-        # 方案2：403/404 时尝试带更完整浏览器特征重试
-        if resp.status_code in (403, 404):
+        self.last_detail_error = ""
+        try:
+            resp = self._get_client().get(url, headers={"Accept": "application/json"})
+        except Exception as e:
+            self.last_detail_error = f"网络异常: {e}"
+            logger.warn(f"【TG115】观影 downurl {dir_}/{id_} {self.last_detail_error}")
+            return []
+
+        hits = self._parse_detail_response(resp)
+        if hits is not None:
+            return hits
+
+        # WAF 常只封 API 特征；以同一会话模拟页面导航再试一次。
+        if resp.status_code in (403, 404) or self._looks_like_html(resp):
             retry_headers = {
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Referer": f"{self.site_base}/res/search_suggest",
                 "Origin": self.site_base,
+                "Referer": self.site_base + "/",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-User": "?1",
             }
             try:
-                resp2 = self._get_client().get(url, headers=retry_headers)
-                if resp2.status_code == 200:
-                    return self._parse_downurl(resp2)
-            except Exception:
-                pass
-        
-        # 方案3：尝试从 search_suggest 结果页提取资源（绕过 downurl API 封锁）
-        if resp.status_code == 403:
-            html_hits = self._extract_resources_from_page(dir_, id_)
-            if html_hits:
-                return html_hits
-        
-        logger.warn(f"【TG115】观影 downurl {dir_}/{id_} 失败: HTTP {resp.status_code}")
+                retry = self._get_client().get(url, headers=retry_headers)
+                hits = self._parse_detail_response(retry)
+                if hits is not None:
+                    return hits
+                html_hits = self._parse_resources_from_html(retry.text or "")
+                if html_hits:
+                    self.last_detail_error = ""
+                    logger.info(
+                        f"【TG115】观影 downurl 页面兜底提取 {len(html_hits)} 条资源"
+                    )
+                    return html_hits
+                resp = retry
+            except Exception as e:
+                self.last_detail_error = f"页面重试异常: {e}"
+                logger.warn(f"【TG115】观影 downurl {dir_}/{id_} {self.last_detail_error}")
+                return []
+
+        if not self.last_detail_error:
+            self.last_detail_error = f"HTTP {resp.status_code}"
+        logger.warn(
+            f"【TG115】观影 downurl {dir_}/{id_} 失败: {self.last_detail_error}"
+        )
         return []
 
-    def _parse_downurl(self, resp) -> List[SiteHit]:
-        """解析 downurl 响应。"""
+    @staticmethod
+    def _looks_like_html(resp) -> bool:
+        content_type = str(resp.headers.get("content-type") or "").lower()
+        text = (resp.text or "").lstrip().lower()
+        return "text/html" in content_type or text.startswith("<!doctype") or text.startswith("<html")
+
+    def _parse_detail_response(self, resp) -> Optional[List[SiteHit]]:
+        """解析 JSON 详情；响应不是可识别 JSON 时返回 None，交给 HTML 兜底。"""
+        if resp.status_code != 200:
+            self.last_detail_error = f"HTTP {resp.status_code}"
+            return None
         try:
             data = resp.json()
         except Exception as e:
-            logger.warn(f"【TG115】观影 downurl 非 JSON: {e}")
-            return []
+            self.last_detail_error = f"响应非 JSON: {e}"
+            return None
+        if not isinstance(data, dict):
+            self.last_detail_error = "JSON 响应不是对象"
+            return None
         if data.get("code") not in (200, "200"):
-            logger.warn(f"【TG115】观影 downurl 返回错误: {data}")
+            message = data.get("message") or data.get("msg") or data.get("code")
+            self.last_detail_error = f"业务错误: {message}"
+            logger.warn(f"【TG115】观影 downurl 返回错误: {self.last_detail_error}")
             return []
+        self.last_detail_error = ""
+        return self._parse_downurl_data(data)
+
+    @staticmethod
+    def _parse_downurl_data(data: dict) -> List[SiteHit]:
+        """解析 downurl JSON 中的网盘和磁力资源。"""
         hits: List[SiteHit] = []
         # panlist
         pl = data.get("panlist") or {}
@@ -390,52 +443,53 @@ class FilejinScraper:
                 pan_label="磁力",
                 pub_date=pub or None,
             ))
-        return hits
+        return FilejinScraper._deduplicate_hits(hits)
 
-    def _extract_resources_from_page(self, dir_: str, id_: str) -> List[SiteHit]:
-        """当 downurl API 被 403 时，尝试从资源页面提取磁力链接和网盘链接。"""
-        try:
-            page_url = f"{self.site_base}/res/downurl/{dir_}/{id_}"
-            resp = self._get_client().get(page_url, headers={"Accept": "text/html"})
-            if resp.status_code != 200:
-                return []
-            text = resp.text
-            hits: List[SiteHit] = []
-            
-            # 1. 优先提取磁力链接（观影站主要提供磁力资源）
-            for m in re.finditer(r'magnet:\?xt=urn:btih:[a-fA-F0-9]{40}(?:&[^"\s<>]*)?', text):
-                magnet = m.group(0)
-                # 提取标题
-                title_match = re.search(r'dn=([^&]+)', magnet)
-                title = title_match.group(1) if title_match else ""
-                if not title:
-                    # 从页面上下文提取标题
-                    title_match = re.search(r'<title[^>]*>([^<]+)</title>', text)
-                    title = title_match.group(1) if title_match else ""
-                hits.append(SiteHit(
-                    share_url=magnet,
-                    resource_title=_clean_title(title) or title[:200],
-                    text=title,
-                    pan_type="magnet",
-                    pan_label="磁力",
-                ))
-            
-            # 2. 提取网盘链接（如果有）
-            for m in re.finditer(r'https?://(?:pan\.)?(?:quark\.cn|pan\.baidu\.com|yun\.baidu\.com|aliyundrive\.com|alipan\.com|pan\.xunlei\.com|115\.com|anxia\.com)[^\s"\'<>]+', text):
-                u = m.group(0)
-                hits.append(SiteHit(share_url=u, pan_type=_classify_pan(u)))
-            
-            # 3. 提取提取码
-            codes = re.findall(r'提取码[：:\s]*([A-Za-z0-9]{4})', text)
-            for i, h in enumerate(hits):
-                if i < len(codes):
-                    h.receive_code = codes[i]
-            
-            if hits:
-                logger.info(f"【TG115】观影 downurl 403，从页面提取 {len(hits)} 条资源（磁力 {sum(1 for h in hits if h.pan_type == 'magnet')}）")
-            return hits
-        except Exception:
-            return []
+    @staticmethod
+    def _parse_resources_from_html(text: str) -> List[SiteHit]:
+        """从 HTML/脚本内容中兜底提取磁力和常见网盘链接。"""
+        content = html.unescape(text or "")
+        hits: List[SiteHit] = []
+        magnet_pattern = r'magnet:\?xt=urn:btih:[a-fA-F0-9]{40}(?:&[^"\s<>]*)?'
+        for match in re.finditer(magnet_pattern, content, re.IGNORECASE):
+            magnet = match.group(0)
+            title_match = re.search(r'(?:[?&])dn=([^&]+)', magnet, re.IGNORECASE)
+            title = unquote(title_match.group(1)) if title_match else ""
+            hits.append(SiteHit(
+                share_url=magnet,
+                resource_title=_clean_title(title),
+                text=title,
+                pan_type="magnet",
+                pan_label="磁力",
+            ))
+
+        pan_pattern = (
+            r'https?://[^\s"\'<>]*(?:115\.com|anxia\.com|115cdn\.com|quark\.cn|'
+            r'baidu\.com|aliyundrive\.com|alipan\.com|xunlei\.com|189\.cn|'
+            r'21cn\.com|uc\.cn)[^\s"\'<>]*'
+        )
+        for match in re.finditer(pan_pattern, content, re.IGNORECASE):
+            url = match.group(0).rstrip(".,;:)]}")
+            nearby = content[match.end():match.end() + 160]
+            code_match = re.search(r'(?:提取码|访问码|密码)\s*[：:]?\s*([A-Za-z0-9]{4,8})', nearby)
+            hits.append(SiteHit(
+                share_url=url,
+                receive_code=code_match.group(1) if code_match else "",
+                pan_type=_classify_pan(url),
+            ))
+        return FilejinScraper._deduplicate_hits(hits)
+
+    @staticmethod
+    def _deduplicate_hits(hits: List[SiteHit]) -> List[SiteHit]:
+        seen = set()
+        result = []
+        for hit in hits:
+            key = (hit.share_url or "").strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            result.append(hit)
+        return result
 
     def _make_client(self):
         """创建 httpx.Client（同步），带 Chrome UA + 代理 + cookie jar。

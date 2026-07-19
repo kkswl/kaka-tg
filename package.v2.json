@@ -3,10 +3,11 @@
     "name": "拦截mp订阅",
     "description": "订阅新增时优先到指定 Telegram 频道搜索 115 资源，命中并转存成功后自动完成订阅；未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。",
     "labels": "订阅,Telegram,115网盘",
-    "version": "4.2.18",
+    "version": "4.3.0",
     "author": "MoviePilot User",
     "level": 2,
     "history": {
+      "v4.3.0": "资源身份确认与观影详情修复：自动转存前使用 MoviePilot MetaInfo/TorrentHelper 初筛，并用 MediaChain 识别候选，只有 TMDB/豆瓣 ID 与订阅一致且季号匹配才允许转存；最多调用 3 次媒体识别，无法确认则回退默认搜索。TG/观影/聚影统一参与订阅召回，115 分享按 share_code 去重。观影 downurl 增加 JSON/HTML 分流、403/404 页面重试、磁力及网盘链接兜底提取、严格年份过滤和可见错误诊断；修复 check_site 配置变量及仅聚影配置判断。",
       "v4.2.18": "适配观影站磁力资源为主场景：downurl 403 页面兜底提取优先提取 magnet 链接；即使站点无 115 网盘资源，也能返回磁力资源供 MP 后续处理。",
       "v4.2.17": "修复观影 downurl 403：/res/pow 404 时不再阻塞；downurl 403 先尝试带 Referer/Origin 重试，仍失败则改为从页面 HTML 提取网盘链接与提取码，绕过 API 封锁。",
       "v4.2.16": "修复 httpx 0.28.x 兼容性：site_scraper 和 juying_scraper 移除不存在的 httpx.Mount，改用 HTTPTransport(trust_env=False) 直接传入 mounts；彻底切断 Docker/Windows 系统代理污染，观影 403 问题从根源解决；修复 __check_site_api 中未定义 config 变量导致的 NameError。",

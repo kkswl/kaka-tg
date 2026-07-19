@@ -82,6 +82,7 @@ from .p115_transfer import P115Transfer
 from .tg_scraper import TgChannelScraper
 from .site_scraper import FilejinScraper
 from .juying_scraper import JuyingApi
+from .identity_matcher import confirm_candidate_identity
 
 
 # get_data / save_data 存储本插件配置使用的 key
@@ -198,7 +199,7 @@ class TgSearch115(_PluginBase):
         "订阅新增时优先到指定 Telegram 频道搜索 115 资源，命中并转存成功后自动完成订阅；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.2.18"
+    plugin_version = "4.3.0"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -524,9 +525,11 @@ class TgSearch115(_PluginBase):
             if self._site_scraper:
                 site_hits, _ = self._site_scraper.search(keyword, year=subscribe.year)
                 hits.extend(site_hits)
+            if self._juying_api:
+                hits.extend(self._juying_api.search(keyword, year=subscribe.year))
             if not hits:
                 logger.info(f"【TG115】订阅 [{subscribe.name}] 未找到资源，回退到默认搜索")
-                self._send_fail_notify(subscribe, "TG 频道与观影均未找到资源")
+                self._send_fail_notify(subscribe, "TG、观影与聚影均未找到资源")
                 return
 
             torrents = self._build_torrents(hits)
@@ -537,8 +540,10 @@ class TgSearch115(_PluginBase):
                 return
 
             # 只自动转存 115 资源（非 115 如夸克/百度/阿里不自动转存，仅展示）
-            matched_115 = [t for t in matched
-                           if P115Transfer._is_115_share_url(t.page_url or "")]
+            matched_115 = self._deduplicate_115_torrents([
+                t for t in matched
+                if P115Transfer._is_115_share_url(t.page_url or "")
+            ])
             if not matched_115:
                 logger.info(
                     f"【TG115】订阅 [{subscribe.name}] 命中 {len(matched)} 条资源但无 115 可转存"
@@ -546,7 +551,34 @@ class TgSearch115(_PluginBase):
                 )
                 self._send_fail_notify(subscribe, f"命中 {len(matched)} 条但无 115 可转存")
                 return
-            best = matched_115[0]
+            best = None
+            recognition_attempts = 0
+            for candidate in matched_115:
+                identity = confirm_candidate_identity(
+                    subscribe=subscribe,
+                    target_media=mediainfo,
+                    torrent=candidate,
+                )
+                logger.info(
+                    f"【TG115】候选身份确认 [{candidate.title}]: "
+                    f"confirmed={identity.confirmed}, source={identity.match_source}, "
+                    f"reason={identity.reason}"
+                )
+                if identity.confirmed:
+                    best = candidate
+                    break
+                if identity.recognition_attempted:
+                    recognition_attempts += 1
+                    if recognition_attempts >= 3:
+                        break
+            if not best:
+                logger.warn(
+                    f"【TG115】订阅 [{subscribe.name}] 已检查 {len(matched_115)} 条 115 候选，"
+                    f"其中 {recognition_attempts} 条进入 MoviePilot 识别，"
+                    "均未通过 MoviePilot 媒体身份确认，回退到默认搜索"
+                )
+                self._send_fail_notify(subscribe, "候选未通过 MoviePilot/TMDB 身份确认")
+                return
             share_url = best.page_url or ""
             logger.info(f"【TG115】订阅 [{subscribe.name}] 命中: {best.title} -> {share_url}")
 
@@ -607,14 +639,28 @@ class TgSearch115(_PluginBase):
             if url and P115Transfer._is_115_share_url(url) and rc \
                     and "password=" not in url and "receive_code=" not in url and "pwd=" not in url:
                 url = url + ("&" if "?" in url else "?") + f"password={rc}"
-            torrents.append(TorrentInfo(
-                title=h.resource_title or "未命名资源",
+            resource_title = h.resource_title or ""
+            source_title = str(getattr(h, "source_title", "") or "").strip()
+            source_year = getattr(h, "year", None)
+            if source_title:
+                identity_title = f"{source_title} ({source_year})" if source_year else source_title
+            else:
+                parsed = TgSearch115._parse_resource_meta(h.text or resource_title)
+                identity_title = parsed.get("display_name") or resource_title
+            display_title = identity_title or resource_title or "未命名资源"
+            if resource_title and resource_title not in display_title:
+                display_title = f"{display_title} {resource_title}"
+            torrent = TorrentInfo(
+                title=display_title,
                 description=h.text,
                 page_url=url,
                 site_name=getattr(h, "channel_name", None) or "TG频道",
                 pubdate=h.pub_date,
                 size=0.0, seeders=0, peers=0,
-            ))
+            )
+            # 身份识别只使用干净标题；质量过滤仍使用包含资源格式的完整 title。
+            setattr(torrent, "_tg115_identity_title", identity_title)
+            torrents.append(torrent)
         return torrents
 
     def _filter_resources(self, subscribe, mediainfo, torrents: List[TorrentInfo]) -> List[TorrentInfo]:
@@ -634,6 +680,21 @@ class TgSearch115(_PluginBase):
         if filter_params:
             torrents = [t for t in torrents if TorrentHelper.filter_torrent(t, filter_params)]
         return torrents
+
+    @staticmethod
+    def _deduplicate_115_torrents(torrents: List[TorrentInfo]) -> List[TorrentInfo]:
+        """按 115 share_code 去重，避免重复候选消耗媒体识别额度。"""
+        seen = set()
+        result = []
+        for torrent in torrents:
+            url = torrent.page_url or ""
+            share_code, _ = P115Transfer._extract_payload(url)
+            key = (share_code or url).strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            result.append(torrent)
+        return result
 
     @staticmethod
     def _get_rule_groups(subscribe) -> List[str]:
@@ -1119,8 +1180,9 @@ class TgSearch115(_PluginBase):
         keyword = (keyword or "").strip()
         if not keyword:
             return JSONResponse({"success": False, "message": "请输入搜索关键字"}, status_code=400)
-        if (not self._scraper or not self._tg_channels) and not self._site_scraper:
-            return JSONResponse({"success": False, "message": "未配置任何搜索源（TG 频道或观影）"}, status_code=400)
+        if ((not self._scraper or not self._tg_channels)
+                and not self._site_scraper and not self._juying_api):
+            return JSONResponse({"success": False, "message": "未配置任何搜索源（TG、观影或聚影）"}, status_code=400)
         try:
             offset = int(offset or 0)
         except Exception:
@@ -1131,10 +1193,11 @@ class TgSearch115(_PluginBase):
         manual_year = int(_y.group(1)) if _y else None
         search_kw = _re.sub(r'\s*[(（]\d{4}[)）]', '', keyword).strip() or keyword
 
+        src = (source or "all").lower()
+
         def _do_search():
             hits = []
             has_more = False
-            src = (source or "all").lower()
             # TG 仅首批搜索一次（已抓全 max_pages 页）；翻页(offset>0)只追加观影作品
             if src in ("all", "tg") and self._scraper and offset == 0:
                 hits.extend(self._scraper.search(search_kw))
@@ -1183,6 +1246,9 @@ class TgSearch115(_PluginBase):
             warning = ""
             if self._site_scraper and not getattr(self._site_scraper, "app_auth_valid", True):
                 warning = "观影 app_auth 已失效，请在「观影」Tab 更新 app_auth 后重试"
+            elif (src in ("all", "site") and self._site_scraper
+                  and getattr(self._site_scraper, "last_detail_error", "")):
+                warning = f"观影详情获取失败：{self._site_scraper.last_detail_error}"
             elif self._juying_api and not getattr(self._juying_api, "app_auth_valid", True):
                 warning = "聚影 AppID/API Key 无效(401)，请在「聚影」Tab 检查凭证"
             return JSONResponse({

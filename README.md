@@ -1,36 +1,104 @@
-# 拦截mp订阅 (tgsearch115)
+# 拦截 MP 订阅（tgsearch115）
 
-MoviePilot 插件：**订阅新增时优先到指定 Telegram 频道搜索 115 网盘资源**，命中并转存成功后自动完成订阅；未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。
+MoviePilot v2 插件：订阅新增时优先搜索 Telegram 公开频道、观影资源站和聚影 API，命中 115 分享后自动转存；未命中或转存失败时回退到 MoviePilot 默认搜索。
 
-## 安装方式
-
-将本仓库地址加入 MoviePilot 的 `PLUGIN_MARKET` 环境变量（逗号分隔），重启后在「插件」页面搜索 "拦截mp订阅" 并安装。
-
-```yaml
-environment:
-  - PLUGIN_MARKET=https://github.com/<你的用户名>/<你的仓库>
-```
-
-安装时 MoviePilot 会自动安装依赖 `telethon`、`p115client`。
+当前本地版本：`v4.3.0`。该版本基于上游 `kkswl/kaka-tg v4.2.18` 的观影修复方向，增加了 MoviePilot 原生媒体身份确认。
 
 ## 目录结构
 
+```text
+├── package.v2.json
+└── plugins.v2/tgsearch115/
+    ├── __init__.py       # 订阅事件、匹配、排序、API
+    ├── tg_scraper.py     # Telegram 公开频道网页搜索
+    ├── site_scraper.py   # 观影 PoW、搜索和资源详情抓取
+    ├── juying_scraper.py # 聚影开发者 API
+    ├── p115_transfer.py  # 115 分享转存
+    └── frontend/         # MoviePilot Vue 前端
 ```
-├── package.v2.json          # 插件清单（MP 市场识别用）
-└── plugins.v2/
-    └── tgsearch115/         # 插件目录（目录名=类名小写）
-        ├── __init__.py      # 插件主类 TgSearch115
-        ├── tg_searcher.py   # Telethon 频道搜索
-        ├── p115_transfer.py # 115 分享转存
-        ├── gen_tg_session.py# 本地生成 TG Session String
-        ├── requirements.txt
-        └── README.md        # 详细说明与实现解析
+
+## 当前问题基线
+
+### 1. TG 搜索与订阅误匹配
+
+- `tg_scraper.py` 使用 `t.me/s/{channel}?q={片名}` 获取服务端模糊搜索结果，但本地不再校验标题。
+- `_filter_resources` 只应用 MoviePilot 的规则组及 include/exclude、清晰度等条件，不负责媒体身份校验。
+- 订阅流程从过滤后的 115 结果中直接选择第一条，缺少片名、别名、年份、季集和来源可信度评分。
+- 观影的年份过滤在“无精确年份结果”时会保留全部模糊结果，也可能把错误作品带入订阅链路。
+
+因此当前“10 条约 2 条正确”符合代码行为：召回量提高了，但准确率没有对应的二次校验和排序保障。
+
+### 2. 观影能搜到作品但取不到资源
+
+- 本地 `v4.2.14` 的 `/res/downurl/{dir}/{id}` 遇到 403/404 会直接返回空数组，前端只能看到作品搜索成功，无法看到具体资源。
+- 上游 `v4.2.17-v4.2.18` 已增加完整浏览器请求头重试、页面 HTML 兜底提取和磁力优先提取；本地尚未包含这些改动。
+- MoviePilot 运行时仍需用结构化日志区分 `HTTP 403`、非 JSON、业务 `code != 200`、登录过期及“确实无资源”。
+
+## 优化方向
+
+1. 先同步并审查上游 `v4.2.18` 的观影修复，解决已知版本缺口。
+2. 在 TG 和观影召回之后增加统一的媒体身份标准化、硬过滤和置信度评分。
+3. 订阅自动转存设置置信度门槛；低置信度结果只展示，不自动完成订阅。
+4. 为搜索、详情获取和选择结果增加可观测日志与回归样本集。
+
+媒体确认应优先复用 MoviePilot `v2.13.16` 已有能力：
+
+- `MetaInfo(title, subtitle)` 解析候选标题、年份和季集；
+- `TorrentHelper.match_torrent(...)` 做低成本标题、别名、年份和类型初筛；
+- `MediaChain().recognize_by_meta(...)` 通过 MoviePilot 配置的识别源确认候选身份；
+- 候选 `tmdb_id` 与订阅 `MediaInfo.tmdb_id` 相同后，才允许进入自动转存。
+
+不建议插件直接请求 TMDB API，也不建议直接调用 `SubscribeChain.match`：前者会绕过 MoviePilot 的缓存、识别源和限流策略，后者是全局订阅匹配流程，可能产生下载等额外副作用。
+
+建议实施顺序：
+
+```text
+P0 观影止血与诊断
+  -> P1 TG 身份硬过滤
+  -> P2 统一评分、去重和自动转存阈值
+  -> P3 影子运行、灰度启用和指标验收
 ```
 
-## 首次使用
+自动订阅应遵循“宁可回退，不可错转”：标题或年份冲突直接淘汰；信息不足但可能正确的结果只进入手动搜索，不自动转存。
 
-1. 本地运行 `python plugins.v2/tgsearch115/gen_tg_session.py` 生成 TG Session String。
-2. 准备 115 扫码客户端 Cookie（含 UID/CID/SEID）。
-3. 在插件配置页填入 TG api_id/api_hash/session/频道 + 115 Cookie + 转存目标目录，启用。
+详细方案、阶段记录和验收指标见 [项目立项与迭代总结](./项目立项与迭代总结.md)。
 
-详见 `plugins.v2/tgsearch115/README.md`。
+## 阶段记录
+
+### 2026-07-19 阶段一：现状核查与根因定位
+
+- 完成代码、版本和上游差异检查。
+- 确认 TG 主要问题为缺少媒体身份二次校验及直接取首条结果。
+- 确认本地观影实现落后上游 4 个补丁版本，缺少 403/404 兜底链路。
+- MoviePilot 地址可访问；2026-07-19 使用更正后的账户凭证成功登录，运行版本为 `v2.13.16`。
+
+### 2026-07-19 阶段二：优化方案设计
+
+- 制定 P0-P3 分阶段实施路线和量化验收指标。
+- TG 链路采用媒体身份硬过滤 + 可解释评分 + 自动转存阈值。
+- 观影链路先同步上游修复，再增加搜索与详情分层诊断，避免失败被伪装成空结果。
+- 上线前先以影子模式运行，只记录候选和评分，不执行转存或完成订阅。
+
+### 2026-07-19 阶段三：MoviePilot 原生识别方案核对
+
+- 核对 `jxxghp/MoviePilot` 与 `jxxghp/MoviePilot-Plugins`，并以运行环境对应的 `v2.13.16` 标签验证接口。
+- 确认插件可复用 `MetaInfo`、`TorrentHelper.match_torrent` 和 `MediaChain.recognize_by_meta`。
+- 将 TMDB 确认定义为自动转存的身份硬门槛，不把网络识别用于所有搜索结果。
+- 确定两级策略：本地初筛全部候选，只对排名靠前的少量候选进行 MoviePilot/TMDB 确认。
+
+### 2026-07-19 阶段四：观影详情获取修复
+
+- `downurl` 现在区分 JSON、HTML、HTTP 和业务错误，不再把所有失败折叠为空结果。
+- 403/404 或 HTML 响应会携带页面导航请求头重试，并从返回页面兜底提取磁力和常见网盘链接。
+- 新增链接去重、HTML 实体解码、磁力标题解码和邻近提取码识别。
+- `/check_site` 修复未定义配置变量，并会在有测试样本时同时检查搜索和详情接口。
+- 新增 3 个离线回归测试，全部通过；真实宿主网络/WAF 结果仍需部署后验证。
+
+### 2026-07-19 阶段五：媒体身份确认与自动转存保护
+
+- 新增 `identity_matcher.py`，复用 MoviePilot `MetaInfo`、`TorrentHelper` 和 `MediaChain`。
+- 自动转存要求候选 TMDB/豆瓣 ID 与订阅一致；剧集还要求季号一致，多季候选直接淘汰。
+- 删除“第一条 115 结果直接转存”行为；本地初筛全部候选，最多对 3 条有效候选调用媒体识别。
+- TG、观影、聚影统一进入订阅召回；按 115 `share_code` 去重，避免重复候选消耗识别额度。
+- 观影指定年份没有精确结果时返回空，不再回退到其它年份的模糊作品。
+- 插件版本升级为 `v4.3.0`，9 个离线测试全部通过。
