@@ -45,14 +45,14 @@
           {{ filteredResults.length }}/{{ results.length }} 条
         </v-chip>
         <v-spacer />
-        <v-chip v-if="has115" size="x-small" variant="tonal" color="success" class="mr-1">含 115 可转存</v-chip>
+        <v-chip v-if="hasTransferable" size="x-small" variant="tonal" color="success" class="mr-1">支持转存到 115</v-chip>
         <v-btn v-if="results.length" size="x-small" variant="text" color="error" prepend-icon="mdi-close" @click="clearResults">清除</v-btn>
       </v-card-title>
       <v-divider />
       <v-card-text class="px-4 py-4">
         <v-text-field
           v-model="keyword"
-          label="输入片名搜索（TG 频道 + 观影，仅 115 可转存）"
+          label="输入片名搜索（TG 频道 + 观影，115 分享/磁力可转存）"
           variant="outlined"
           density="comfortable"
           hide-details
@@ -113,11 +113,11 @@
                 <v-btn size="small" variant="text" prepend-icon="mdi-content-copy" @click="copy(r)">复制链接</v-btn>
                 <v-spacer />
                 <v-btn
-                  v-if="r.pan_type === '115'"
+                  v-if="r.pan_type === '115' || r.pan_type === 'magnet'"
                   size="small" variant="flat" color="primary" prepend-icon="mdi-cloud-download"
                   :loading="transferringIdx === i"
                   @click="transfer(r, i)"
-                >转存</v-btn>
+                >{{ r.pan_type === 'magnet' ? '离线到115' : '转存' }}</v-btn>
               </v-card-actions>
             </v-card>
           </v-col>
@@ -148,7 +148,7 @@ const props = defineProps({
 const PID = computed(() => props.pluginId || 'TgSearch115')
 
 // ---- 配置 / 状态 ----
-const config = reactive({ enabled: false, p115_cookie: '', delay_seconds: 0, tg_channels: [] })
+const config = reactive({ enabled: false, p115_cookie: '', cms_url: '', cms_token: '', delay_seconds: 0, tg_channels: [] })
 const channelCount = computed(() => (Array.isArray(config.tg_channels) ? config.tg_channels.length : 0))
 const loginOk = computed(() => {
   const c = String(config.p115_cookie || '')
@@ -181,7 +181,9 @@ const loadingMore = ref(false)
 const searchMsg = ref(_init ? `已恢复上次搜索「${_init.keyword}」的结果（${_init.results.length} 条）` : '')
 const searchOk = ref(!!_init)
 const transferringIdx = ref(-1)
-const has115 = computed(() => results.value.some((r) => r.pan_type === '115'))
+const hasTransferable = computed(() => results.value.some(
+  (r) => r.pan_type === '115' || r.pan_type === 'magnet',
+))
 const filteredResults = computed(() => filterSearchResults(
   results.value,
   resourceFilter.value,
@@ -284,13 +286,25 @@ async function copy(r) {
 }
 
 async function transfer(r, i) {
-  if (!loginOk.value) { showSnack('未登录 115，无法转存', 'error'); return }
+  if (r.pan_type === '115' && !loginOk.value) {
+    showSnack('未登录 115，无法转存', 'error')
+    return
+  }
+  if (r.pan_type === 'magnet' && (!config.cms_url || !config.cms_token)) {
+    showSnack('请先在观影设置中配置 CMS 地址和 API Token', 'error')
+    return
+  }
   transferringIdx.value = i
   try {
-    const url = encodeURIComponent(fullShareUrl(r))
-    const res = await props.api.get(`plugin/${PID.value}/transfer?share_url=${url}`)
+    const res = r.pan_type === 'magnet'
+      ? await props.api.post(`plugin/${PID.value}/magnet/offline`, {
+          magnet: fullShareUrl(r),
+          title: r.display_name || r.title || '',
+        })
+      : await props.api.get(`plugin/${PID.value}/transfer?share_url=${encodeURIComponent(fullShareUrl(r))}`)
     const data = res && typeof res === 'object' && 'data' in res && ('success' in res || 'code' in res) ? res.data : res
-    showSnack(data?.message || (data?.success ? '转存成功' : '转存失败'), data?.success ? 'success' : 'error')
+    const success = data?.success === true || data?.code === 0
+    showSnack(data?.message || (success ? '任务提交成功' : '转存失败'), success ? 'success' : 'error')
   } catch (e) {
     showSnack('转存异常：' + (e?.message || e), 'error')
   } finally {

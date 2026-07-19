@@ -169,7 +169,8 @@
                     <div class="text-caption text-medium-emphasis mt-1">{{ r.channel }}<span v-if="r.pub_date"> · {{ r.pub_date }}</span></div>
                   </div>
                   <div class="d-flex flex-column align-end ml-2 mt-1">
-                    <v-btn v-if="r.pan_type === '115'" color="success" variant="tonal" size="small" prepend-icon="mdi-cloud-download" :loading="transferringIndex === i" @click="transferFromSearch(r.share_url, i)">转存</v-btn>
+                    <v-btn v-if="r.pan_type === '115'" color="success" variant="tonal" size="small" prepend-icon="mdi-cloud-download" :loading="transferringIndex === i" @click="transferFromSearch(r, i)">转存</v-btn>
+                    <v-btn v-else-if="r.pan_type === 'magnet'" color="deep-purple" variant="tonal" size="small" prepend-icon="mdi-magnet-on" :loading="transferringIndex === i" @click="transferFromSearch(r, i)">离线到115</v-btn>
                     <v-btn v-else variant="text" size="small" prepend-icon="mdi-content-copy" @click="copyLink(r)">复制链接</v-btn>
                   </div>
                 </div>
@@ -306,7 +307,7 @@
         <!-- ============ Tab：观影 ============ -->
         <v-window-item value="site" class="pa-4">
           <div class="section-label mb-2">观影站点</div>
-          <div class="text-caption text-medium-emphasis mb-3">PoW 验证 + 全网盘资源 + 磁力链接搜索；完整磁力可优先交给 MoviePilot 下载并按系统整理规则写入 115。</div>
+          <div class="text-caption text-medium-emphasis mb-3">PoW 验证 + 全网盘资源 + 磁力链接搜索；完整磁力经 MoviePilot 匹配确认后通过 CMS 离线到 115。</div>
           <v-row>
             <v-col cols="12" md="6" class="d-flex align-center">
               <div class="mr-2">
@@ -321,11 +322,20 @@
             </v-col>
             <v-col cols="12" class="d-flex align-center">
               <div class="mr-3">
-                <div class="text-subtitle-2">完整磁力优先交给 MoviePilot</div>
-                <div class="text-caption text-medium-emphasis">先用 MP 规则与媒体 ID确认；电影或完整剧集磁力优先于 115 分享，下载完成后按 MP 目录规则整理到 115</div>
+                <div class="text-subtitle-2">完整磁力优先离线到 115</div>
+                <div class="text-caption text-medium-emphasis">先用 MP 规则与媒体 ID 确认；电影或完整剧集磁力优先于 115 分享，再由 CMS 创建 115 离线任务</div>
               </div>
               <v-spacer />
               <v-switch v-model="config.site_magnet_priority" color="primary" hide-details density="compact" />
+            </v-col>
+            <v-col cols="12" md="8">
+              <v-text-field v-model="config.cms_url" label="CMS 服务地址" placeholder="http://192.168.1.15:9527" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="12" md="4" class="d-flex align-center">
+              <v-btn size="small" variant="outlined" prepend-icon="mdi-connection" :loading="cmsChecking" @click="checkCms">检查 CMS</v-btn>
+            </v-col>
+            <v-col cols="12">
+              <v-text-field v-model="config.cms_token" label="CMS API Token" :type="showSecrets ? 'text' : 'password'" variant="outlined" density="compact" hide-details hint="对应 CMS_API_TOKEN；仅保存在 MoviePilot 插件配置中" persistent-hint />
             </v-col>
             <v-col cols="12">
               <v-text-field v-model="config.site_domain" label="观影站点域名" placeholder="https://www.xn--wcv59z.com" variant="outlined" density="compact" hide-details hint="观影站换域名时填这里；留空用默认 xn--wcv59z.com" persistent-hint />
@@ -546,6 +556,8 @@ const DEFAULTS = {
   site_enabled: false,
   site_app_auth: '',
   site_magnet_priority: true,
+  cms_url: '',
+  cms_token: '',
   site_proxy: '',
   site_domain: '',
   juying_enabled: false,
@@ -613,6 +625,7 @@ const displayLimit = ref(3)
 const transferringIndex = ref(-1)  // 正在转存的结果索引（-1=无）
 // 观影连通检查
 const siteChecking = ref(false)
+const cmsChecking = ref(false)
 // 115 目录查询/浏览
 const dirInfoName = ref('')
 const dirBrowserOpen = ref(false)
@@ -845,10 +858,18 @@ async function doTransfer() {
     transferResult.value = { success: false, message: '转存请求失败' }
   }
 }
-async function transferFromSearch(url, index) {
+async function transferFromSearch(result, index) {
   transferringIndex.value = index
-  transferUrl.value = url
-  await doTransfer()
+  if (result?.pan_type === 'magnet') {
+    const res = await apiPost('/magnet/offline', {
+      magnet: result.share_url,
+      title: result.display_name || result.title || '',
+    })
+    snack(res.message || (res.success ? '已创建 115 离线任务' : '提交失败'), res.success ? 'success' : 'error')
+  } else {
+    transferUrl.value = result?.share_url || ''
+    await doTransfer()
+  }
   transferringIndex.value = -1
 }
 // 网盘类型展示
@@ -871,6 +892,17 @@ async function checkSite() {
   const dom = encodeURIComponent((config.site_domain || '').trim())
   const res = await apiGet('/check_site?app_auth=' + encodeURIComponent(auth) + (dom ? '&site_domain=' + dom : ''))
   siteChecking.value = false
+  snack((res && res.message) || '检查失败', (res && res.success) ? 'success' : 'error')
+}
+async function checkCms() {
+  if (!(config.cms_url || '').trim() || !(config.cms_token || '').trim()) {
+    snack('请先填写 CMS 地址和 API Token', 'warning')
+    return
+  }
+  cmsChecking.value = true
+  const saved = await saveAll(false)
+  const res = saved === false ? null : await apiGet('/check_cms')
+  cmsChecking.value = false
   snack((res && res.message) || '检查失败', (res && res.success) ? 'success' : 'error')
 }
 async function checkJuying() {
@@ -968,17 +1000,19 @@ function selectCurrent() {
 }
 
 /* --------------------------- 保存 --------------------------- */
-async function saveAll() {
+async function saveAll(showMessage = true) {
   saving.value = true
   // 提交时只保留后端需要的字段，去掉本地 uid
   config.tg_channels = channels.value.map(({ name, id, enabled }) => ({ name, id, enabled }))
   const res = await apiPost('/config/save', { ...config })
   saving.value = false
   if (res.success) {
-    snack(res.message || '配置已保存并生效')
+    if (showMessage) snack(res.message || '配置已保存并生效')
     emit('save', { ...config })
+    return true
   } else {
     snack(res.message || '保存失败', 'error')
+    return false
   }
 }
 

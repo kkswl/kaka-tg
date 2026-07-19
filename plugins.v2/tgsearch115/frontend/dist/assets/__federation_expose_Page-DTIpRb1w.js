@@ -1,5 +1,5 @@
 import { importShared } from './__federation_fn_import-JrT3xvdd.js';
-import { _ as _export_sfc, f as filterSearchResults, R as RESOURCE_FILTERS, Q as QUALITY_FILTERS } from './_plugin-vue_export-helper-CxBojLvy.js';
+import { _ as _export_sfc, f as filterSearchResults, R as RESOURCE_FILTERS, Q as QUALITY_FILTERS } from './_plugin-vue_export-helper-BKBpQ8ln.js';
 
 const {resolveComponent:_resolveComponent,createVNode:_createVNode,toDisplayString:_toDisplayString,createTextVNode:_createTextVNode,withCtx:_withCtx,createElementVNode:_createElementVNode,normalizeClass:_normalizeClass,openBlock:_openBlock,createBlock:_createBlock,createCommentVNode:_createCommentVNode,withKeys:_withKeys,unref:_unref,renderList:_renderList,Fragment:_Fragment,createElementBlock:_createElementBlock} = await importShared('vue');
 
@@ -60,7 +60,7 @@ const props = __props;
 const PID = computed(() => props.pluginId || 'TgSearch115');
 
 // ---- 配置 / 状态 ----
-const config = reactive({ enabled: false, p115_cookie: '', delay_seconds: 0, tg_channels: [] });
+const config = reactive({ enabled: false, p115_cookie: '', cms_url: '', cms_token: '', delay_seconds: 0, tg_channels: [] });
 const channelCount = computed(() => (Array.isArray(config.tg_channels) ? config.tg_channels.length : 0));
 const loginOk = computed(() => {
   const c = String(config.p115_cookie || '');
@@ -91,7 +91,9 @@ const loadingMore = ref(false);
 const searchMsg = ref(_init ? `已恢复上次搜索「${_init.keyword}」的结果（${_init.results.length} 条）` : '');
 const searchOk = ref(!!_init);
 const transferringIdx = ref(-1);
-const has115 = computed(() => results.value.some((r) => r.pan_type === '115'));
+const hasTransferable = computed(() => results.value.some(
+  (r) => r.pan_type === '115' || r.pan_type === 'magnet',
+));
 const filteredResults = computed(() => filterSearchResults(
   results.value,
   resourceFilter.value,
@@ -194,13 +196,25 @@ async function copy(r) {
 }
 
 async function transfer(r, i) {
-  if (!loginOk.value) { showSnack('未登录 115，无法转存', 'error'); return }
+  if (r.pan_type === '115' && !loginOk.value) {
+    showSnack('未登录 115，无法转存', 'error');
+    return
+  }
+  if (r.pan_type === 'magnet' && (!config.cms_url || !config.cms_token)) {
+    showSnack('请先在观影设置中配置 CMS 地址和 API Token', 'error');
+    return
+  }
   transferringIdx.value = i;
   try {
-    const url = encodeURIComponent(fullShareUrl(r));
-    const res = await props.api.get(`plugin/${PID.value}/transfer?share_url=${url}`);
+    const res = r.pan_type === 'magnet'
+      ? await props.api.post(`plugin/${PID.value}/magnet/offline`, {
+          magnet: fullShareUrl(r),
+          title: r.display_name || r.title || '',
+        })
+      : await props.api.get(`plugin/${PID.value}/transfer?share_url=${encodeURIComponent(fullShareUrl(r))}`);
     const data = res && typeof res === 'object' && 'data' in res && ('success' in res || 'code' in res) ? res.data : res;
-    showSnack(data?.message || (data?.success ? '转存成功' : '转存失败'), data?.success ? 'success' : 'error');
+    const success = data?.success === true || data?.code === 0;
+    showSnack(data?.message || (success ? '任务提交成功' : '转存失败'), success ? 'success' : 'error');
   } catch (e) {
     showSnack('转存异常：' + (e?.message || e), 'error');
   } finally {
@@ -345,7 +359,7 @@ return (_ctx, _cache) => {
                 }))
               : _createCommentVNode("", true),
             _createVNode(_component_v_spacer),
-            (has115.value)
+            (hasTransferable.value)
               ? (_openBlock(), _createBlock(_component_v_chip, {
                   key: 1,
                   size: "x-small",
@@ -354,7 +368,7 @@ return (_ctx, _cache) => {
                   class: "mr-1"
                 }, {
                   default: _withCtx(() => [...(_cache[9] || (_cache[9] = [
-                    _createTextVNode("含 115 可转存", -1)
+                    _createTextVNode("支持转存到 115", -1)
                   ]))]),
                   _: 1
                 }))
@@ -383,7 +397,7 @@ return (_ctx, _cache) => {
             _createVNode(_component_v_text_field, {
               modelValue: keyword.value,
               "onUpdate:modelValue": _cache[0] || (_cache[0] = $event => ((keyword).value = $event)),
-              label: "输入片名搜索（TG 频道 + 观影，仅 115 可转存）",
+              label: "输入片名搜索（TG 频道 + 观影，115 分享/磁力可转存）",
               variant: "outlined",
               density: "comfortable",
               "hide-details": "",
@@ -595,7 +609,7 @@ return (_ctx, _cache) => {
                                     _: 1
                                   }, 8, ["onClick"]),
                                   _createVNode(_component_v_spacer),
-                                  (r.pan_type === '115')
+                                  (r.pan_type === '115' || r.pan_type === 'magnet')
                                     ? (_openBlock(), _createBlock(_component_v_btn, {
                                         key: 0,
                                         size: "small",
@@ -605,11 +619,11 @@ return (_ctx, _cache) => {
                                         loading: transferringIdx.value === i,
                                         onClick: $event => (transfer(r, i))
                                       }, {
-                                        default: _withCtx(() => [...(_cache[21] || (_cache[21] = [
-                                          _createTextVNode("转存", -1)
-                                        ]))]),
-                                        _: 1
-                                      }, 8, ["loading", "onClick"]))
+                                        default: _withCtx(() => [
+                                          _createTextVNode(_toDisplayString(r.pan_type === 'magnet' ? '离线到115' : '转存'), 1)
+                                        ]),
+                                        _: 2
+                                      }, 1032, ["loading", "onClick"]))
                                     : _createCommentVNode("", true)
                                 ]),
                                 _: 2
@@ -635,7 +649,7 @@ return (_ctx, _cache) => {
                         "prepend-icon": "mdi-chevron-down",
                         onClick: loadMore
                       }, {
-                        default: _withCtx(() => [...(_cache[22] || (_cache[22] = [
+                        default: _withCtx(() => [...(_cache[21] || (_cache[21] = [
                           _createTextVNode(" 查看更多历史 ", -1)
                         ]))]),
                         _: 1
@@ -666,6 +680,6 @@ return (_ctx, _cache) => {
 }
 
 };
-const Page = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-82034cb1"]]);
+const Page = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-3cd9d91e"]]);
 
 export { Page as default };

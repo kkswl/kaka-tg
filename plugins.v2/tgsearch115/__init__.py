@@ -68,10 +68,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastapi import Body
 
 from app.core.config import settings
-from app.chain.download import DownloadChain
 from app.chain.subscribe import SubscribeChain, build_subscribe_meta
-from app.core.context import Context, MediaInfo, TorrentInfo
-from app.core.metainfo import MetaInfo
+from app.core.context import MediaInfo, TorrentInfo
 from app.core.event import Event, eventmanager
 from app.db.subscribe_oper import SubscribeOper
 from app.db.systemconfig_oper import SystemConfigOper
@@ -87,6 +85,7 @@ from .juying_scraper import JuyingApi
 from .identity_matcher import confirm_candidate_identity
 from .search_relevance import extract_year, is_relevant_result
 from .resource_strategy import is_magnet_url, select_auto_candidates
+from .cms_client import Cms115Client
 
 
 # get_data / save_data 存储本插件配置使用的 key
@@ -200,11 +199,11 @@ class TgSearch115(_PluginBase):
     # ============================ 插件元信息 ============================
     plugin_name = "拦截mp订阅"
     plugin_desc = (
-        "订阅新增时搜索 Telegram、观影和聚影，优先将确认匹配的观影磁力交给 MoviePilot 下载整理，"
+        "订阅新增时搜索 Telegram、观影和聚影，确认匹配的观影磁力通过 CMS 离线到 115，"
         "并支持 115 分享直接转存；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.4.1"
+    plugin_version = "4.5.0"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -220,6 +219,7 @@ class TgSearch115(_PluginBase):
     _juying_api: Optional[JuyingApi] = None
     _mp_proxy: str = ""
     _transfer: Optional[P115Transfer] = None
+    _cms_client: Optional[Cms115Client] = None
 
     # 配置项（运行态缓存）
     _tg_channels: List[Dict[str, Any]] = []
@@ -234,6 +234,8 @@ class TgSearch115(_PluginBase):
     _site_enabled = False
     _site_app_auth = ""
     _site_magnet_priority = True
+    _cms_url = ""
+    _cms_token = ""
     # ============================ 生命周期 ============================
     def init_plugin(self, config: dict = None):
         """生效配置。
@@ -286,11 +288,17 @@ class TgSearch115(_PluginBase):
             pass
         self._scraper = TgChannelScraper(channels=enabled_channels, proxy=_proxy)
         self._mp_proxy = _proxy  # 供 /check_site 临时测试用
-        # 观影爬虫（PoW + 搜索 + 全网盘提取；仅 115 参与自动转存）
+        # 观影爬虫（PoW + 搜索 + 全网盘提取；115 分享和确认后的磁力可自动处理）
         self._site_enabled = self._to_bool(config.get("site_enabled"), False)
         self._site_app_auth = config.get("site_app_auth") or ""
         self._site_magnet_priority = self._to_bool(
             config.get("site_magnet_priority"), True
+        )
+        self._cms_url = str(config.get("cms_url") or "").strip()
+        self._cms_token = str(config.get("cms_token") or "").strip()
+        self._cms_client = Cms115Client(
+            base_url=self._cms_url,
+            token=self._cms_token,
         )
         # 观影专用代理：优先用配置的，否则默认不走代理（与 TG 区分开）。
         # 因为观影站对国外代理节点/机房IP往往会封锁 downurl 导致 403，直连反而更稳。
@@ -394,6 +402,22 @@ class TgSearch115(_PluginBase):
                 "auth": "bear",
                 "summary": "手动转存 115 分享链接",
                 "description": "GET /transfer?share_url=&target=，target 留空用默认目录",
+            },
+            {
+                "path": "/magnet/offline",
+                "endpoint": self.__magnet_offline_api,
+                "methods": ["POST"],
+                "auth": "bear",
+                "summary": "通过 CMS 添加 115 磁力离线任务",
+                "description": "POST /magnet/offline，body: {magnet, title}",
+            },
+            {
+                "path": "/check_cms",
+                "endpoint": self.__check_cms_api,
+                "methods": ["GET"],
+                "auth": "bear",
+                "summary": "检查 CMS 服务连通性",
+                "description": "只检查服务与配置，不创建磁力任务",
             },
             {
                 "path": "/search",
@@ -551,7 +575,10 @@ class TgSearch115(_PluginBase):
             is_tv = str(getattr(subscribe, "type", "") or "") == "TV"
             auto_candidates = select_auto_candidates(
                 torrents=matched,
-                prefer_site_magnet=self._site_magnet_priority,
+                prefer_site_magnet=(
+                    self._site_magnet_priority
+                    and bool(self._cms_client and self._cms_client.configured)
+                ),
                 is_tv=is_tv,
                 is_115_url=P115Transfer._is_115_share_url,
             )
@@ -571,8 +598,18 @@ class TgSearch115(_PluginBase):
                 self._send_fail_notify(subscribe, f"命中 {len(matched)} 条但无可自动处理资源")
                 return
             best = None
+            transfer_msg = ""
+            via_cms_magnet = False
+            transfer_errors = []
             recognition_attempts = 0
+            cms_submit_failed = False
             for candidate in auto_candidates:
+                candidate_url = candidate.page_url or ""
+                candidate_is_magnet = is_magnet_url(candidate_url)
+                # A CMS connectivity/authentication failure is shared by all magnets in this run.
+                # Skip the remaining magnets so a valid 115 share can still be tried.
+                if candidate_is_magnet and cms_submit_failed:
+                    continue
                 identity = confirm_candidate_identity(
                     subscribe=subscribe,
                     target_media=mediainfo,
@@ -583,46 +620,54 @@ class TgSearch115(_PluginBase):
                     f"confirmed={identity.confirmed}, source={identity.match_source}, "
                     f"reason={identity.reason}"
                 )
-                if identity.confirmed:
-                    best = candidate
-                    break
                 if identity.recognition_attempted:
                     recognition_attempts += 1
+                if not identity.confirmed:
                     if recognition_attempts >= 3:
                         break
+                    continue
+
+                if candidate_is_magnet:
+                    ok, msg = self._submit_magnet_to_115(candidate)
+                    action = "CMS 115 磁力离线任务提交"
+                else:
+                    ok, msg, _data = (
+                        self._transfer.transfer(candidate_url, self._p115_target)
+                        if self._transfer
+                        else (False, "转存模块未初始化", {})
+                    )
+                    action = "115 转存"
+                if ok:
+                    best = candidate
+                    transfer_msg = msg
+                    via_cms_magnet = candidate_is_magnet
+                    break
+
+                transfer_errors.append(f"{action}失败: {msg}")
+                if candidate_is_magnet:
+                    cms_submit_failed = True
+                logger.warn(
+                    f"【TG115】订阅 [{subscribe.name}] 候选 [{candidate.title}] "
+                    f"{action}失败，继续尝试后续候选: {msg}"
+                )
+                if recognition_attempts >= 3:
+                    break
             if not best:
                 logger.warn(
                     f"【TG115】订阅 [{subscribe.name}] 已检查 {len(auto_candidates)} 条自动候选，"
                     f"其中 {recognition_attempts} 条进入 MoviePilot 识别，"
-                    "均未通过 MoviePilot 媒体身份确认，回退到默认搜索"
+                    "没有候选成功提交，回退到默认搜索"
                 )
-                self._send_fail_notify(subscribe, "候选未通过 MoviePilot/TMDB 身份确认")
+                reason = transfer_errors[-1] if transfer_errors \
+                    else "候选未通过 MoviePilot/TMDB 身份确认"
+                self._send_fail_notify(subscribe, reason)
                 return
             share_url = best.page_url or ""
             logger.info(f"【TG115】订阅 [{subscribe.name}] 命中: {best.title} -> {share_url}")
 
-            via_mp_magnet = is_magnet_url(share_url)
-            if via_mp_magnet:
-                ok, msg = self._submit_magnet_download(
-                    subscribe=subscribe,
-                    mediainfo=mediainfo,
-                    torrent=best,
-                )
-            else:
-                ok, msg, _data = (
-                    self._transfer.transfer(share_url, self._p115_target)
-                    if self._transfer
-                    else (False, "转存模块未初始化", {})
-                )
-            if not ok:
-                action = "MoviePilot 磁力任务提交" if via_mp_magnet else "115 转存"
-                logger.warn(f"【TG115】订阅 [{subscribe.name}] {action}失败: {msg}，回退到默认搜索")
-                self._send_fail_notify(subscribe, f"{action}失败: {msg}")
-                return
-
             self._finish_subscribe(
-                subscribe, meta, mediainfo, best, msg,
-                via_mp_magnet=via_mp_magnet,
+                subscribe, meta, mediainfo, best, transfer_msg,
+                via_cms_magnet=via_cms_magnet,
             )
         except Exception as e:
             logger.error(f"【TG115】处理订阅 {subscribe_id} 异常，回退到默认搜索: {e}")
@@ -699,43 +744,14 @@ class TgSearch115(_PluginBase):
             torrents.append(torrent)
         return torrents
 
-    @staticmethod
-    def _submit_magnet_download(subscribe, mediainfo, torrent: TorrentInfo) -> Tuple[bool, str]:
-        """Submit a confirmed magnet to MoviePilot's downloader and organize pipeline."""
+    def _submit_magnet_to_115(self, torrent: TorrentInfo) -> Tuple[bool, str]:
+        """Submit a confirmed magnet to the configured CMS-backed 115 account."""
         magnet = str(torrent.enclosure or torrent.page_url or "").strip()
         if not is_magnet_url(magnet):
             return False, "磁力链接无效"
-        try:
-            identity_title = str(
-                getattr(torrent, "_tg115_identity_title", "") or torrent.title or ""
-            ).strip()
-            candidate_meta = MetaInfo(
-                title=identity_title,
-                subtitle=str(torrent.description or ""),
-            )
-            torrent.enclosure = magnet
-            context = Context(
-                meta_info=candidate_meta,
-                media_info=mediainfo,
-                torrent_info=torrent,
-            )
-            download_id, error_msg = DownloadChain().download_single(
-                context=context,
-                source=SubscribeChain.get_subscribe_source_keyword(subscribe),
-                downloader=getattr(subscribe, "downloader", None),
-                save_path=getattr(subscribe, "save_path", None),
-                username=getattr(subscribe, "username", None) or "TGSearch115",
-                return_detail=True,
-            )
-            if not download_id:
-                return False, error_msg or "MoviePilot 未返回下载任务 ID"
-            return True, (
-                f"已提交 MoviePilot 下载任务 {download_id}，"
-                "完成后按 MoviePilot 目录与整理规则写入 115"
-            )
-        except Exception as e:
-            logger.warn(f"【TG115】提交 MoviePilot 磁力任务异常: {e}")
-            return False, str(e)
+        if not self._cms_client:
+            return False, "CMS 115 离线模块未初始化"
+        return self._cms_client.add_magnet(magnet)
 
     def _filter_resources(self, subscribe, mediainfo, torrents: List[TorrentInfo]) -> List[TorrentInfo]:
         """复用 MP 内置过滤规则：先规则组，再 include/exclude/清晰度等参数。"""
@@ -790,7 +806,7 @@ class TgSearch115(_PluginBase):
 
     def _finish_subscribe(
             self, subscribe, meta, mediainfo, torrent: TorrentInfo,
-            transfer_msg: str, via_mp_magnet: bool = False):
+            transfer_msg: str, via_cms_magnet: bool = False):
         """转存成功后处理订阅，两种模式由 ``auto_finish`` 开关控制：
 
         ``auto_finish=True``（默认，不依赖 MP 整理 115）：
@@ -808,6 +824,26 @@ class TgSearch115(_PluginBase):
             is_tv = (subscribe.type == "TV" or
                      getattr(mediainfo, "type", None) == "电视剧" or
                      getattr(meta, "type", None) == "TV")
+
+            # CMS 接口只确认离线任务已创建，不代表磁力内容已经下载完成。
+            # 暂停订阅可避免 MoviePilot 同时重复搜索，但不能发送 SubscribeComplete。
+            if via_cms_magnet:
+                oper.update(subscribe.id, {"state": "P"})
+                logger.info(
+                    f"【TG115】订阅 [{subscribe.name}] 已提交 CMS 115 磁力离线任务并暂停，"
+                    "等待 CMS 下载及后续媒体同步"
+                )
+                if self._notify_success:
+                    self.post_message(
+                        mtype=NotificationType.Subscribe,
+                        title=f"115 磁力离线任务：{subscribe.name}",
+                        text=(
+                            f"已通过 MoviePilot 规则与媒体 ID 确认资源，并提交到 CMS/115。\n"
+                            "订阅已暂停，等待 115 离线下载及后续同步完成。\n"
+                            f"资源: {torrent.title}\n{transfer_msg}"
+                        ),
+                    )
+                return
 
             raw_text = torrent.description or torrent.title or ""
             episode_info = self._parse_episode_info(raw_text) if is_tv else ""
@@ -861,9 +897,6 @@ class TgSearch115(_PluginBase):
                             mtype=NotificationType.Subscribe,
                             title=f"\U0001F4FA 剧集订阅更新：{subscribe.name}",
                             text=(
-                                f"TG115 插件已将《{subscribe.name}》{season_str}的完整磁力资源"
-                                f"（{episode_info}）提交 MoviePilot 下载，完成后按系统整理规则写入 115。\n"
-                                if via_mp_magnet else
                                 f"TG115 插件已转存《{subscribe.name}》{season_str}的资源"
                                 f"（{episode_info}）。\n"
                             )
@@ -876,9 +909,6 @@ class TgSearch115(_PluginBase):
                             mtype=NotificationType.Subscribe,
                             title=f"\U0001F3AC 电影订阅完成：{subscribe.name}",
                             text=(
-                                f"TG115 插件已将《{subscribe.name}》提交 MoviePilot 磁力下载，"
-                                "完成后按系统整理规则写入 115。\n"
-                                if via_mp_magnet else
                                 f"TG115 插件已成功将《{subscribe.name}》转存至 115 网盘。\n"
                             )
                                  + (f"资源: {torrent.title}\n{transfer_msg}" if self._auto_finish
@@ -1256,11 +1286,39 @@ class TgSearch115(_PluginBase):
             logger.error(f"【TG115】手动转存异常: {e}")
             return JSONResponse({"success": False, "message": f"转存失败: {e}"}, status_code=500)
 
+    def __magnet_offline_api(self, payload: dict = Body(default=None)):
+        """POST /magnet/offline：用户手动确认后提交 CMS/115 磁力离线任务。"""
+        from starlette.responses import JSONResponse
+        payload = payload if isinstance(payload, dict) else {}
+        magnet = str(payload.get("magnet") or payload.get("url") or "").strip()
+        title = str(payload.get("title") or "未命名资源").strip()
+        if not is_magnet_url(magnet):
+            return JSONResponse(
+                {"success": False, "message": "磁力链接无效"}, status_code=400
+            )
+        if not self._cms_client:
+            return JSONResponse(
+                {"success": False, "message": "CMS 115 离线模块未初始化"},
+                status_code=400,
+            )
+        ok, message = self._cms_client.add_magnet(magnet)
+        logger.info(f"【TG115】手动提交 CMS 115 磁力任务 [{title}]: ok={ok}")
+        return JSONResponse({"success": ok, "message": message})
+
+    def __check_cms_api(self):
+        """GET /check_cms：只读检查 CMS 服务，不提交离线任务。"""
+        from starlette.responses import JSONResponse
+        if not self._cms_client:
+            return JSONResponse({"success": False, "message": "CMS 模块未初始化"})
+        ok, message = self._cms_client.check()
+        return JSONResponse({"success": ok, "message": message})
+
     def __search_api(self, keyword: str = "", offset: int = 0, source: str = "all"):
         """GET /search?keyword=...&offset=N&source=all|tg|site：手动搜索。
 
         source：all=全部(默认) / tg=仅TG频道 / site=仅观影。
-        返回全部网盘类型（115/夸克/百度/阿里/迅雷…/磁力），前端按类型展示；仅 115 可自动转存。
+        返回全部网盘类型（115/夸克/百度/阿里/迅雷…/磁力），前端按类型展示；
+        115 分享可直接转存，磁力可通过 CMS 离线到 115。
         offset 用于观影翻页（按作品分批，每批 3 部）；TG 仅在首批(offset=0)搜索一次。
         返回 has_more 标记是否还有更多观影作品可翻页；warning 携带 app_auth 失效等提示。
         """
@@ -1518,6 +1576,8 @@ class TgSearch115(_PluginBase):
             "site_enabled": False,
             "site_app_auth": "",
             "site_magnet_priority": True,
+            "cms_url": "",
+            "cms_token": "",
             "site_proxy": "",
             "site_domain": "",
             "juying_enabled": False,

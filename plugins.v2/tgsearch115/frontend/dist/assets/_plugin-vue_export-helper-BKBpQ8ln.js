@@ -30,7 +30,7 @@ function filterSearchResults(results, resourceFilter, qualityFilter) {
     const text = resultText(result);
     if (qualityFilter === '4k' && !/(?:\b4k\b|2160p|\buhd\b)/i.test(text)) return false
     if (qualityFilter === '1080p' && !/1080[pi]?/i.test(text)) return false
-    if (qualityFilter === 'hfr' && !/(?:\b(?:50|60|90|120)\s*fps\b|\bhfr\b|高帧率)/i.test(text)) return false
+    if (qualityFilter === 'hfr' && !/(?:\b(?:50|60|90|120)\s*fps\b|(?:50|60|90|120)\s*帧(?:率)?|\bhfr\b|高帧率)/i.test(text)) return false
     if (qualityFilter === 'no_hdr' && /(?:\bhdr(?:10\+?)?\b|dolby\s*vision|\bdv\b|dovi|杜比视界)/i.test(text)) return false
     return true
   })

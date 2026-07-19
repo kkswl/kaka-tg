@@ -1,8 +1,8 @@
 # 拦截mp订阅（tgsearch115）
 
-MoviePilot 插件：订阅新增时优先从 Telegram、观影和聚影搜索资源，经 MoviePilot 原生媒体识别确认后转存匹配的 115 分享；未命中、身份不一致或转存失败时平滑回退到 MoviePilot 默认搜索。
+MoviePilot 插件：订阅新增时优先从 Telegram、观影和聚影搜索资源，经 MoviePilot 原生媒体识别确认后转存匹配的 115 分享，或把完整观影磁力通过 CMS 离线到 115；失败时平滑回退到 MoviePilot 默认搜索。
 
-当前版本：`v4.4.1`。完整观影磁力经 MoviePilot 规则和媒体身份确认后可优先提交下载，并按系统目录规则整理到 115；手动搜索支持资源类型与画质快捷筛选，旧配置会自动补齐新增开关。
+当前版本：`v4.5.0`。完整观影磁力经 MoviePilot 规则和媒体身份确认后，只通过 CMS 创建 115 离线任务；手动搜索支持资源/画质筛选和磁力一键离线到 115。
 
 ---
 
@@ -15,7 +15,8 @@ MoviePilot 插件：订阅新增时优先从 Telegram、观影和聚影搜索资
 - **TG 服务端搜索**：用 `t.me/s/{channel}?q=片名` 让 Telegram 服务器搜频道**全部历史**（不是只看最近 200 条），解决「明明有资源却搜不到」
 - **资源站 PoW 破解**：站点用 RSW 时间锁 PoW 反机器人，本插件用纯 Python `pow(x,1<<t,N)` 约 1.5 秒解出（C 层快速模幂），**无需浏览器、无新依赖**
 - **115 自动转存**：命中 115 链接后用 `p115client` 的 `share_snap` + `share_receive` 转存到指定目录
-- **全网盘展示**：资源站的夸克/百度/阿里/迅雷等非 115 资源在手动搜索里展示链接 + 提取码（仅 115 自动转存）
+- **115 磁力离线**：完整观影磁力经 MP 规则和媒体 ID 确认后，通过 CMS Token API 创建 115 离线任务
+- **全网盘展示**：夸克/百度/阿里/迅雷等资源展示链接；115 分享可转存，磁力可通过 CMS 离线
 - **115 扫码登录**：直连 115 二维码接口，扫码即得含 UID/CID/SEID 的 Cookie
 - **订阅完成双模式**：`auto_finish` 开关——插件直接标记完成 / 让 MP 整理 115 后自己完成
 - **自定义 Vue 前端**：Module Federation 暴露 Config/Page 组件，4 个标签页（手动转存 / 手动搜索 / TG 频道 / 插件设置）
@@ -32,6 +33,7 @@ tgsearch115/
 ├── juying_scraper.py    # 聚影开发者 API
 ├── identity_matcher.py  # MoviePilot 原生媒体身份确认
 ├── search_relevance.py  # 手动搜索片名/年份精准过滤
+├── cms_client.py        # CMS 官方 Token API / 115 磁力离线
 ├── p115_transfer.py     # 115 转存：p115client share_snap + share_receive
 ├── requirements.txt     # beautifulsoup4 / p115client（httpx 随 p115client 安装）
 ├── README.md
@@ -61,9 +63,8 @@ tgsearch115/
   → 115 分享按 share_code 去重
   → 本地标题/别名/年份/类型/季号初筛
   → MediaChain 识别候选，TMDB/豆瓣 ID 与订阅一致
-  → 仅通过身份确认的 115 资源参与自动转存
-  → transfer.transfer() → share_snap 取 file_id → share_receive 转存
-  → _finish_subscribe（auto_finish 双模式）+ SubscribeComplete + 通知
+  → 完整观影磁力：CMS Token API → 115 离线任务 → 暂停订阅等待同步
+  → 115 分享：transfer.transfer() → share_snap → share_receive → 完成订阅
   任何环节失败 → 静默 return，MP 默认搜索照常（平滑回退）
 ```
 
@@ -77,6 +78,14 @@ tgsearch115/
 | 启用插件 | 总开关 |
 | 115 Cookie | 扫码登录后自动填入（需含 UID/CID/SEID） |
 | 115 转存目录 | 如 `/电影`，不存在自动创建；也可填数字 cid |
+
+### 观影 Tab
+| 项 | 说明 |
+|----|------|
+| 完整磁力优先离线到 115 | 启用后优先处理已确认的完整观影磁力 |
+| CMS 服务地址 | Cloud Media Sync 地址，如 `http://host:9527` |
+| CMS API Token | 对应 CMS 启动变量 `CMS_API_TOKEN` |
+| 检查 CMS | 只读检查服务连通性，不创建离线任务 |
 
 ### 插件设置 Tab
 | 项 | 说明 |
@@ -112,11 +121,11 @@ tgsearch115/
 
 网盘类型**按 URL 域名判定**（`tname` 是上传者自填，常不准）：115 / quark / baidu / aliyun / xunlei / cloud189 / uc。
 
-> 注意：该站资源**大多是夸克/百度/阿里/迅雷，115 占比很小**。插件提取全部网盘，但**仅 115 自动转存**；非 115 在手动搜索展示链接 + 提取码供手动处理。
+> 注意：该站资源**大多是夸克/百度/阿里/迅雷，115 占比很小**。插件提取全部网盘；115 分享可直接转存，完整磁力可通过 CMS 离线到 115，其它网盘在手动搜索中展示链接与提取码。
 
 ---
 
-## 六、后端 API（12 个，全部 `auth="bear"`）
+## 六、后端 API（15 个，全部 `auth="bear"`）
 
 挂载 `/api/v1/plugin/TgSearch115{path}`：
 
@@ -126,6 +135,8 @@ tgsearch115/
 | `/check_channel` `/check_all` | 检查 TG 频道连通性 |
 | `/qrcode/get` `/qrcode/status` | 115 扫码登录 |
 | `/transfer` | 手动转存 115 分享链接 |
+| `/magnet/offline` | 通过 CMS 创建 115 磁力离线任务 |
+| `/check_cms` | 只读检查 CMS 服务与配置 |
 | `/search` | 手动搜索（TG + 资源站，返回带网盘类型） |
 | `/dir_info` `/dirs` | 115 目录查询/浏览 |
 | `/verify_cookie` | 验证 115 Cookie |
