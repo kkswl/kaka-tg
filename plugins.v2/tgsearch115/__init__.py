@@ -71,7 +71,7 @@ from app.plugins import _PluginBase
 from app.schemas.types import EventType, NotificationType, SystemConfigKey
 
 from .p115_transfer import P115Transfer
-from .tg_scraper import TgChannelScraper
+from .tg_scraper import TgChannelScraper, repair_mojibake
 from .site_scraper import FilejinScraper
 from .juying_scraper import JuyingApi
 from .identity_matcher import confirm_candidate_identity
@@ -199,7 +199,7 @@ class TgSearch115(_PluginBase):
         "并支持 115 分享直接转存；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.2"
+    plugin_version = "4.7.3"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -1436,6 +1436,7 @@ class TgSearch115(_PluginBase):
         stored = self.get_data(CONFIG_KEY) or {}
         config = {**self._default_config(), **stored} if isinstance(stored, dict) \
             else self._default_config()
+        config["tg_channels"] = self._parse_channels(config.get("tg_channels"))
         ck = config.get("p115_cookie", "") if isinstance(config, dict) else ""
         logger.info(f"【TG115】/config/get p115_cookie_len={len(ck or '')} valid={bool(_pick_uid_cid_seid(ck or ''))}")
         return JSONResponse(config)
@@ -2083,7 +2084,7 @@ class TgSearch115(_PluginBase):
             if not cid:
                 return
             channels.append({
-                "name": (name or "").strip() or cid,
+                "name": repair_mojibake((name or "").strip()) or cid,
                 "id": cid,
                 "enabled": bool(enabled),
             })

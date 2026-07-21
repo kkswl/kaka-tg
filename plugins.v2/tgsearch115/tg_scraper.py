@@ -23,7 +23,7 @@ import random
 import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import parse_qsl, quote, urlparse
+from urllib.parse import parse_qsl, parse_qs, quote, unquote, urlparse
 
 from app.log import logger
 
@@ -64,6 +64,32 @@ class TgHit:
     resource_title: str = ""
     channel_name: str = ""
     pub_date: Optional[str] = None
+
+
+def repair_mojibake(value: str) -> str:
+    """Repair one or two rounds of UTF-8 text decoded as Latin-1.
+
+    Older channel imports passed through a browser encoding conversion twice,
+    producing names such as ``Ã¥Â...``.  Only accept a repair when it reduces
+    common mojibake markers, so valid Latin text remains unchanged.
+    """
+    text = str(value or "")
+
+    def score(candidate: str) -> int:
+        return sum(
+            1 for char in candidate
+            if "\u0080" <= char <= "\u009f" or "\u00c2" <= char <= "\u00f4"
+        )
+
+    for _ in range(2):
+        try:
+            repaired = text.encode("latin-1").decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            break
+        if score(repaired) >= score(text):
+            break
+        text = repaired
+    return text
 
 
 def _is_private_channel(cid: str) -> bool:
@@ -286,8 +312,9 @@ class TgChannelScraper:
                             # 提取发布时间
                             pub_date = _extract_pub_date(msg_el)
 
-                            # 提取 115 分享链接（服务端已按关键字过滤，无需本地再匹配）
-                            for link in _115_LINK_RE.findall(text):
+                            # TG 经常把分享链接放在按钮或锚点 href 中，可见文本只
+                            # 显示“立即查看”。同时扫描文本和整条消息的 href。
+                            for link in _extract_115_links(msg_el, text):
                                 share_code, receive_code = _parse_payload(link)
                                 if not share_code:
                                     continue
@@ -404,10 +431,40 @@ def _parse_payload(url: str) -> Tuple[str, str]:
     if m:
         share_code = m.group(1).strip()
     q = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    if not share_code:
+        share_code = str(q.get("share_code") or q.get("sharecode") or "").strip()
     receive_code = str(
         q.get("password") or q.get("receive_code") or q.get("pwd") or ""
     ).strip()
     return share_code, receive_code
+
+
+def _extract_115_links(message_element, text: str = "") -> List[str]:
+    """Extract direct and Telegram-wrapped 115 links from one message."""
+    candidates = list(_115_LINK_RE.findall(str(text or "")))
+    try:
+        anchors = message_element.find_all("a", href=True)
+    except Exception:
+        anchors = []
+    for anchor in anchors:
+        href = str(anchor.get("href") or "").strip()
+        if not href:
+            continue
+        candidates.extend(_115_LINK_RE.findall(href))
+        query = parse_qs(urlparse(href).query)
+        for key in ("url", "u", "target"):
+            for wrapped in query.get(key, []):
+                candidates.extend(_115_LINK_RE.findall(unquote(str(wrapped))))
+
+    result: List[str] = []
+    seen = set()
+    for candidate in candidates:
+        link = str(candidate or "").rstrip(".,;:!?，。；：！？、")
+        key = link.lower()
+        if key and key not in seen:
+            seen.add(key)
+            result.append(link)
+    return result
 
 
 def _guess_title(text: str) -> str:
