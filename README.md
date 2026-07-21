@@ -256,3 +256,5 @@ P0 观影止血与诊断
 - `v4.7.6` 创建任务统一使用 Web `add_task_url`，状态、取消和重试继续使用同一协议；移除未被服务端接受的 SSP 自实现和全部临时正文诊断。
 - HTTP 200 但响应非 JSON 时不会直接判成功：最多三次按 BTIH 查询任务列表，只有确实出现任务才进入提交/下载状态，否则保持失败。
 - 不记录响应正文、Cookie、完整磁力或完整任务标识；同一 BTIH 的真实复测没有创建不同资源任务。
+- `v4.7.6` 已推送并安装到 MoviePilot。插件端点对同一 BTIH 返回标准 JSON 成功，账本显示 115 直连、进度 100%、目标 cid 与下载名称可用，并停在 `pending_organize` 等待 MoviePilot 整理历史，没有误报 `completed`。
+- 发布验证通过 60 项 Python 测试、Python 全量编译、Vue/Vite 生产构建、JSON/版本检查和 `git diff --check`；安装期间临时切换的 MoviePilot 代理已恢复原值。
