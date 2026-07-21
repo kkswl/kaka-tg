@@ -10,7 +10,6 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
-import json
 import re
 import threading
 import time
@@ -22,155 +21,11 @@ logger = logging.getLogger("tgsearch115.p115_offline")
 _HEX_BTIH = re.compile(r"^[0-9a-f]{40}$", re.I)
 _BASE32_BTIH = re.compile(r"^[a-z2-7]{32}$", re.I)
 
-# 115 lixianssp protocol constants.  The endpoint expects its JSON form body
-# wrapped with the service's public-key codec; this is transport obfuscation,
-# not a replacement for HTTPS.
-_RSA_N = int("8686980c0f5a24c4b9d43020cd2c22703ff3f450756529058b1cf88f09b8602136477198a6e2683149659bd122c33592fdb5ad47944ad1ea4d36c6b172aad6338c3bb6ac6227502d010993ac967d1aef00f0c8e038de2e4d3bc2ec368af2e9f10a6f1eda4f7262f136420c07c331b871bf139f74f3010e3c4fe57df3afb71683", 16)
-_RSA_E = 0x10001
-_G_KEY_L = b"\x78\x06\xad\x4c\x33\x86\x5d\x18\x4c\x01\x3f\x46"
-_RSA_KEY = b"\x8d\xa5\xa5\x8d"
-_G_KTS = bytes.fromhex("f0e569aebfdcbf8a1a45e8be7da673b8de8fe7c445da86c49b648b146ab4f1aa3801359e26692c86006b4fa5363462a62a966818f24afdbd6b978f4d8f8913b76c8e93ed0e0d483ed72f88d8fefe7e8650954fd1eb832634db667b9c7e9d7a8132eab633de3aa95934663baaba816048b9d5819cf86c8477ff5478265fbee81e369f34805c452c9b76d51b8fccc3b8f5")
-_ECDH_AES_KEY = bytes.fromhex("fb1a19d652f5aaf7bc651d0f69bf422f")
-_ECDH_AES_IV = bytes.fromhex("69bf422f49960550a0ad44ec3446cb4c")
-
-
-def _xor(data: bytes, key: bytes) -> bytes:
-    return bytes(value ^ key[index % len(key)] for index, value in enumerate(data))
-
-
-def _rsa_gen_key(seed: bytes, size: int = 4) -> bytes:
-    result = bytearray(size); tail, index = size * (size - 1), 0
-    for pos in range(size):
-        result[pos] = _G_KTS[tail] ^ ((seed[pos] + _G_KTS[index]) & 0xff)
-        tail -= size; index += size
-    return bytes(result)
-
-
-def _rsa_encrypt(data: bytes) -> str:
-    body = bytes(16) + _xor(_xor(data, _RSA_KEY)[::-1], _G_KEY_L)
-    encrypted = bytearray()
-    for offset in range(0, len(body), 117):
-        block = body[offset:offset + 117]
-        padded = b"\x00\x02" + b"\x02" * (125 - len(block)) + b"\x00" + block
-        encrypted.extend(pow(int.from_bytes(padded, "big"), _RSA_E, _RSA_N).to_bytes(128, "big"))
-    return base64.b64encode(encrypted).decode("ascii")
-
-
-def _rsa_decrypt(value: str) -> bytes:
-    cipher = base64.b64decode(value); plain = bytearray()
-    for offset in range(0, len(cipher), 128):
-        number = pow(int.from_bytes(cipher[offset:offset + 128], "big"), _RSA_E, _RSA_N)
-        block = number.to_bytes(max(1, (number.bit_length() + 7) // 8), "big")
-        plain.extend(block[block.index(0) + 1:])
-    seed, payload = bytes(plain[:16]), bytes(plain[16:])
-    return _xor(_xor(payload, _rsa_gen_key(seed, 12))[::-1], _RSA_KEY)
-
-
-def _lz4_block_decompress(source: bytes) -> bytes:
-    """Decode the raw LZ4 blocks used by 115 encrypted responses."""
-    src, pointer, output = memoryview(source), 0, bytearray()
-    while pointer < len(src):
-        token = src[pointer]
-        pointer += 1
-        literal_length = token >> 4
-        if literal_length == 15:
-            while pointer < len(src):
-                value = src[pointer]
-                pointer += 1
-                literal_length += value
-                if value != 255:
-                    break
-        if pointer + literal_length > len(src):
-            raise ValueError("invalid LZ4 literal length")
-        output.extend(src[pointer:pointer + literal_length])
-        pointer += literal_length
-        if pointer >= len(src):
-            break
-        if pointer + 2 > len(src):
-            raise ValueError("invalid LZ4 match offset")
-        offset = src[pointer] | (src[pointer + 1] << 8)
-        pointer += 2
-        if not offset or offset > len(output):
-            raise ValueError("invalid LZ4 match offset")
-        match_length = token & 0x0f
-        if match_length == 15:
-            while pointer < len(src):
-                value = src[pointer]
-                pointer += 1
-                match_length += value
-                if value != 255:
-                    break
-        match_length += 4
-        for _ in range(match_length):
-            output.append(output[-offset])
-    return bytes(output)
-
-
-def _lz4_decompress_frames(source: bytes) -> bytes:
-    result, pointer = bytearray(), 0
-    while pointer + 2 <= len(source):
-        block_length = source[pointer] | (source[pointer + 1] << 8)
-        pointer += 2
-        if not block_length:
-            break
-        if pointer + block_length > len(source):
-            raise ValueError("invalid LZ4 frame length")
-        result.extend(_lz4_block_decompress(source[pointer:pointer + block_length]))
-        pointer += block_length
-    return bytes(result)
-
-
-def _aes_cbc_decrypt(content: bytes) -> bytes:
-    try:
-        from Crypto.Cipher import AES
-        return AES.new(_ECDH_AES_KEY, AES.MODE_CBC, _ECDH_AES_IV).decrypt(content)
-    except ImportError:
-        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-        decryptor = Cipher(
-            algorithms.AES(_ECDH_AES_KEY), modes.CBC(_ECDH_AES_IV)
-        ).decryptor()
-        return decryptor.update(content) + decryptor.finalize()
-
-
-def _decode_ssp_response(content: bytes) -> Dict[str, Any]:
-    """Parse either plain JSON or 115's AES-CBC/LZ4 response envelope."""
-    raw = bytes(content or b"")
-    if not raw:
-        raise ValueError("empty SSP response")
-    json_candidate = raw.lstrip(b" \t\r\n")
-    if json_candidate[:1] in (b"{", b"["):
-        parsed = json.loads(json_candidate.decode("utf-8-sig"))
-    else:
-        if len(raw) % 16:
-            raise ValueError("invalid SSP response length")
-        decrypted = _aes_cbc_decrypt(raw)
-        pad = decrypted[-1] if decrypted else 0
-        if 0 < pad < 16 and decrypted.endswith(bytes((pad,)) * pad):
-            decrypted = decrypted[:-pad]
-        parsed = json.loads(_lz4_decompress_frames(decrypted).decode("utf-8-sig"))
-    if not isinstance(parsed, dict):
-        raise ValueError("SSP response is not an object")
-    if isinstance(parsed.get("data"), str):
-        try:
-            parsed["data"] = json.loads(_rsa_decrypt(parsed["data"]).decode("utf-8"))
-        except Exception:
-            pass
-    return parsed
-
-
 class OfflineHttpError(RuntimeError):
     def __init__(self, status: int, message: str, error_code: str = "") -> None:
         super().__init__(message)
         self.status = int(status or 0)
         self.error_code = str(error_code or status or "http_error")
-
-
-class _DictResponse:
-    def __init__(self, status_code: int, payload: Dict[str, Any], headers: Any = None):
-        self.status_code, self._payload, self.headers = status_code, payload, headers or {}
-
-    def json(self) -> Dict[str, Any]:
-        return self._payload
 
 
 def normalize_btih(value: Any) -> str:
@@ -207,7 +62,6 @@ class P115OfflineClient:
 
     SIGN_URL = "https://115.com/?ct=clouddownload&ac=space"
     TASK_URL = "https://clouddownload.115.com/web/"
-    SSP_URL = "https://clouddownload.115.com/lixianssp/"
 
     def __init__(self, cookie: str = "", target_cid: Any = 0,
                  request: Optional[Callable[..., Any]] = None,
@@ -251,8 +105,8 @@ class P115OfflineClient:
                                         progress=existing.get("progress"))
                 sign = self._get_sign()
                 payload = {"url": str(magnet), "wp_path_id": str(target_cid if target_cid is not None else self.target_cid),
-                           "sign": sign["sign"], "time": sign["time"]}
-                response = self._call("POST", self.SSP_URL, params={"ac": "add_task_url"}, data=payload)
+                           "sign": sign["sign"], "time": sign["time"], "ac": "add_task_url"}
+                response = self._call("POST", self.TASK_URL, data=payload)
                 task_id = self._task_id(response) or btih
                 ok = self._response_success(response)
                 result = self._result(ok, task_id, btih, "" if ok else self._error_code(response),
@@ -262,6 +116,20 @@ class P115OfflineClient:
                     self._submitted[btih] = dict(result)
                 return result
             except OfflineHttpError as exc:
+                if exc.error_code == "invalid_json":
+                    confirmed = self._confirm_ambiguous_submit(btih)
+                    if confirmed:
+                        result = self._result(
+                            True,
+                            confirmed.get("task_id") or btih,
+                            btih,
+                            "",
+                            "115 任务已通过任务列表确认",
+                            status=confirmed.get("status") or "submitted",
+                            progress=confirmed.get("progress"),
+                        )
+                        self._submitted[btih] = dict(result)
+                        return result
                 return self._result(False, "", btih, exc.error_code, str(exc), status="failed")
             except Exception as exc:
                 logger.warning("115 offline request failed status=%s error=%s", self.last_http_status, type(exc).__name__)
@@ -397,7 +265,9 @@ class P115OfflineClient:
                 try:
                     return response.json()
                 except Exception as exc:
-                    raise OfflineHttpError(status, "115 返回非 JSON", "invalid_json") from exc
+                    raise OfflineHttpError(
+                        status, "115 返回非 JSON", "invalid_json"
+                    ) from exc
             except OfflineHttpError:
                 raise
             except Exception as exc:
@@ -411,34 +281,26 @@ class P115OfflineClient:
             return self._request_impl(method, url, **kwargs)
         import httpx
         headers = {"User-Agent": "Mozilla/5.0 (MoviePilot-TgSearch115)", "Accept": "application/json, text/plain, */*", "Cookie": self.cookie}
-        if method.upper() == "POST" and url.rstrip("/") == self.SSP_URL.rstrip("/"):
-            payload = dict(kwargs.pop("data", {}) or {})
-            payload.update(kwargs.get("params", {}) or {})
-            kwargs.pop("params", None)
-            payload.setdefault("app_ver", "36.2.28")
-            headers["User-Agent"] = "Mozilla/5.0 115disk/36.2.28 115Browser/36.2.28 115wangpan_android/36.2.28"
-            kwargs["data"] = {"data": _rsa_encrypt(json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))}
         with httpx.Client(timeout=20.0, headers=headers, follow_redirects=True, trust_env=False) as client:
-            response = client.request(method, url, **kwargs)
-            if method.upper() == "POST" and url.rstrip("/") == self.SSP_URL.rstrip("/"):
-                try:
-                    parsed = _decode_ssp_response(response.content)
-                    return _DictResponse(response.status_code, parsed, response.headers)
-                except Exception as exc:
-                    logger.warning(
-                        "115 SSP decode failed status=%s content_type=%s bytes=%s error=%s",
-                        response.status_code,
-                        str(response.headers.get("content-type") or "")[:80],
-                        len(response.content or b""),
-                        type(exc).__name__,
-                    )
-                    return response
-            return response
+            return client.request(method, url, **kwargs)
 
     def _find_existing(self, btih: str) -> Optional[Dict[str, Any]]:
         for task in self.list_tasks():
             if task.get("btih") == btih or task.get("task_id") == btih:
                 return task
+        return None
+
+    def _confirm_ambiguous_submit(self, btih: str) -> Optional[Dict[str, Any]]:
+        """Confirm an unparseable HTTP 200 response without trusting its body."""
+        for attempt in range(3):
+            if attempt:
+                self._sleep(float(attempt))
+            try:
+                existing = self._find_existing(btih)
+            except Exception:
+                existing = None
+            if existing:
+                return existing
         return None
 
     def _lock_for(self, btih: str) -> threading.Lock:

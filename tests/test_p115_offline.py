@@ -1,5 +1,4 @@
 import importlib.util
-import json
 import threading
 import unittest
 from pathlib import Path
@@ -26,45 +25,6 @@ class Response:
 
 
 class P115OfflineTest(unittest.TestCase):
-    def test_ssp_encrypted_binary_response_is_decoded(self):
-        payload = json.dumps({"state": True, "data": {"info_hash": "a" * 40}}).encode()
-        extension = bytearray()
-        remaining = len(payload) - 15
-        while remaining >= 255:
-            extension.append(255)
-            remaining -= 255
-        extension.append(remaining)
-        block = bytes((0xf0,)) + bytes(extension) + payload
-        framed = len(block).to_bytes(2, "little") + block + b"\x00\x00"
-        pad = (-len(framed)) & 15
-        if pad:
-            framed += bytes((pad,)) * pad
-        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-        encryptor = Cipher(
-            algorithms.AES(module._ECDH_AES_KEY), modes.CBC(module._ECDH_AES_IV)
-        ).encryptor()
-        encrypted = encryptor.update(framed) + encryptor.finalize()
-
-        decoded = module._decode_ssp_response(encrypted)
-
-        self.assertTrue(decoded["state"])
-        self.assertEqual("a" * 40, decoded["data"]["info_hash"])
-
-    def test_ssp_invalid_binary_response_is_rejected(self):
-        with self.assertRaises(ValueError):
-            module._decode_ssp_response(b"not-json")
-
-    def test_ssp_plain_json_allows_leading_whitespace(self):
-        decoded = module._decode_ssp_response(b'  {"state":true,"code":"0"}\r\n')
-        self.assertTrue(decoded["state"])
-
-    def test_lixianssp_request_codec_is_base64_rsa_blocks(self):
-        payload = b'{"url":"synthetic","wp_path_id":"0"}'
-        encoded = module._rsa_encrypt(payload)
-        decoded = module.base64.b64decode(encoded)
-        self.assertEqual(0, len(decoded) % 128)
-        self.assertNotIn(payload, decoded)
-
     def test_invalid_btih_is_rejected_without_request(self):
         calls = []
         client = module.P115OfflineClient("UID=x", request=lambda *a, **k: calls.append((a, k)))
@@ -88,7 +48,67 @@ class P115OfflineTest(unittest.TestCase):
         self.assertEqual("a" * 40, result["btih"])
         self.assertEqual("submitted", result["status"])
         self.assertEqual(3, len(calls))  # task list, sign, create
+        self.assertEqual(client.TASK_URL, calls[-1][1])
+        self.assertEqual("add_task_url", calls[-1][2]["data"]["ac"])
+        self.assertNotIn("params", calls[-1][2])
         self.assertNotIn("magnet", str(result).lower())
+
+    def test_plain_text_submit_is_success_only_after_task_list_confirmation(self):
+        task_list_calls = 0
+
+        class PlainTextResponse:
+            status_code = 200
+            headers = {"content-type": "text/plain"}
+
+            @staticmethod
+            def json():
+                raise ValueError("not json")
+
+        def request(method, url, **kwargs):
+            nonlocal task_list_calls
+            params = kwargs.get("params") or {}
+            if params.get("ac") == "task_lists":
+                task_list_calls += 1
+                tasks = [] if task_list_calls == 1 else [{
+                    "info_hash": "a" * 40, "status": 1,
+                }]
+                return Response(payload={"state": True, "tasks": tasks})
+            if "space" in url:
+                return Response(payload={"state": True, "sign": "s", "time": "1"})
+            return PlainTextResponse()
+
+        client = module.P115OfflineClient(
+            "UID=x", request=request, sleep=lambda _: None, max_retries=0
+        )
+        result = client.submit_magnet(magnet())
+
+        self.assertTrue(result["success"])
+        self.assertEqual("downloading", result["status"])
+        self.assertEqual(2, task_list_calls)
+
+    def test_plain_text_submit_stays_failed_without_task_confirmation(self):
+        class PlainTextResponse:
+            status_code = 200
+            headers = {"content-type": "text/plain"}
+
+            @staticmethod
+            def json():
+                raise ValueError("not json")
+
+        def request(method, url, **kwargs):
+            if (kwargs.get("params") or {}).get("ac") == "task_lists":
+                return Response(payload={"state": True, "tasks": []})
+            if "space" in url:
+                return Response(payload={"state": True, "sign": "s", "time": "1"})
+            return PlainTextResponse()
+
+        client = module.P115OfflineClient(
+            "UID=x", request=request, sleep=lambda _: None, max_retries=0
+        )
+        result = client.submit_magnet(magnet())
+
+        self.assertFalse(result["success"])
+        self.assertEqual("invalid_json", result["error_code"])
 
     def test_retry_after_and_exponential_backoff(self):
         waits, attempts = [], [0]
@@ -180,7 +200,8 @@ class P115OfflineTest(unittest.TestCase):
         calls = []
 
         def request(method, url, **kwargs):
-            calls.append(kwargs.get("params", {}).get("ac", "sign"))
+            payload = kwargs.get("params") or kwargs.get("data") or {}
+            calls.append(payload.get("ac", "sign"))
             if "space" in url:
                 return Response(payload={"state": True, "sign": "s", "time": "1"})
             return Response(payload={"state": True, "data": {"info_hash": "a" * 40}})
