@@ -199,7 +199,7 @@ class TgSearch115(_PluginBase):
         "并支持 115 分享直接转存；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.1"
+    plugin_version = "4.7.2"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -816,6 +816,11 @@ class TgSearch115(_PluginBase):
             cache_key = (source, str(keyword).strip().casefold(), str(year or ""))
             cached = self._search_cache.get(cache_key) if self._search_cache else None
             if cached is not None:
+                for hit in cached:
+                    try:
+                        setattr(hit, "_tg115_source", source)
+                    except Exception:
+                        pass
                 hits.extend(cached)
                 logger.info(f"【TG115】{source} 命中周期搜索缓存 {len(cached)} 条")
                 continue
@@ -826,6 +831,13 @@ class TgSearch115(_PluginBase):
                 continue
             try:
                 source_hits = callback() or []
+                for hit in source_hits:
+                    # Preserve source identity through the common TorrentInfo
+                    # conversion so automatic ordering is deterministic.
+                    try:
+                        setattr(hit, "_tg115_source", source)
+                    except Exception:
+                        pass
                 status = getattr(client, "last_error_status", None)
                 if status in (403, 429):
                     opened = self._source_breaker.failure(source, f"HTTP {status}") \
@@ -904,7 +916,12 @@ class TgSearch115(_PluginBase):
                     state = self._offline_client.get_task_status(task_id)
                     status = state.get("status")
                     if status == "completed":
-                        self._cms_tasks.update(record["btih"], "pending_organize", progress=100, task_id=task_id)
+                        self._cms_tasks.update(
+                            record["btih"], "pending_organize", progress=100,
+                            task_id=task_id,
+                            target_cid=state.get("target_cid") or record.get("target_cid", ""),
+                            download_name=state.get("name", ""),
+                        )
                     elif status in {"downloading", "submitted", "failed", "cancelled"}:
                         self._cms_tasks.update(record["btih"], status, progress=state.get("progress"), task_id=task_id, error_code=state.get("error_code", ""), error_message=state.get("message", ""))
                         if status in {"failed", "cancelled"}:
@@ -984,6 +1001,7 @@ class TgSearch115(_PluginBase):
             # 身份识别只使用干净标题；质量过滤仍使用包含资源格式的完整 title。
             setattr(torrent, "_tg115_identity_title", identity_title)
             setattr(torrent, "_tg115_pan_type", pan_type)
+            setattr(torrent, "_tg115_source", str(getattr(h, "_tg115_source", "") or "").lower())
             setattr(torrent, "_tg115_is_complete", bool(parsed_meta.get("is_complete")))
             torrents.append(torrent)
         return torrents
@@ -1528,8 +1546,12 @@ class TgSearch115(_PluginBase):
         except Exception as e:
             raw, set_cookie = "", ""
             logger.warn(f"【TG115】qrcode_result 请求异常: {e}")
-        logger.info(f"【TG115】qrcode_result app={app} uid={uid[:10]}.. => "
-                    f"raw={raw[:300]} set_cookie={set_cookie[:150]}")
+        # Never log the QR response body or Set-Cookie values.  Only record
+        # whether the expected credential fields were present.
+        logger.info(
+            "【TG115】qrcode_result app=%s credential_fields=%s",
+            app, bool(_pick_uid_cid_seid(raw + "\n" + set_cookie)),
+        )
         cookie_str = _pick_uid_cid_seid(raw + "\n" + set_cookie)
         if cookie_str:
             cfg = self.get_data(CONFIG_KEY) or self._default_config()

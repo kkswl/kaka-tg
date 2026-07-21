@@ -76,6 +76,43 @@ class P115OfflineTest(unittest.TestCase):
         self.assertEqual("downloading", module.P115OfflineClient.normalize_status({"code": "0", "status": "1"})["status"])
         self.assertEqual("completed", module.P115OfflineClient.normalize_status({"status": 2, "percent": "100"})["status"])
 
+    def test_completed_bucket_overrides_stale_running_status_and_keeps_path_hint(self):
+        calls = []
+
+        def request(method, url, **kwargs):
+            params = kwargs.get("params") or {}
+            calls.append(dict(params))
+            if params.get("ac") == "get_user_task":
+                return Response(payload={"state": True, "task": {
+                    "info_hash": "a" * 40, "status": 1, "percent": 100,
+                }})
+            self.assertEqual(11, params.get("stat"))
+            return Response(payload={"state": True, "tasks": [{
+                "info_hash": "a" * 40, "status": 1, "percent": 100,
+                "wp_path_id": "12345", "name": "示例资源",
+            }]})
+
+        client = module.P115OfflineClient("UID=x", request=request)
+        result = client.get_task_status("a" * 40)
+
+        self.assertEqual("completed", result["status"])
+        self.assertEqual("12345", result["target_cid"])
+        self.assertEqual("示例资源", result["name"])
+        self.assertEqual(["get_user_task", "task_lists"], [item["ac"] for item in calls])
+
+    def test_running_task_is_not_completed_when_absent_from_completed_bucket(self):
+        def request(method, url, **kwargs):
+            params = kwargs.get("params") or {}
+            if params.get("ac") == "get_user_task":
+                return Response(payload={"state": True, "task": {
+                    "info_hash": "a" * 40, "status": 1, "percent": 75,
+                }})
+            return Response(payload={"state": True, "tasks": []})
+
+        result = module.P115OfflineClient("UID=x", request=request).get_task_status("a" * 40)
+        self.assertEqual("downloading", result["status"])
+        self.assertEqual(75.0, result["progress"])
+
     def test_auth_errors_are_not_retried_or_marked_complete(self):
         attempts = []
         client = module.P115OfflineClient("UID=x", request=lambda *a, **k: (attempts.append(1) or Response(401, {"code": 401})))

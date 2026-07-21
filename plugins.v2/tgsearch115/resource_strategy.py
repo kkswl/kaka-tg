@@ -6,6 +6,10 @@ from typing import Any, Callable, Iterable, List, Optional, Tuple
 
 
 _BTIH_RE = re.compile(r"(?:^|[?&])xt=urn:btih:([a-z0-9]+)", re.IGNORECASE)
+_CHINESE_SUBTITLE_RE = re.compile(
+    r"(?:中文字幕|国语中字|中字|简中|繁中|简繁|内封.{0,6}(?:简|繁|中)|(?:chs|cht|chinese).{0,8}(?:sub|subtitle))",
+    re.IGNORECASE,
+)
 
 
 def is_magnet_url(value: str) -> bool:
@@ -24,33 +28,54 @@ def select_auto_candidates(
     is_tv: bool,
     is_115_url: Callable[[str], bool],
 ) -> List:
-    """Return deduplicated观影 magnets first, then deduplicated 115 shares."""
-    magnets = []
-    shares = []
-    seen_magnets = set()
-    seen_shares = set()
+    """Order safe candidates: TG, Guanying 115 CHS, Guanying magnet CHS, Juying."""
+    buckets = {"tg": [], "site_share": [], "site_magnet": [], "juying": []}
+    bucket_seen = {name: set() for name in buckets}
+
+    def add(bucket: str, key: str, torrent: Any) -> None:
+        if key and key not in bucket_seen[bucket]:
+            bucket_seen[bucket].add(key)
+            buckets[bucket].append(torrent)
 
     for torrent in torrents or []:
         url = str(getattr(torrent, "page_url", "") or "").strip()
         pan_type = str(getattr(torrent, "_tg115_pan_type", "") or "").lower()
-        if prefer_site_magnet and pan_type == "magnet" and is_magnet_url(url):
-            if str(getattr(torrent, "site_name", "") or "") != "观影":
+        source = str(getattr(torrent, "_tg115_source", "") or "").lower()
+        description = " ".join((
+            str(getattr(torrent, "title", "") or ""),
+            str(getattr(torrent, "description", "") or ""),
+        ))
+        has_chinese_subtitle = bool(_CHINESE_SUBTITLE_RE.search(description))
+
+        if source == "tg" and is_115_url(url):
+            add("tg", url.lower(), torrent)
+            continue
+
+        if source == "site" and is_115_url(url) and has_chinese_subtitle:
+            add("site_share", url.lower(), torrent)
+            continue
+
+        if source == "site" and prefer_site_magnet and pan_type == "magnet" and is_magnet_url(url):
+            if not has_chinese_subtitle:
                 continue
             if is_tv and not bool(getattr(torrent, "_tg115_is_complete", False)):
                 continue
-            key = _magnet_key(url)
-            if key and key not in seen_magnets:
-                seen_magnets.add(key)
-                magnets.append(torrent)
+            add("site_magnet", _magnet_key(url), torrent)
             continue
 
-        if is_115_url(url):
-            key = url.lower()
-            if key not in seen_shares:
-                seen_shares.add(key)
-                shares.append(torrent)
+        if source == "juying" and is_115_url(url):
+            add("juying", url.lower(), torrent)
 
-    return magnets + shares
+    ordered = buckets["tg"] + buckets["site_share"] + buckets["site_magnet"] + buckets["juying"]
+    result = []
+    seen = set()
+    for torrent in ordered:
+        url = str(getattr(torrent, "page_url", "") or "").strip()
+        key = ("magnet", _magnet_key(url)) if is_magnet_url(url) else ("share", url.lower())
+        if key not in seen:
+            seen.add(key)
+            result.append(torrent)
+    return result
 
 
 @dataclass

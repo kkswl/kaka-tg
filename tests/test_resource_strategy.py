@@ -17,10 +17,13 @@ sys.modules[spec.name] = resource_strategy
 spec.loader.exec_module(resource_strategy)
 
 
-def _torrent(url, pan_type, site="观影", complete=True):
+def _torrent(url, pan_type, source="site", complete=True, text="中文字幕"):
     return SimpleNamespace(
         page_url=url,
-        site_name=site,
+        site_name={"site": "观影", "juying": "聚影"}.get(source, "TG频道"),
+        title=text,
+        description=text,
+        _tg115_source=source,
         _tg115_pan_type=pan_type,
         _tg115_is_complete=complete,
     )
@@ -42,19 +45,43 @@ class ResourceStrategyTest(unittest.TestCase):
         self.assertEqual("cms", source)
         self.assertEqual(["direct", "cms"], calls)
 
-    def test_prefers_unique_guanying_magnet_before_115(self):
+    def test_orders_tg_then_guanying_115_then_guanying_magnet_then_juying(self):
         magnet = "magnet:?xt=urn:btih:" + "a" * 40
         torrents = [
-            _torrent("https://115.com/s/demo", "115"),
+            _torrent("https://115.com/s/juying", "115", source="juying"),
             _torrent(magnet, "magnet"),
             _torrent(magnet + "&dn=duplicate", "magnet"),
+            _torrent("https://115.com/s/site", "115"),
+            _torrent("https://115.com/s/tg", "115", source="tg", text="频道资源"),
         ]
 
         selected = resource_strategy.select_auto_candidates(
             torrents, True, False, _is_115
         )
 
-        self.assertEqual([magnet, "https://115.com/s/demo"], [t.page_url for t in selected])
+        self.assertEqual([
+            "https://115.com/s/tg",
+            "https://115.com/s/site",
+            magnet,
+            "https://115.com/s/juying",
+        ], [t.page_url for t in selected])
+
+    def test_guanying_candidates_require_chinese_subtitle_marker(self):
+        selected = resource_strategy.select_auto_candidates([
+            _torrent("https://115.com/s/no-chs", "115", text="WEB-DL English"),
+            _torrent("magnet:?xt=urn:btih:" + "f" * 40, "magnet", text="WEB-DL English"),
+            _torrent("https://115.com/s/chs", "115", text="内封简繁字幕"),
+        ], True, False, _is_115)
+        self.assertEqual(["https://115.com/s/chs"], [t.page_url for t in selected])
+
+    def test_cross_source_duplicate_keeps_higher_priority_tg_candidate(self):
+        duplicate = "https://115.com/s/same"
+        selected = resource_strategy.select_auto_candidates([
+            _torrent(duplicate, "115", source="juying"),
+            _torrent(duplicate, "115", source="tg", text="频道资源"),
+        ], True, False, _is_115)
+        self.assertEqual(1, len(selected))
+        self.assertEqual("tg", selected[0]._tg115_source)
 
     def test_rejects_incomplete_tv_magnet(self):
         torrents = [
@@ -70,7 +97,7 @@ class ResourceStrategyTest(unittest.TestCase):
 
     def test_ignores_non_guanying_magnet(self):
         selected = resource_strategy.select_auto_candidates(
-            [_torrent("magnet:?xt=urn:btih:" + "c" * 40, "magnet", site="聚影")],
+            [_torrent("magnet:?xt=urn:btih:" + "c" * 40, "magnet", source="juying")],
             True,
             False,
             _is_115,

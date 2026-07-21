@@ -173,8 +173,12 @@ class P115OfflineClient:
                 logger.warning("115 offline request failed status=%s error=%s", self.last_http_status, type(exc).__name__)
                 return self._result(False, "", btih, "network_error", "115 网络请求失败", status="failed")
 
-    def list_tasks(self, page: int = 1, page_size: int = 30) -> List[Dict[str, Any]]:
-        response = self._call("GET", self.TASK_URL, params={"ac": "task_lists", "page": int(page), "page_size": int(page_size)})
+    def list_tasks(self, page: int = 1, page_size: int = 30,
+                   stat: Optional[int] = None) -> List[Dict[str, Any]]:
+        params = {"ac": "task_lists", "page": int(page), "page_size": int(page_size)}
+        if stat is not None:
+            params["stat"] = int(stat)
+        response = self._call("GET", self.TASK_URL, params=params)
         raw = response.get("tasks") if isinstance(response, dict) else None
         if raw is None and isinstance(response, dict):
             data = response.get("data")
@@ -208,7 +212,28 @@ class P115OfflineClient:
         if not isinstance(task, dict):
             data = response.get("data") if isinstance(response, dict) else None
             task = data if isinstance(data, dict) else response
-        return self._normalize_task(task if isinstance(task, dict) else {})
+        normalized = self._normalize_task(task if isinstance(task, dict) else {})
+        # get_user_task can keep reporting a running status after 115 has
+        # already moved the files into the cloud drive.  task_lists(stat=11)
+        # is the service's authoritative completed bucket.
+        if normalized.get("status") not in {"completed", "failed", "cancelled"}:
+            completed = self._find_in_task_bucket(key, stat=11)
+            if completed:
+                completed["status"] = "completed"
+                if completed.get("progress") is None:
+                    completed["progress"] = 100.0
+                return completed
+        return normalized
+
+    def _find_in_task_bucket(self, task_id: str, stat: int) -> Optional[Dict[str, Any]]:
+        key = normalize_btih(task_id) or str(task_id or "").strip().lower()
+        for task in self.list_tasks(page=1, page_size=30, stat=stat):
+            if key in {
+                str(task.get("task_id") or "").strip().lower(),
+                str(task.get("btih") or "").strip().lower(),
+            }:
+                return task
+        return None
 
     def cancel_task(self, task_id: str) -> Dict[str, Any]:
         return self._mutate_task("task_del", task_id, "cancelled")
@@ -238,7 +263,7 @@ class P115OfflineClient:
             progress = float(progress) if progress is not None else None
         except (TypeError, ValueError):
             progress = None
-        return {"status": status, "progress": progress, "error_code": str(payload.get("error_code", payload.get("errno", "")) or ""), "message": str(payload.get("error", payload.get("message", payload.get("msg", ""))) or "")[:300], "task_id": str(payload.get("task_id", payload.get("info_hash", payload.get("hash", ""))) or ""), "btih": normalize_btih(payload.get("btih", payload.get("info_hash", "")))}
+        return {"status": status, "progress": progress, "error_code": str(payload.get("error_code", payload.get("errno", "")) or ""), "message": str(payload.get("error", payload.get("message", payload.get("msg", ""))) or "")[:300], "task_id": str(payload.get("task_id", payload.get("info_hash", payload.get("hash", ""))) or ""), "btih": normalize_btih(payload.get("btih", payload.get("info_hash", ""))), "target_cid": str(payload.get("wp_path_id", payload.get("save_path_id", "")) or ""), "name": str(payload.get("name", payload.get("file_name", payload.get("savepath", ""))) or "")[:240]}
 
     def _mutate_task(self, action: str, task_id: str, status: str) -> Dict[str, Any]:
         key = str(task_id or "").strip()
@@ -325,7 +350,7 @@ class P115OfflineClient:
     def _normalize_task(cls, payload: Dict[str, Any]) -> Dict[str, Any]:
         normalized = cls.normalize_status(payload)
         task_id = normalized["task_id"] or str(payload.get("id", "") or "")
-        normalized.update({"task_id": task_id, "btih": normalized["btih"] or normalize_btih(payload.get("hash", "")), "name": str(payload.get("name", payload.get("file_name", "")) or "")[:240]})
+        normalized.update({"task_id": task_id, "btih": normalized["btih"] or normalize_btih(payload.get("hash", ""))})
         return normalized
 
     @staticmethod

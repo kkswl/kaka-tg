@@ -115,7 +115,7 @@ class CmsTaskLedger:
                     record["updated_at"] = self._now().isoformat(timespec="seconds")
                     record["error"] = str(error or "")[:300]
                     record["error_message"] = record["error"]
-                    for key in ("task_id", "target_cid", "progress", "error_code", "error_message", "retry_count", "source"):
+                    for key in ("task_id", "target_cid", "download_name", "progress", "error_code", "error_message", "retry_count", "source"):
                         if key in fields:
                             record[key] = fields[key]
                     return record

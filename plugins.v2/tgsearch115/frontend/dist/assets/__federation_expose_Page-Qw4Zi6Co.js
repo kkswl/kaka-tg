@@ -19,41 +19,46 @@ const _hoisted_9 = { class: "text-caption text-medium-emphasis" };
 const _hoisted_10 = { class: "text-caption text-medium-emphasis" };
 const _hoisted_11 = {
   key: 0,
+  class: "text-caption text-medium-emphasis"
+};
+const _hoisted_12 = { key: 0 };
+const _hoisted_13 = {
+  key: 1,
   class: "text-caption text-error"
 };
-const _hoisted_12 = { class: "text-caption" };
-const _hoisted_13 = { class: "text-right" };
-const _hoisted_14 = { class: "d-flex align-center ga-2 mt-2" };
-const _hoisted_15 = { class: "filter-row mt-3" };
-const _hoisted_16 = { class: "filter-row mt-2" };
-const _hoisted_17 = { class: "d-flex align-center mb-2" };
-const _hoisted_18 = {
+const _hoisted_14 = { class: "text-caption" };
+const _hoisted_15 = { class: "text-right" };
+const _hoisted_16 = { class: "d-flex align-center ga-2 mt-2" };
+const _hoisted_17 = { class: "filter-row mt-3" };
+const _hoisted_18 = { class: "filter-row mt-2" };
+const _hoisted_19 = { class: "d-flex align-center mb-2" };
+const _hoisted_20 = {
   key: 1,
   class: "text-caption text-medium-emphasis ml-auto"
 };
-const _hoisted_19 = ["title"];
-const _hoisted_20 = {
+const _hoisted_21 = ["title"];
+const _hoisted_22 = {
   key: 0,
   class: "text-caption text-primary font-weight-medium mt-1"
 };
-const _hoisted_21 = {
+const _hoisted_23 = {
   key: 1,
   class: "text-caption text-warning mt-1"
 };
-const _hoisted_22 = {
+const _hoisted_24 = {
   key: 2,
   class: "text-caption text-medium-emphasis line-clamp-3 mt-1"
 };
-const _hoisted_23 = { class: "text-caption text-medium-emphasis mt-1" };
-const _hoisted_24 = {
+const _hoisted_25 = { class: "text-caption text-medium-emphasis mt-1" };
+const _hoisted_26 = {
   key: 0,
   class: "filter-empty"
 };
-const _hoisted_25 = {
+const _hoisted_27 = {
   key: 1,
   class: "d-flex justify-center mt-4"
 };
-const _hoisted_26 = {
+const _hoisted_28 = {
   key: 2,
   class: "text-center text-caption text-medium-emphasis mt-3"
 };
@@ -533,8 +538,16 @@ return (_ctx, _cache) => {
                         _createElementVNode("div", _hoisted_8, _toDisplayString(task.title), 1),
                         _createElementVNode("div", _hoisted_9, _toDisplayString(task.source === '115_direct' ? '115 直接磁力' : 'CMS 回退') + " · task " + _toDisplayString(String(task.task_id || '').slice(0, 12)) + "...", 1),
                         _createElementVNode("div", _hoisted_10, "BTIH " + _toDisplayString(String(task.btih || '').slice(0, 12)) + "...", 1),
+                        (task.target_cid)
+                          ? (_openBlock(), _createElementBlock("div", _hoisted_11, [
+                              _createTextVNode(" 115 目标 cid " + _toDisplayString(task.target_cid), 1),
+                              (task.download_name)
+                                ? (_openBlock(), _createElementBlock("span", _hoisted_12, " · " + _toDisplayString(task.download_name), 1))
+                                : _createCommentVNode("", true)
+                            ]))
+                          : _createCommentVNode("", true),
                         (task.error_message)
-                          ? (_openBlock(), _createElementBlock("div", _hoisted_11, _toDisplayString(task.error_message), 1))
+                          ? (_openBlock(), _createElementBlock("div", _hoisted_13, _toDisplayString(task.error_message), 1))
                           : _createCommentVNode("", true)
                       ]),
                       _createElementVNode("td", null, [
@@ -549,8 +562,8 @@ return (_ctx, _cache) => {
                           _: 2
                         }, 1032, ["color"])
                       ]),
-                      _createElementVNode("td", _hoisted_12, _toDisplayString(formatTime(task.submitted_at)), 1),
-                      _createElementVNode("td", _hoisted_13, [
+                      _createElementVNode("td", _hoisted_14, _toDisplayString(formatTime(task.submitted_at)), 1),
+                      _createElementVNode("td", _hoisted_15, [
                         (['failed', 'timed_out'].includes(task.status))
                           ? (_openBlock(), _createBlock(_component_v_btn, {
                               key: 0,
@@ -686,7 +699,7 @@ return (_ctx, _cache) => {
               "onClick:appendInner": doSearch,
               onKeyup: _withKeys(doSearch, ["enter"])
             }, null, 8, ["modelValue", "loading"]),
-            _createElementVNode("div", _hoisted_14, [
+            _createElementVNode("div", _hoisted_16, [
               _cache[24] || (_cache[24] = _createElementVNode("span", { class: "text-caption text-medium-emphasis" }, "来源", -1)),
               _createVNode(_component_v_btn_toggle, {
                 modelValue: searchSource.value,
@@ -737,7 +750,7 @@ return (_ctx, _cache) => {
                 _: 1
               }, 8, ["modelValue"])
             ]),
-            _createElementVNode("div", _hoisted_15, [
+            _createElementVNode("div", _hoisted_17, [
               _cache[25] || (_cache[25] = _createElementVNode("span", { class: "filter-label" }, "资源", -1)),
               _createVNode(_component_v_btn_toggle, {
                 modelValue: resourceFilter.value,
@@ -765,7 +778,7 @@ return (_ctx, _cache) => {
                 _: 1
               }, 8, ["modelValue"])
             ]),
-            _createElementVNode("div", _hoisted_16, [
+            _createElementVNode("div", _hoisted_18, [
               _cache[26] || (_cache[26] = _createElementVNode("span", { class: "filter-label" }, "画质", -1)),
               _createVNode(_component_v_btn_toggle, {
                 modelValue: qualityFilter.value,
@@ -827,7 +840,7 @@ return (_ctx, _cache) => {
                             default: _withCtx(() => [
                               _createVNode(_component_v_card_item, { class: "pb-2" }, {
                                 default: _withCtx(() => [
-                                  _createElementVNode("div", _hoisted_17, [
+                                  _createElementVNode("div", _hoisted_19, [
                                     _createVNode(_component_v_chip, {
                                       color: panColor(r.pan_type),
                                       size: "x-small",
@@ -854,23 +867,23 @@ return (_ctx, _cache) => {
                                         }))
                                       : _createCommentVNode("", true),
                                     (r.pub_date)
-                                      ? (_openBlock(), _createElementBlock("span", _hoisted_18, _toDisplayString(r.pub_date.slice(0, 10)), 1))
+                                      ? (_openBlock(), _createElementBlock("span", _hoisted_20, _toDisplayString(r.pub_date.slice(0, 10)), 1))
                                       : _createCommentVNode("", true)
                                   ]),
                                   _createElementVNode("div", {
                                     class: "text-body-1 font-weight-bold line-clamp-2",
                                     title: r.display_name || r.title
-                                  }, _toDisplayString(r.display_name || r.title), 9, _hoisted_19),
+                                  }, _toDisplayString(r.display_name || r.title), 9, _hoisted_21),
                                   (r.meta)
-                                    ? (_openBlock(), _createElementBlock("div", _hoisted_20, _toDisplayString(r.meta), 1))
+                                    ? (_openBlock(), _createElementBlock("div", _hoisted_22, _toDisplayString(r.meta), 1))
                                     : _createCommentVNode("", true),
                                   (r.pan_type === '115' && r.receive_code)
-                                    ? (_openBlock(), _createElementBlock("div", _hoisted_21, "提取码：" + _toDisplayString(r.receive_code), 1))
+                                    ? (_openBlock(), _createElementBlock("div", _hoisted_23, "提取码：" + _toDisplayString(r.receive_code), 1))
                                     : _createCommentVNode("", true),
                                   (r.text)
-                                    ? (_openBlock(), _createElementBlock("div", _hoisted_22, _toDisplayString(r.text), 1))
+                                    ? (_openBlock(), _createElementBlock("div", _hoisted_24, _toDisplayString(r.text), 1))
                                     : _createCommentVNode("", true),
-                                  _createElementVNode("div", _hoisted_23, _toDisplayString(r.channel || '未知来源'), 1)
+                                  _createElementVNode("div", _hoisted_25, _toDisplayString(r.channel || '未知来源'), 1)
                                 ]),
                                 _: 2
                               }, 1024),
@@ -919,10 +932,10 @@ return (_ctx, _cache) => {
                   _: 1
                 }),
                 (!filteredResults.value.length)
-                  ? (_openBlock(), _createElementBlock("div", _hoisted_24, "当前筛选条件下没有资源"))
+                  ? (_openBlock(), _createElementBlock("div", _hoisted_26, "当前筛选条件下没有资源"))
                   : _createCommentVNode("", true),
                 (hasMore.value)
-                  ? (_openBlock(), _createElementBlock("div", _hoisted_25, [
+                  ? (_openBlock(), _createElementBlock("div", _hoisted_27, [
                       _createVNode(_component_v_btn, {
                         variant: "outlined",
                         loading: loadingMore.value,
@@ -935,7 +948,7 @@ return (_ctx, _cache) => {
                         _: 1
                       }, 8, ["loading"])
                     ]))
-                  : (_openBlock(), _createElementBlock("div", _hoisted_26, "已全部加载"))
+                  : (_openBlock(), _createElementBlock("div", _hoisted_28, "已全部加载"))
               ]),
               _: 1
             }))
@@ -960,6 +973,6 @@ return (_ctx, _cache) => {
 }
 
 };
-const Page = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-e6a6a564"]]);
+const Page = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-79088e0d"]]);
 
 export { Page as default };

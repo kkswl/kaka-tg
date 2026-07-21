@@ -78,6 +78,9 @@
               <div class="task-title">{{ task.title }}</div>
               <div class="text-caption text-medium-emphasis">{{ task.source === '115_direct' ? '115 直接磁力' : 'CMS 回退' }} · task {{ String(task.task_id || '').slice(0, 12) }}...</div>
               <div class="text-caption text-medium-emphasis">BTIH {{ String(task.btih || '').slice(0, 12) }}...</div>
+              <div v-if="task.target_cid" class="text-caption text-medium-emphasis">
+                115 目标 cid {{ task.target_cid }}<span v-if="task.download_name"> · {{ task.download_name }}</span>
+              </div>
               <div v-if="task.error_message" class="text-caption text-error">{{ task.error_message }}</div>
             </td>
             <td><v-chip size="x-small" variant="tonal" :color="taskStatusColor(task.status)">{{ taskStatusLabel(task.status) }}</v-chip></td>
