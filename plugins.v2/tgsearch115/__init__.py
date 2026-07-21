@@ -199,7 +199,7 @@ class TgSearch115(_PluginBase):
         "并支持 115 分享直接转存；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.4"
+    plugin_version = "4.7.5"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -1665,9 +1665,13 @@ class TgSearch115(_PluginBase):
             if ok and self._cms_tasks and record:
                 self._cms_tasks.update(record["btih"], "submitted", source="cms")
         if self._cms_tasks and record:
+            error_code = ""
+            if not ok and direct:
+                error_code = str(direct.get("error_code") or "")
             self._cms_tasks.update(
                 record["btih"], "submitted" if ok else "failed",
                 "" if ok else message,
+                error_code=error_code,
             )
             self._save_cms_tasks()
         logger.info(f"【TG115】手动提交 115 磁力任务 [{title}]: ok={ok}")

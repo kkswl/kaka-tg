@@ -30,6 +30,8 @@ _RSA_E = 0x10001
 _G_KEY_L = b"\x78\x06\xad\x4c\x33\x86\x5d\x18\x4c\x01\x3f\x46"
 _RSA_KEY = b"\x8d\xa5\xa5\x8d"
 _G_KTS = bytes.fromhex("f0e569aebfdcbf8a1a45e8be7da673b8de8fe7c445da86c49b648b146ab4f1aa3801359e26692c86006b4fa5363462a62a966818f24afdbd6b978f4d8f8913b76c8e93ed0e0d483ed72f88d8fefe7e8650954fd1eb832634db667b9c7e9d7a8132eab633de3aa95934663baaba816048b9d5819cf86c8477ff5478265fbee81e369f34805c452c9b76d51b8fccc3b8f5")
+_ECDH_AES_KEY = bytes.fromhex("fb1a19d652f5aaf7bc651d0f69bf422f")
+_ECDH_AES_IV = bytes.fromhex("69bf422f49960550a0ad44ec3446cb4c")
 
 
 def _xor(data: bytes, key: bytes) -> bytes:
@@ -62,6 +64,98 @@ def _rsa_decrypt(value: str) -> bytes:
         plain.extend(block[block.index(0) + 1:])
     seed, payload = bytes(plain[:16]), bytes(plain[16:])
     return _xor(_xor(payload, _rsa_gen_key(seed, 12))[::-1], _RSA_KEY)
+
+
+def _lz4_block_decompress(source: bytes) -> bytes:
+    """Decode the raw LZ4 blocks used by 115 encrypted responses."""
+    src, pointer, output = memoryview(source), 0, bytearray()
+    while pointer < len(src):
+        token = src[pointer]
+        pointer += 1
+        literal_length = token >> 4
+        if literal_length == 15:
+            while pointer < len(src):
+                value = src[pointer]
+                pointer += 1
+                literal_length += value
+                if value != 255:
+                    break
+        if pointer + literal_length > len(src):
+            raise ValueError("invalid LZ4 literal length")
+        output.extend(src[pointer:pointer + literal_length])
+        pointer += literal_length
+        if pointer >= len(src):
+            break
+        if pointer + 2 > len(src):
+            raise ValueError("invalid LZ4 match offset")
+        offset = src[pointer] | (src[pointer + 1] << 8)
+        pointer += 2
+        if not offset or offset > len(output):
+            raise ValueError("invalid LZ4 match offset")
+        match_length = token & 0x0f
+        if match_length == 15:
+            while pointer < len(src):
+                value = src[pointer]
+                pointer += 1
+                match_length += value
+                if value != 255:
+                    break
+        match_length += 4
+        for _ in range(match_length):
+            output.append(output[-offset])
+    return bytes(output)
+
+
+def _lz4_decompress_frames(source: bytes) -> bytes:
+    result, pointer = bytearray(), 0
+    while pointer + 2 <= len(source):
+        block_length = source[pointer] | (source[pointer + 1] << 8)
+        pointer += 2
+        if not block_length:
+            break
+        if pointer + block_length > len(source):
+            raise ValueError("invalid LZ4 frame length")
+        result.extend(_lz4_block_decompress(source[pointer:pointer + block_length]))
+        pointer += block_length
+    return bytes(result)
+
+
+def _aes_cbc_decrypt(content: bytes) -> bytes:
+    try:
+        from Crypto.Cipher import AES
+        return AES.new(_ECDH_AES_KEY, AES.MODE_CBC, _ECDH_AES_IV).decrypt(content)
+    except ImportError:
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        decryptor = Cipher(
+            algorithms.AES(_ECDH_AES_KEY), modes.CBC(_ECDH_AES_IV)
+        ).decryptor()
+        return decryptor.update(content) + decryptor.finalize()
+
+
+def _decode_ssp_response(content: bytes) -> Dict[str, Any]:
+    """Parse either plain JSON or 115's AES-CBC/LZ4 response envelope."""
+    raw = bytes(content or b"")
+    if not raw:
+        raise ValueError("empty SSP response")
+    json_candidate = raw.lstrip(b" \t\r\n")
+    if json_candidate[:1] in (b"{", b"["):
+        parsed = json.loads(json_candidate.decode("utf-8-sig"))
+    else:
+        if len(raw) % 16:
+            raise ValueError("invalid SSP response length")
+        decrypted = _aes_cbc_decrypt(raw)
+        pad = decrypted[-1] if decrypted else 0
+        if 0 < pad < 16 and decrypted.endswith(bytes((pad,)) * pad):
+            decrypted = decrypted[:-pad]
+        parsed = json.loads(_lz4_decompress_frames(decrypted).decode("utf-8-sig"))
+    if not isinstance(parsed, dict):
+        raise ValueError("SSP response is not an object")
+    if isinstance(parsed.get("data"), str):
+        try:
+            parsed["data"] = json.loads(_rsa_decrypt(parsed["data"]).decode("utf-8"))
+        except Exception:
+            pass
+    return parsed
 
 
 class OfflineHttpError(RuntimeError):
@@ -328,11 +422,16 @@ class P115OfflineClient:
             response = client.request(method, url, **kwargs)
             if method.upper() == "POST" and url.rstrip("/") == self.SSP_URL.rstrip("/"):
                 try:
-                    parsed = response.json()
-                    if isinstance(parsed, dict) and isinstance(parsed.get("data"), str):
-                        parsed["data"] = json.loads(_rsa_decrypt(parsed["data"]).decode("utf-8"))
+                    parsed = _decode_ssp_response(response.content)
                     return _DictResponse(response.status_code, parsed, response.headers)
-                except Exception:
+                except Exception as exc:
+                    logger.warning(
+                        "115 SSP decode failed status=%s content_type=%s bytes=%s error=%s",
+                        response.status_code,
+                        str(response.headers.get("content-type") or "")[:80],
+                        len(response.content or b""),
+                        type(exc).__name__,
+                    )
                     return response
             return response
 

@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import threading
 import unittest
 from pathlib import Path
@@ -25,6 +26,38 @@ class Response:
 
 
 class P115OfflineTest(unittest.TestCase):
+    def test_ssp_encrypted_binary_response_is_decoded(self):
+        payload = json.dumps({"state": True, "data": {"info_hash": "a" * 40}}).encode()
+        extension = bytearray()
+        remaining = len(payload) - 15
+        while remaining >= 255:
+            extension.append(255)
+            remaining -= 255
+        extension.append(remaining)
+        block = bytes((0xf0,)) + bytes(extension) + payload
+        framed = len(block).to_bytes(2, "little") + block + b"\x00\x00"
+        pad = (-len(framed)) & 15
+        if pad:
+            framed += bytes((pad,)) * pad
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        encryptor = Cipher(
+            algorithms.AES(module._ECDH_AES_KEY), modes.CBC(module._ECDH_AES_IV)
+        ).encryptor()
+        encrypted = encryptor.update(framed) + encryptor.finalize()
+
+        decoded = module._decode_ssp_response(encrypted)
+
+        self.assertTrue(decoded["state"])
+        self.assertEqual("a" * 40, decoded["data"]["info_hash"])
+
+    def test_ssp_invalid_binary_response_is_rejected(self):
+        with self.assertRaises(ValueError):
+            module._decode_ssp_response(b"not-json")
+
+    def test_ssp_plain_json_allows_leading_whitespace(self):
+        decoded = module._decode_ssp_response(b'  {"state":true,"code":"0"}\r\n')
+        self.assertTrue(decoded["state"])
+
     def test_lixianssp_request_codec_is_base64_rsa_blocks(self):
         payload = b'{"url":"synthetic","wp_path_id":"0"}'
         encoded = module._rsa_encrypt(payload)
