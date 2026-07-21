@@ -92,6 +92,20 @@ class P115OfflineTest(unittest.TestCase):
         self.assertEqual("503", result["error_code"])
         self.assertEqual(["task_lists"], calls)
 
+    def test_retry_uses_info_hash_payload(self):
+        captured = {}
+        def request(method, url, **kwargs):
+            captured.update(kwargs.get("data") or {})
+            return Response(payload={"state": True})
+        client = module.P115OfflineClient("UID=x", request=request)
+        result = client.retry_task("a" * 40)
+        self.assertTrue(result["success"])
+        self.assertEqual("a" * 40, captured.get("info_hash"))
+        self.assertNotIn("hash[0]", captured)
+
+    def test_explicit_false_state_is_not_success_even_with_zero_code(self):
+        self.assertFalse(module.P115OfflineClient._response_success({"state": False, "code": 0}))
+
     def test_same_btih_is_serialized(self):
         calls = []
 

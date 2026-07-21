@@ -112,7 +112,7 @@ class P115OfflineClient:
     """
 
     SIGN_URL = "https://115.com/?ct=clouddownload&ac=space"
-    TASK_URL = "https://clouddownload.115.com/"
+    TASK_URL = "https://clouddownload.115.com/web/"
     SSP_URL = "https://clouddownload.115.com/lixianssp/"
 
     def __init__(self, cookie: str = "", target_cid: Any = 0,
@@ -143,9 +143,12 @@ class P115OfflineClient:
             try:
                 cached = self._submitted.get(btih)
                 if cached:
-                    duplicate = dict(cached)
-                    duplicate["message"] = "相同 BTIH 的 115 任务已存在"
-                    return duplicate
+                    state = self.get_task_status(cached.get("task_id") or btih)
+                    if state.get("status") not in {"failed", "cancelled"} and state.get("task_id"):
+                        duplicate = dict(cached)
+                        duplicate.update({"status": state.get("status") or duplicate.get("status"), "progress": state.get("progress"), "message": "相同 BTIH 的 115 任务已存在"})
+                        return duplicate
+                    self._submitted.pop(btih, None)
                 existing = self._find_existing(btih)
                 if existing:
                     return self._result(True, existing.get("task_id", btih), btih,
@@ -213,6 +216,10 @@ class P115OfflineClient:
     def retry_task(self, task_id: str) -> Dict[str, Any]:
         return self._mutate_task("restart", task_id, "submitted")
 
+    def forget_task(self, btih: str) -> None:
+        """Forget only the process-local success cache after terminal failure."""
+        self._submitted.pop(normalize_btih(btih), None)
+
     @classmethod
     def normalize_status(cls, payload: Any) -> Dict[str, Any]:
         if not isinstance(payload, dict):
@@ -238,7 +245,8 @@ class P115OfflineClient:
         if not key:
             return self._result(False, "", "", "invalid_task_id", "任务 ID 无效", status="failed")
         try:
-            response = self._call("POST", self.TASK_URL, params={"ac": action}, data={"hash[0]": key})
+            data = {"hash[0]": key} if action == "task_del" else {"info_hash": key}
+            response = self._call("POST", self.TASK_URL, params={"ac": action}, data=data)
             ok = self._response_success(response)
             return self._result(ok, key, normalize_btih(key), "" if ok else self._error_code(response), "操作成功" if ok else self._message(response), status=status if ok else "failed")
         except OfflineHttpError as exc:
@@ -323,6 +331,8 @@ class P115OfflineClient:
     @staticmethod
     def _response_success(response: Any) -> bool:
         if not isinstance(response, dict): return False
+        if response.get("state") in (False, 0, "0"):
+            return False
         code = response.get("code", response.get("errno"))
         return response.get("state") in (True, 1, "1") or code in (0, "0", 200, "200")
 

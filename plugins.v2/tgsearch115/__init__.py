@@ -199,7 +199,7 @@ class TgSearch115(_PluginBase):
         "并支持 115 分享直接转存；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.0"
+    plugin_version = "4.7.1"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -250,6 +250,7 @@ class TgSearch115(_PluginBase):
     _offline_allow_cancel = False
     _offline_stop: Optional[threading.Event] = None
     _offline_thread: Optional[threading.Thread] = None
+    _reconcile_lock = threading.Lock()
     # ============================ 生命周期 ============================
     def init_plugin(self, config: dict = None):
         """生效配置。
@@ -854,6 +855,14 @@ class TgSearch115(_PluginBase):
             logger.warn(f"【TG115】保存 CMS 任务账本失败: {exc}")
 
     def _reconcile_cms_tasks(self, force_direct_poll: bool = False):
+        if not self._reconcile_lock.acquire(blocking=False):
+            return
+        try:
+            self._reconcile_cms_tasks_locked(force_direct_poll)
+        finally:
+            self._reconcile_lock.release()
+
+    def _reconcile_cms_tasks_locked(self, force_direct_poll: bool = False):
         if not self._cms_tasks:
             return
         oper = SubscribeOper()
@@ -899,6 +908,7 @@ class TgSearch115(_PluginBase):
                     elif status in {"downloading", "submitted", "failed", "cancelled"}:
                         self._cms_tasks.update(record["btih"], status, progress=state.get("progress"), task_id=task_id, error_code=state.get("error_code", ""), error_message=state.get("message", ""))
                         if status in {"failed", "cancelled"}:
+                            self._offline_client.forget_task(record.get("btih", ""))
                             restore_subscription(int(record["subscribe_id"])) if record.get("subscribe_id") else None
                 except Exception as exc:
                     logger.warning("【TG115】115 任务状态查询失败 btih=%s... reason=%s", str(record.get("btih", ""))[:12], type(exc).__name__)
@@ -1002,11 +1012,16 @@ class TgSearch115(_PluginBase):
                     return True, "相同 BTIH 的 CMS 任务已存在，已跳过重复提交"
                 return False, "相同 BTIH 已由其它任务处理，本订阅继续尝试后续候选"
         direct_result: Dict[str, Any] = {}
+        direct_target_cid = ""
         def submit_direct():
-            nonlocal direct_result
+            nonlocal direct_result, direct_target_cid
             if not self._offline_client:
                 return False, "115 直连未配置"
-            direct_result = self._offline_client.submit_magnet(magnet, self._p115_target)
+            try:
+                direct_target_cid = self._resolve_offline_target_cid()
+            except Exception as exc:
+                return False, f"115 目标目录不可用: {exc}"
+            direct_result = self._offline_client.submit_magnet(magnet, direct_target_cid)
             return bool(direct_result.get("success")), str(direct_result.get("message") or "115 直连提交失败")
         def submit_cms():
             return self._cms_client.add_magnet(magnet) if self._cms_client else (False, "CMS 未配置")
@@ -1016,13 +1031,22 @@ class TgSearch115(_PluginBase):
                 record["btih"], "submitted" if ok else "failed",
                 "" if ok else message, source=source,
                 task_id=(direct_result.get("task_id") or btih) if source == "115_direct" else "",
-                target_cid=self._p115_target if source == "115_direct" else "",
+                target_cid=direct_target_cid if source == "115_direct" else "",
                 error_code=direct_result.get("error_code", "") if not ok else "",
             )
             self._save_cms_tasks()
         if ok:
             return True, ("115 直接磁力任务已提交，等待下载与 MP 整理" if source == "115_direct" else "CMS 磁力任务已创建，等待下载与 MP 整理")
         return False, message
+
+    def _resolve_offline_target_cid(self) -> str:
+        """Resolve the configured 115 path once; cloud download requires numeric cid."""
+        target = str(self._p115_target or "0").strip()
+        if target.isdigit():
+            return target
+        if not self._transfer:
+            raise RuntimeError("115 目录模块未初始化")
+        return str(self._transfer._get_or_create_cid(target))
 
     def _filter_resources(self, subscribe, mediainfo, torrents: List[TorrentInfo]) -> List[TorrentInfo]:
         """复用 MP 内置过滤规则：先规则组，再 include/exclude/清晰度等参数。"""
@@ -1586,10 +1610,16 @@ class TgSearch115(_PluginBase):
                 })
         ok, message = False, "未提交"
         if self._magnet_download_mode in {"direct_115", "direct_then_cms"} and self._offline_client:
-            direct = self._offline_client.submit_magnet(magnet, self._p115_target)
+            try:
+                target_cid = self._resolve_offline_target_cid()
+            except Exception as exc:
+                target_cid = ""
+                direct = {"success": False, "message": f"115 目标目录不可用: {exc}"}
+            else:
+                direct = self._offline_client.submit_magnet(magnet, target_cid)
             ok, message = bool(direct.get("success")), str(direct.get("message") or "115 直连提交失败")
             if ok and self._cms_tasks and record:
-                self._cms_tasks.update(record["btih"], "submitted", task_id=direct.get("task_id") or btih, source="115_direct", target_cid=self._p115_target)
+                self._cms_tasks.update(record["btih"], "submitted", task_id=direct.get("task_id") or btih, source="115_direct", target_cid=target_cid)
         if not ok and self._magnet_download_mode in {"direct_then_cms", "cms_only"} and self._cms_client:
             ok, message = self._cms_client.add_magnet(magnet)
             if ok and self._cms_tasks and record:
@@ -1637,7 +1667,7 @@ class TgSearch115(_PluginBase):
         })
 
     def __retry_cms_task_api(self, payload: dict = Body(default=None)):
-        """POST /tasks/retry: resubmit a recorded terminal CMS task by BTIH."""
+        """POST /tasks/retry: restart direct task or restore CMS subscription."""
         from starlette.responses import JSONResponse
         payload = payload if isinstance(payload, dict) else {}
         btih = str(payload.get("btih") or "").strip().lower()
@@ -1646,6 +1676,24 @@ class TgSearch115(_PluginBase):
             return JSONResponse({"success": False, "message": "未找到 CMS 任务"}, status_code=404)
         if record.get("status") in ("waiting", "downloading", "pending_organize"):
             return JSONResponse({"success": False, "message": "任务仍在处理中，无需重试"}, status_code=409)
+        if record.get("source") == "115_direct" and record.get("task_id") and self._offline_client:
+            retry_count = self._safe_int(record.get("retry_count"), 0)
+            if retry_count >= self._offline_max_retries:
+                return JSONResponse({"success": False, "message": "已达到 115 任务最大重试次数"}, status_code=409)
+            result = self._offline_client.retry_task(record["task_id"])
+            if result.get("success"):
+                self._cms_tasks.update(
+                    btih, "submitted", error_message="", error_code="",
+                    retry_count=retry_count + 1,
+                )
+                sid = record.get("subscribe_id")
+                if sid and SubscribeOper().get(int(sid)):
+                    SubscribeOper().update(int(sid), {"state": "P"})
+                self._save_cms_tasks()
+            return JSONResponse({
+                "success": bool(result.get("success")),
+                "message": result.get("message") or "115 任务重试失败",
+            })
         sid = record.get("subscribe_id")
         if sid and SubscribeOper().get(int(sid)):
             SubscribeOper().update(int(sid), {"state": "N"})
@@ -1671,6 +1719,7 @@ class TgSearch115(_PluginBase):
         result = self._offline_client.cancel_task(record.get("task_id") or btih)
         if result.get("success"):
             self._cms_tasks.update(btih, "cancelled", error_message="用户手动取消")
+            self._offline_client.forget_task(btih)
             sid = record.get("subscribe_id")
             if sid and SubscribeOper().get(int(sid)):
                 SubscribeOper().update(int(sid), {"state": "N"})

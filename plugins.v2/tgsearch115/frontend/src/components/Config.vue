@@ -385,6 +385,9 @@
             <v-col cols="6" md="4">
               <v-text-field v-model="config.offline_poll_seconds" label="任务状态轮询（秒）" type="number" min="15" max="3600" variant="outlined" density="compact" hide-details />
             </v-col>
+            <v-col cols="6" md="4">
+              <v-text-field v-model="config.offline_max_retries" label="115 请求最大重试" type="number" min="0" max="6" variant="outlined" density="compact" hide-details />
+            </v-col>
             <v-col cols="12" class="d-flex align-center">
               <div class="mr-3">
                 <div class="text-subtitle-2">等待 MoviePilot 整理完成</div>
