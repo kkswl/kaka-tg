@@ -30,6 +30,12 @@ class CmsTaskLedgerTest(unittest.TestCase):
         self.assertEqual(first["btih"], restored.active_by_btih("a" * 40)["btih"])
         self.assertNotIn("magnet", restored.public_records()[0])
 
+    def test_reload_migrates_legacy_magnet_without_persisting_it(self):
+        legacy = cms_tasks.CmsTaskLedger([{"btih": "a" * 40, "magnet": magnet(), "status": "downloading"}])
+        self.assertNotIn("magnet", legacy.dump_records()[0])
+        self.assertNotIn("magnet", legacy.public_records()[0])
+        self.assertNotEqual("", legacy.public_records()[0]["source"])
+
     def test_btih_reservation_is_atomic(self):
         now = datetime(2026, 7, 20, tzinfo=timezone.utc)
         ledger = cms_tasks.CmsTaskLedger(now=lambda: now)

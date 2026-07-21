@@ -76,8 +76,9 @@
           <tr v-for="task in runtime.tasks" :key="`${task.btih}-${task.submitted_at}`">
             <td>
               <div class="task-title">{{ task.title }}</div>
+              <div class="text-caption text-medium-emphasis">{{ task.source === '115_direct' ? '115 直接磁力' : 'CMS 回退' }} · task {{ String(task.task_id || '').slice(0, 12) }}...</div>
               <div class="text-caption text-medium-emphasis">BTIH {{ String(task.btih || '').slice(0, 12) }}...</div>
-              <div v-if="task.error" class="text-caption text-error">{{ task.error }}</div>
+              <div v-if="task.error_message" class="text-caption text-error">{{ task.error_message }}</div>
             </td>
             <td><v-chip size="x-small" variant="tonal" :color="taskStatusColor(task.status)">{{ taskStatusLabel(task.status) }}</v-chip></td>
             <td class="text-caption">{{ formatTime(task.submitted_at) }}</td>
@@ -90,6 +91,14 @@
               >
                 <v-icon icon="mdi-replay" />
                 <v-tooltip activator="parent" location="top">重试任务</v-tooltip>
+              </v-btn>
+              <v-btn
+                v-if="config.offline_allow_cancel && task.source === '115_direct' && ['submitted', 'downloading', 'pending_organize'].includes(task.status)"
+                icon variant="text" size="small" color="error"
+                @click="cancelTask(task)"
+              >
+                <v-icon icon="mdi-cancel" />
+                <v-tooltip activator="parent" location="top">取消任务并恢复订阅</v-tooltip>
               </v-btn>
             </td>
           </tr>
@@ -209,7 +218,7 @@ const props = defineProps({
 const PID = computed(() => props.pluginId || 'TgSearch115')
 
 // ---- 配置 / 状态 ----
-const config = reactive({ enabled: false, p115_cookie: '', cms_url: '', cms_token: '', delay_seconds: 0, tg_channels: [] })
+const config = reactive({ enabled: false, p115_cookie: '', cms_url: '', cms_token: '', offline_allow_cancel: false, delay_seconds: 0, tg_channels: [] })
 const runtime = reactive({
   scheduler: { running: false, last_run: '', next_run: '', scanned_count: 0, queue_size: 0 },
   sources: {},
@@ -285,14 +294,14 @@ function formatTime(value) {
 }
 function taskStatusLabel(status) {
   return {
-    waiting: '等待中', downloading: '下载中', pending_organize: '待整理',
-    completed: '已完成', failed: '失败', timed_out: '超时',
+    waiting: '等待中', submitted: '已提交', downloading: '下载中', pending_organize: '待整理',
+    completed: '已完成', failed: '失败', timed_out: '超时', cancelled: '已取消',
   }[status] || status || '未知'
 }
 function taskStatusColor(status) {
   return {
-    waiting: 'info', downloading: 'primary', pending_organize: 'warning',
-    completed: 'success', failed: 'error', timed_out: 'warning',
+    waiting: 'info', submitted: 'info', downloading: 'primary', pending_organize: 'warning',
+    completed: 'success', failed: 'error', timed_out: 'warning', cancelled: 'grey',
   }[status] || 'grey'
 }
 
@@ -320,12 +329,23 @@ async function retryTask(task) {
   try {
     const res = await props.api.post(`plugin/${PID.value}/tasks/retry`, { btih: task.btih })
     const data = res && typeof res === 'object' && 'data' in res && ('success' in res || 'code' in res) ? res.data : res
-    showSnack(data?.message || (data?.success ? '任务已重新提交' : '重试失败'), data?.success ? 'success' : 'error')
+    showSnack(data?.message || (data?.success ? '订阅已恢复' : '重试失败'), data?.success ? 'success' : 'error')
     await loadRuntimeStatus()
   } catch (e) {
     showSnack('重试异常：' + (e?.message || e), 'error')
   } finally {
     retryingBtih.value = ''
+  }
+}
+async function cancelTask(task) {
+  if (!props.api?.post || !task?.btih) return
+  try {
+    const res = await props.api.post(`plugin/${PID.value}/tasks/cancel`, { btih: task.btih })
+    const data = res && typeof res === 'object' && 'data' in res && ('success' in res || 'code' in res) ? res.data : res
+    showSnack(data?.message || '取消失败', data?.success ? 'success' : 'error')
+    await loadRuntimeStatus()
+  } catch (e) {
+    showSnack('取消异常：' + (e?.message || e), 'error')
   }
 }
 
@@ -410,8 +430,8 @@ async function transfer(r, i) {
     showSnack('未登录 115，无法转存', 'error')
     return
   }
-  if (r.pan_type === 'magnet' && (!config.cms_url || !config.cms_token)) {
-    showSnack('请先在观影设置中配置 CMS 地址和 API Token', 'error')
+  if (r.pan_type === 'magnet' && (!config.p115_cookie && (!config.cms_url || !config.cms_token))) {
+    showSnack('请先配置 115 Cookie，或配置 CMS 地址和 API Token', 'error')
     return
   }
   transferringIdx.value = i

@@ -76,9 +76,10 @@ from .site_scraper import FilejinScraper
 from .juying_scraper import JuyingApi
 from .identity_matcher import confirm_candidate_identity
 from .search_relevance import extract_year, is_relevant_result
-from .resource_strategy import execute_auto_candidates, is_magnet_url, select_auto_candidates
+from .resource_strategy import execute_auto_candidates, is_magnet_url, select_auto_candidates, submit_magnet_with_fallback
 from .cms_client import Cms115Client
 from .cms_tasks import CmsTaskLedger, btih_from_magnet
+from .p115_offline import P115OfflineClient
 from .runtime_control import SearchCoordinator, SourceCircuitBreaker, TtlCache
 
 
@@ -198,7 +199,7 @@ class TgSearch115(_PluginBase):
         "并支持 115 分享直接转存；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.6.0"
+    plugin_version = "4.7.0"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -219,6 +220,7 @@ class TgSearch115(_PluginBase):
     _search_cache: Optional[TtlCache] = None
     _source_breaker: Optional[SourceCircuitBreaker] = None
     _cms_tasks: Optional[CmsTaskLedger] = None
+    _offline_client: Optional[P115OfflineClient] = None
 
     # 配置项（运行态缓存）
     _tg_channels: List[Dict[str, Any]] = []
@@ -241,6 +243,13 @@ class TgSearch115(_PluginBase):
     _source_item_delay_min = 5.0
     _source_item_delay_max = 10.0
     _cms_timeout_hours = 12
+    _magnet_download_mode = "direct_then_cms"
+    _direct_timeout_hours = 12
+    _offline_poll_seconds = 45
+    _offline_last_poll = 0.0
+    _offline_allow_cancel = False
+    _offline_stop: Optional[threading.Event] = None
+    _offline_thread: Optional[threading.Thread] = None
     # ============================ 生命周期 ============================
     def init_plugin(self, config: dict = None):
         """生效配置。
@@ -295,6 +304,13 @@ class TgSearch115(_PluginBase):
         failure_threshold = min(5, max(1, self._safe_int(config.get("source_failure_threshold"), 3)))
         cooldown_minutes = min(60, max(30, self._safe_int(config.get("source_cooldown_minutes"), 60)))
         self._cms_timeout_hours = min(72, max(1, self._safe_int(config.get("cms_timeout_hours"), 12)))
+        self._magnet_download_mode = str(config.get("magnet_download_mode") or "direct_then_cms").strip().lower()
+        if self._magnet_download_mode not in {"direct_115", "direct_then_cms", "cms_only"}:
+            self._magnet_download_mode = "direct_then_cms"
+        self._direct_timeout_hours = min(72, max(1, self._safe_int(config.get("direct_timeout_hours"), 12)))
+        self._offline_poll_seconds = min(3600, max(15, self._safe_int(config.get("offline_poll_seconds"), 45)))
+        self._offline_max_retries = min(6, max(0, self._safe_int(config.get("offline_max_retries"), 3)))
+        self._offline_allow_cancel = self._to_bool(config.get("offline_allow_cancel"), False)
         self._search_cache = TtlCache(ttl_seconds=cache_hours * 3600)
         self._source_breaker = SourceCircuitBreaker(
             failure_threshold=failure_threshold,
@@ -371,6 +387,10 @@ class TgSearch115(_PluginBase):
         self._transfer = P115Transfer(
             cookie=self._p115_cookie, default_target_path=self._p115_target
         )
+        self._offline_client = P115OfflineClient(
+            cookie=self._p115_cookie, target_cid=self._p115_target,
+            max_retries=self._offline_max_retries,
+        ) if self._p115_cookie else None
 
     def get_state(self) -> bool:
         return self._enabled
@@ -449,8 +469,8 @@ class TgSearch115(_PluginBase):
                 "endpoint": self.__magnet_offline_api,
                 "methods": ["POST"],
                 "auth": "bear",
-                "summary": "通过 CMS 添加 115 磁力离线任务",
-                "description": "POST /magnet/offline，body: {magnet, title}",
+                "summary": "按策略添加 115 磁力离线任务",
+                "description": "POST /magnet/offline，body: {magnet, title}；按配置选择直连或 CMS",
             },
             {
                 "path": "/check_cms",
@@ -459,6 +479,14 @@ class TgSearch115(_PluginBase):
                 "auth": "bear",
                 "summary": "检查 CMS 服务连通性",
                 "description": "只检查服务与配置，不创建磁力任务",
+            },
+            {
+                "path": "/check_115_offline",
+                "endpoint": self.__check_115_offline_api,
+                "methods": ["GET"],
+                "auth": "bear",
+                "summary": "只读检查 115 云下载接口",
+                "description": "只读取签名和任务列表能力，不创建或修改任务",
             },
             {
                 "path": "/runtime/status",
@@ -473,6 +501,13 @@ class TgSearch115(_PluginBase):
                 "methods": ["POST"],
                 "auth": "bear",
                 "summary": "重试失败或超时的 CMS 磁力任务",
+            },
+            {
+                "path": "/tasks/cancel",
+                "endpoint": self.__cancel_offline_task_api,
+                "methods": ["POST"],
+                "auth": "bear",
+                "summary": "取消 115 直接离线任务",
             },
             {
                 "path": "/search",
@@ -570,6 +605,7 @@ class TgSearch115(_PluginBase):
             periodic_enabled=self._periodic_enabled,
         )
         self._coordinator.start()
+        self._start_offline_poller()
         logger.info(
             f"【TG115】搜索队列已启动，周期搜索"
             f"{'已开启' if self._periodic_enabled else '已关闭'}，"
@@ -577,10 +613,40 @@ class TgSearch115(_PluginBase):
         )
 
     def _stop_coordinator(self):
+        self._stop_offline_poller()
         coordinator = self._coordinator
         self._coordinator = None
         if coordinator:
             coordinator.stop()
+
+    def _start_offline_poller(self):
+        """Start one stoppable status thread; the first poll waits one interval."""
+        self._stop_offline_poller()
+        if not self._offline_client or self._magnet_download_mode == "cms_only":
+            return
+        self._offline_stop = threading.Event()
+        self._offline_thread = threading.Thread(
+            target=self._offline_poll_loop, name="tg115-offline-status", daemon=True,
+        )
+        self._offline_thread.start()
+
+    def _offline_poll_loop(self):
+        stop = self._offline_stop
+        while stop and not stop.wait(self._offline_poll_seconds):
+            if not self._enabled:
+                continue
+            try:
+                self._reconcile_cms_tasks(force_direct_poll=True)
+            except Exception as exc:
+                logger.warning("【TG115】115 状态轮询异常 reason=%s", type(exc).__name__)
+
+    def _stop_offline_poller(self):
+        stop, thread = self._offline_stop, self._offline_thread
+        self._offline_stop, self._offline_thread = None, None
+        if stop:
+            stop.set()
+        if thread and thread is not threading.current_thread():
+            thread.join(timeout=5)
 
     def _periodic_subscriptions(self):
         """Reconcile CMS records, then return all subscriptions for active filtering."""
@@ -652,8 +718,8 @@ class TgSearch115(_PluginBase):
             auto_candidates = select_auto_candidates(
                 torrents=matched,
                 prefer_site_magnet=(
-                    self._site_magnet_priority
-                    and bool(self._cms_client and self._cms_client.configured)
+                self._site_magnet_priority
+                    and bool((self._offline_client and self._p115_cookie) or (self._cms_client and self._cms_client.configured))
                 ),
                 is_tv=is_tv,
                 is_115_url=P115Transfer._is_115_share_url,
@@ -715,12 +781,11 @@ class TgSearch115(_PluginBase):
                     else "候选未通过 MoviePilot/TMDB 身份确认"
                 self._send_fail_notify(subscribe, reason)
                 return
-            share_url = best.page_url or ""
-            logger.info(f"【TG115】订阅 [{subscribe.name}] 命中: {best.title} -> {share_url}")
+            logger.info(f"【TG115】订阅 [{subscribe.name}] 命中资源: {best.title}（链接已省略）")
 
             self._finish_subscribe(
                 subscribe, meta, mediainfo, best, execution.message,
-                via_cms_magnet=execution.via_magnet,
+                via_offline_magnet=execution.via_magnet,
             )
         except Exception as e:
             logger.error(f"【TG115】处理订阅 {subscribe_id} 异常，回退到默认搜索: {e}")
@@ -788,7 +853,7 @@ class TgSearch115(_PluginBase):
         except Exception as exc:
             logger.warn(f"【TG115】保存 CMS 任务账本失败: {exc}")
 
-    def _reconcile_cms_tasks(self):
+    def _reconcile_cms_tasks(self, force_direct_poll: bool = False):
         if not self._cms_tasks:
             return
         oper = SubscribeOper()
@@ -814,7 +879,30 @@ class TgSearch115(_PluginBase):
             subscription_exists=subscription_exists,
             history_exists=history_exists,
             restore_subscription=restore_subscription,
+            direct_timeout_hours=self._direct_timeout_hours,
         )
+        # Direct 115 exposes task state; a successful download only enters the
+        # pending-organize phase.  MP history remains the completion authority.
+        now_monotonic = time.monotonic()
+        should_poll_direct = force_direct_poll or now_monotonic - self._offline_last_poll >= self._offline_poll_seconds
+        if self._offline_client and should_poll_direct:
+            self._offline_last_poll = now_monotonic
+            for record in self._cms_tasks.dump_records():
+                if record.get("source") != "115_direct" or record.get("status") not in {"submitted", "downloading", "pending_organize"}:
+                    continue
+                task_id = record.get("task_id") or record.get("btih")
+                try:
+                    state = self._offline_client.get_task_status(task_id)
+                    status = state.get("status")
+                    if status == "completed":
+                        self._cms_tasks.update(record["btih"], "pending_organize", progress=100, task_id=task_id)
+                    elif status in {"downloading", "submitted", "failed", "cancelled"}:
+                        self._cms_tasks.update(record["btih"], status, progress=state.get("progress"), task_id=task_id, error_code=state.get("error_code", ""), error_message=state.get("message", ""))
+                        if status in {"failed", "cancelled"}:
+                            restore_subscription(int(record["subscribe_id"])) if record.get("subscribe_id") else None
+                except Exception as exc:
+                    logger.warning("【TG115】115 任务状态查询失败 btih=%s... reason=%s", str(record.get("btih", ""))[:12], type(exc).__name__)
+            self._save_cms_tasks()
         if result["completed"] or result["failed"] or result["timed_out"]:
             self._save_cms_tasks()
             logger.info(
@@ -891,14 +979,12 @@ class TgSearch115(_PluginBase):
         return torrents
 
     def _submit_magnet_to_115(self, torrent: TorrentInfo, subscribe=None) -> Tuple[bool, str]:
-        """Submit a confirmed magnet to the configured CMS-backed 115 account."""
+        """Submit a confirmed magnet using direct 115 first, then CMS fallback."""
         magnet = str(torrent.enclosure or torrent.page_url or "").strip()
         if not is_magnet_url(magnet):
             return False, "磁力链接无效"
         if not btih_from_magnet(magnet):
             return False, "磁力链接缺少有效 BTIH"
-        if not self._cms_client:
-            return False, "CMS 115 离线模块未初始化"
         btih = btih_from_magnet(magnet)
         record = None
         if self._cms_tasks and btih:
@@ -915,14 +1001,28 @@ class TgSearch115(_PluginBase):
                 if same_subscription:
                     return True, "相同 BTIH 的 CMS 任务已存在，已跳过重复提交"
                 return False, "相同 BTIH 已由其它任务处理，本订阅继续尝试后续候选"
-        ok, message = self._cms_client.add_magnet(magnet)
+        direct_result: Dict[str, Any] = {}
+        def submit_direct():
+            nonlocal direct_result
+            if not self._offline_client:
+                return False, "115 直连未配置"
+            direct_result = self._offline_client.submit_magnet(magnet, self._p115_target)
+            return bool(direct_result.get("success")), str(direct_result.get("message") or "115 直连提交失败")
+        def submit_cms():
+            return self._cms_client.add_magnet(magnet) if self._cms_client else (False, "CMS 未配置")
+        ok, message, source = submit_magnet_with_fallback(self._magnet_download_mode, submit_direct, submit_cms)
         if self._cms_tasks and record:
             self._cms_tasks.update(
-                record["btih"], "downloading" if ok else "failed",
-                "" if ok else message,
+                record["btih"], "submitted" if ok else "failed",
+                "" if ok else message, source=source,
+                task_id=(direct_result.get("task_id") or btih) if source == "115_direct" else "",
+                target_cid=self._p115_target if source == "115_direct" else "",
+                error_code=direct_result.get("error_code", "") if not ok else "",
             )
             self._save_cms_tasks()
-        return ok, message
+        if ok:
+            return True, ("115 直接磁力任务已提交，等待下载与 MP 整理" if source == "115_direct" else "CMS 磁力任务已创建，等待下载与 MP 整理")
+        return False, message
 
     def _filter_resources(self, subscribe, mediainfo, torrents: List[TorrentInfo]) -> List[TorrentInfo]:
         """复用 MP 内置过滤规则：先规则组，再 include/exclude/清晰度等参数。"""
@@ -977,7 +1077,7 @@ class TgSearch115(_PluginBase):
 
     def _finish_subscribe(
             self, subscribe, meta, mediainfo, torrent: TorrentInfo,
-            transfer_msg: str, via_cms_magnet: bool = False):
+            transfer_msg: str, via_offline_magnet: bool = False):
         """转存成功后处理订阅，两种模式由 ``auto_finish`` 开关控制：
 
         ``auto_finish=True``（默认，不依赖 MP 整理 115）：
@@ -998,18 +1098,18 @@ class TgSearch115(_PluginBase):
 
             # CMS 接口只确认离线任务已创建，不代表磁力内容已经下载完成。
             # 暂停订阅可避免 MoviePilot 同时重复搜索，但不能发送 SubscribeComplete。
-            if via_cms_magnet:
+            if via_offline_magnet:
                 oper.update(subscribe.id, {"state": "P"})
                 logger.info(
-                    f"【TG115】订阅 [{subscribe.name}] 已提交 CMS 115 磁力离线任务并暂停，"
-                    "等待 CMS 下载及后续媒体同步"
+                    f"【TG115】订阅 [{subscribe.name}] 已提交 115 磁力离线任务并暂停，"
+                    "等待离线下载及 MoviePilot 整理"
                 )
                 if self._notify_success:
                     self.post_message(
                         mtype=NotificationType.Subscribe,
                         title=f"115 磁力离线任务：{subscribe.name}",
                         text=(
-                            f"已通过 MoviePilot 规则与媒体 ID 确认资源，并提交到 CMS/115。\n"
+                            f"已通过 MoviePilot 规则与媒体 ID 确认资源，并提交到 115 离线链路。\n"
                             "订阅已暂停，等待 115 离线下载及后续同步完成。\n"
                             f"资源: {torrent.title}\n{transfer_msg}"
                         ),
@@ -1471,26 +1571,32 @@ class TgSearch115(_PluginBase):
             return JSONResponse(
                 {"success": False, "message": "磁力链接缺少有效 BTIH"}, status_code=400
             )
-        if not self._cms_client:
-            return JSONResponse(
-                {"success": False, "message": "CMS 115 离线模块未初始化"},
-                status_code=400,
-            )
+        if not self._offline_client and not self._cms_client:
+            return JSONResponse({"success": False, "message": "未配置可用的 115 磁力离线方式"}, status_code=400)
         btih = btih_from_magnet(magnet)
         record = None
         if self._cms_tasks and btih:
             record, created = self._cms_tasks.reserve(
-                magnet=magnet, title=title, status="waiting"
+                magnet=magnet, title=title, status="waiting", source="115_direct" if self._magnet_download_mode != "cms_only" else "cms",
             )
             if not created:
                 return JSONResponse({
                     "success": True,
                     "message": "相同 BTIH 的 CMS 任务已存在，未重复提交",
                 })
-        ok, message = self._cms_client.add_magnet(magnet)
+        ok, message = False, "未提交"
+        if self._magnet_download_mode in {"direct_115", "direct_then_cms"} and self._offline_client:
+            direct = self._offline_client.submit_magnet(magnet, self._p115_target)
+            ok, message = bool(direct.get("success")), str(direct.get("message") or "115 直连提交失败")
+            if ok and self._cms_tasks and record:
+                self._cms_tasks.update(record["btih"], "submitted", task_id=direct.get("task_id") or btih, source="115_direct", target_cid=self._p115_target)
+        if not ok and self._magnet_download_mode in {"direct_then_cms", "cms_only"} and self._cms_client:
+            ok, message = self._cms_client.add_magnet(magnet)
+            if ok and self._cms_tasks and record:
+                self._cms_tasks.update(record["btih"], "submitted", source="cms")
         if self._cms_tasks and record:
             self._cms_tasks.update(
-                record["btih"], "downloading" if ok else "failed",
+                record["btih"], "submitted" if ok else "failed",
                 "" if ok else message,
             )
             self._save_cms_tasks()
@@ -1507,6 +1613,13 @@ class TgSearch115(_PluginBase):
         )
         ok, message = client.check()
         return JSONResponse({"success": ok, "message": message})
+
+    def __check_115_offline_api(self):
+        """GET /check_115_offline: read-only sign/task-list capability probe."""
+        from starlette.responses import JSONResponse
+        if not self._offline_client:
+            return JSONResponse({"success": False, "message": "未配置 115 Cookie"}, status_code=400)
+        return JSONResponse(self._offline_client.probe_capabilities())
 
     def __runtime_status_api(self):
         """GET /runtime/status: return non-secret scheduler and CMS task state."""
@@ -1533,20 +1646,36 @@ class TgSearch115(_PluginBase):
             return JSONResponse({"success": False, "message": "未找到 CMS 任务"}, status_code=404)
         if record.get("status") in ("waiting", "downloading", "pending_organize"):
             return JSONResponse({"success": False, "message": "任务仍在处理中，无需重试"}, status_code=409)
-        magnet = str(record.get("magnet") or "")
-        if not self._cms_client or not is_magnet_url(magnet):
-            return JSONResponse({"success": False, "message": "CMS 未配置或任务磁力无效"}, status_code=400)
-        ok, message = self._cms_client.add_magnet(magnet)
-        if ok:
-            self._cms_tasks.restart(btih)
+        sid = record.get("subscribe_id")
+        if sid and SubscribeOper().get(int(sid)):
+            SubscribeOper().update(int(sid), {"state": "N"})
+        self._cms_tasks.update(btih, "waiting", "已恢复订阅，下一轮重新搜索候选磁力或 115 分享")
+        self._save_cms_tasks()
+        logger.info(f"【TG115】任务重试已恢复订阅 btih={btih[:12]}...")
+        return JSONResponse({"success": True, "message": "订阅已恢复，下一轮将重新搜索并按当前离线策略提交"})
+
+    def __cancel_offline_task_api(self, payload: dict = Body(default=None)):
+        """POST /tasks/cancel: cancel a direct 115 task and restore subscription."""
+        from starlette.responses import JSONResponse
+        if not self._offline_allow_cancel:
+            return JSONResponse({"success": False, "message": "配置未允许手动取消任务"}, status_code=403)
+        payload = payload if isinstance(payload, dict) else {}
+        btih = str(payload.get("btih") or "").strip().lower()
+        record = self._cms_tasks.latest(btih) if self._cms_tasks else None
+        if not record or record.get("source") != "115_direct":
+            return JSONResponse({"success": False, "message": "未找到 115 直接任务"}, status_code=404)
+        if record.get("status") not in {"submitted", "downloading", "pending_organize"}:
+            return JSONResponse({"success": False, "message": "当前状态不能取消"}, status_code=409)
+        if not self._offline_client:
+            return JSONResponse({"success": False, "message": "115 离线客户端未初始化"}, status_code=400)
+        result = self._offline_client.cancel_task(record.get("task_id") or btih)
+        if result.get("success"):
+            self._cms_tasks.update(btih, "cancelled", error_message="用户手动取消")
             sid = record.get("subscribe_id")
             if sid and SubscribeOper().get(int(sid)):
-                SubscribeOper().update(int(sid), {"state": "P"})
-        else:
-            self._cms_tasks.update(btih, "failed", message)
-        self._save_cms_tasks()
-        logger.info(f"【TG115】重试 CMS 任务 btih={btih[:12]}... ok={ok}")
-        return JSONResponse({"success": ok, "message": message})
+                SubscribeOper().update(int(sid), {"state": "N"})
+            self._save_cms_tasks()
+        return JSONResponse({"success": bool(result.get("success")), "message": result.get("message") or "取消失败"})
 
     def __search_api(self, keyword: str = "", offset: int = 0, source: str = "all"):
         """GET /search?keyword=...&offset=N&source=all|tg|site：手动搜索。
@@ -1846,6 +1975,12 @@ class TgSearch115(_PluginBase):
             "site_detail_delay_min": 1.5,
             "site_detail_delay_max": 3,
             "cms_timeout_hours": 12,
+            "magnet_download_mode": "direct_then_cms",
+            "direct_timeout_hours": 12,
+            "offline_poll_seconds": 45,
+            "offline_max_retries": 3,
+            "offline_allow_cancel": False,
+            "wait_for_mp_organize": True,
             "site_enabled": False,
             "site_app_auth": "",
             "site_magnet_priority": True,

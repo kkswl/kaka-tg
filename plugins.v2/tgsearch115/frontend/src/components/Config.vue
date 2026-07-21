@@ -368,12 +368,35 @@
             </v-col>
             <v-col cols="12" md="4" class="d-flex align-center">
               <v-btn size="small" variant="outlined" prepend-icon="mdi-connection" :loading="cmsChecking" @click="checkCms">检查 CMS</v-btn>
+              <v-btn class="ml-2" size="small" variant="outlined" prepend-icon="mdi-cloud-check-outline" :loading="offlineChecking" @click="check115Offline">检查 115 离线</v-btn>
             </v-col>
             <v-col cols="12">
               <v-text-field v-model="config.cms_token" label="CMS API Token" :type="showSecrets ? 'text' : 'password'" variant="outlined" density="compact" hide-details hint="对应 CMS_API_TOKEN；仅保存在 MoviePilot 插件配置中" persistent-hint />
             </v-col>
             <v-col cols="12" md="4">
               <v-text-field v-model="config.cms_timeout_hours" label="CMS 任务超时（小时）" type="number" min="1" max="72" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-select v-model="config.magnet_download_mode" :items="magnetModeOptions" label="磁力离线方式" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="6" md="4">
+              <v-text-field v-model="config.direct_timeout_hours" label="115 直连超时（小时）" type="number" min="1" max="72" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="6" md="4">
+              <v-text-field v-model="config.offline_poll_seconds" label="任务状态轮询（秒）" type="number" min="15" max="3600" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="12" class="d-flex align-center">
+              <div class="mr-3">
+                <div class="text-subtitle-2">等待 MoviePilot 整理完成</div>
+                <div class="text-caption text-medium-emphasis">115 下载完成后仍等待 MP 订阅历史确认，不提前发送完成通知</div>
+              </div>
+              <v-spacer />
+              <v-switch v-model="config.wait_for_mp_organize" color="primary" hide-details density="compact" />
+            </v-col>
+            <v-col cols="12" class="d-flex align-center">
+              <span class="text-body-2 mr-2">允许详情页手动取消 115 直接任务</span>
+              <v-spacer />
+              <v-switch v-model="config.offline_allow_cancel" color="warning" hide-details density="compact" />
             </v-col>
             <v-col cols="6" md="4">
               <v-text-field v-model="config.site_detail_delay_min" label="观影最小间隔（秒）" type="number" step="0.1" min="0.5" variant="outlined" density="compact" hide-details />
@@ -611,6 +634,12 @@ const DEFAULTS = {
   site_detail_delay_min: 1.5,
   site_detail_delay_max: 3,
   cms_timeout_hours: 12,
+  magnet_download_mode: 'direct_then_cms',
+  direct_timeout_hours: 12,
+  offline_poll_seconds: 45,
+  offline_max_retries: 3,
+  offline_allow_cancel: false,
+  wait_for_mp_organize: true,
   site_enabled: false,
   site_app_auth: '',
   site_magnet_priority: true,
@@ -634,6 +663,11 @@ const periodOptions = [
   { title: '每 1 小时', value: 1 },
   { title: '每 2 小时', value: 2 },
   { title: '每 3 小时', value: 3 },
+]
+const magnetModeOptions = [
+  { title: '115 直连（失败即回退）', value: 'direct_115' },
+  { title: '115 直连后回退 CMS', value: 'direct_then_cms' },
+  { title: '仅 CMS', value: 'cms_only' },
 ]
 const tgConcurrencyOptions = [
   { title: '1（最保守）', value: 1 },
@@ -699,6 +733,7 @@ const transferringIndex = ref(-1)  // 正在转存的结果索引（-1=无）
 // 观影连通检查
 const siteChecking = ref(false)
 const cmsChecking = ref(false)
+const offlineChecking = ref(false)
 // 115 目录查询/浏览
 const dirInfoName = ref('')
 const dirBrowserOpen = ref(false)
@@ -979,6 +1014,17 @@ async function checkCms() {
   })
   cmsChecking.value = false
   snack(res.message || '检查失败', res.success ? 'success' : 'error')
+}
+async function check115Offline() {
+  if (!(config.p115_cookie || '').trim()) {
+    snack('请先扫码登录并保存 115 Cookie', 'warning')
+    return
+  }
+  offlineChecking.value = true
+  const res = await apiGet('/check_115_offline')
+  offlineChecking.value = false
+  const suffix = res?.success ? `；任务数 ${res.task_count || 0}` : ''
+  snack((res?.message || '检查失败') + suffix, res?.success ? 'success' : 'error')
 }
 async function checkJuying() {
   const aid = (config.juying_app_id || '').trim()

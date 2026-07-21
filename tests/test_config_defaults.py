@@ -24,6 +24,8 @@ class ConfigDefaultsTest(unittest.TestCase):
         self.assertEqual(10, defaults["jitter_minutes"])
         self.assertEqual(2, defaults["tg_concurrency"])
         self.assertEqual(12, defaults["cms_timeout_hours"])
+        self.assertEqual("direct_then_cms", defaults["magnet_download_mode"])
+        self.assertTrue(defaults["wait_for_mp_organize"])
 
 
 if __name__ == "__main__":

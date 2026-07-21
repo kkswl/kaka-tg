@@ -1,8 +1,8 @@
 # 拦截mp订阅（tgsearch115）
 
-MoviePilot 插件：订阅新增时优先从 Telegram、观影和聚影搜索资源，经 MoviePilot 原生媒体识别确认后转存匹配的 115 分享，或把完整观影磁力通过 CMS 离线到 115；失败时平滑回退到 MoviePilot 默认搜索。
+MoviePilot 插件：订阅新增或周期扫描时优先从 Telegram、观影和聚影搜索资源，经 MoviePilot 原生媒体识别确认后转存匹配的 115 分享，或按策略通过插件内置 115 Cookie Web 离线接口/CMS 离线到 115；失败时平滑回退到 MoviePilot 默认搜索。
 
-当前版本：`v4.6.0`。完整观影磁力经 MoviePilot 规则和媒体身份确认后，只通过 CMS 创建 115 离线任务；周期搜索使用单一优先队列、缓存、退避和来源熔断，CMS 任务按 BTIH 持久去重并等待 MoviePilot 整理历史确认完成。
+当前版本：`v4.7.0`。完整观影磁力经 MoviePilot 规则和媒体身份确认后默认先进入插件内置 115 直连，失败回退 CMS；周期搜索使用单一优先队列、缓存、退避和来源熔断，离线任务按 BTIH 持久去重并等待 MoviePilot 整理历史确认完成。
 
 ---
 
@@ -16,6 +16,7 @@ MoviePilot 插件：订阅新增时优先从 Telegram、观影和聚影搜索资
 - **资源站 PoW 破解**：站点用 RSW 时间锁 PoW 反机器人，本插件用纯 Python `pow(x,1<<t,N)` 约 1.5 秒解出（C 层快速模幂），**无需浏览器、无新依赖**
 - **115 自动转存**：命中 115 链接后用 `p115client` 的 `share_snap` + `share_receive` 转存到指定目录
 - **115 磁力离线**：完整观影磁力经 MP 规则和媒体 ID 确认后，通过 CMS Token API 创建 115 离线任务
+- **115 直连磁力（v4.7.0）**：使用 Cookie Web 云下载接口创建/查询任务；115 任务完成后仍等待 MP 整理历史，不误发 SubscribeComplete
 - **全网盘展示**：夸克/百度/阿里/迅雷等资源展示链接；115 分享可转存，磁力可通过 CMS 离线
 - **115 扫码登录**：直连 115 二维码接口，扫码即得含 UID/CID/SEID 的 Cookie
 - **订阅完成双模式**：`auto_finish` 开关——插件直接标记完成 / 让 MP 整理 115 后自己完成
@@ -34,6 +35,8 @@ tgsearch115/
 ├── identity_matcher.py  # MoviePilot 原生媒体身份确认
 ├── search_relevance.py  # 手动搜索片名/年份精准过滤
 ├── cms_client.py        # CMS 官方 Token API / 115 磁力离线
+├── p115_offline.py      # 115 Cookie Web 磁力离线、状态、取消与重试
+├── offline_tasks.py     # 115/CMS 通用脱敏任务账本
 ├── p115_transfer.py     # 115 转存：p115client share_snap + share_receive
 ├── requirements.txt     # beautifulsoup4 / p115client（httpx 随 p115client 安装）
 ├── README.md
@@ -63,7 +66,7 @@ tgsearch115/
   → 115 分享按 share_code 去重
   → 本地标题/别名/年份/类型/季号初筛
   → MediaChain 识别候选，TMDB/豆瓣 ID 与订阅一致
-  → 完整观影磁力：CMS Token API → 115 离线任务 → 暂停订阅等待同步
+  → 完整观影磁力：115 直连（失败按策略回退 CMS）→ 任务状态 → MP 整理历史
   → 115 分享：transfer.transfer() → share_snap → share_receive → 完成订阅
   任何环节失败 → 静默 return，MP 默认搜索照常（平滑回退）
 ```
@@ -135,7 +138,8 @@ tgsearch115/
 | `/check_channel` `/check_all` | 检查 TG 频道连通性 |
 | `/qrcode/get` `/qrcode/status` | 115 扫码登录 |
 | `/transfer` | 手动转存 115 分享链接 |
-| `/magnet/offline` | 通过 CMS 创建 115 磁力离线任务 |
+| `/magnet/offline` | 按配置通过 115 直连或 CMS 创建磁力离线任务 |
+| `/check_115_offline` | 只读检查 115 签名/任务列表能力，不创建任务 |
 | `/check_cms` | 只读检查 CMS 服务与配置 |
 | `/search` | 手动搜索（TG + 资源站，返回带网盘类型） |
 | `/dir_info` `/dirs` | 115 目录查询/浏览 |

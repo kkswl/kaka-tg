@@ -101,3 +101,20 @@ def execute_auto_candidates(
         if result.recognition_attempts >= max_recognition_attempts:
             break
     return result
+
+
+def submit_magnet_with_fallback(
+    mode: str,
+    submit_direct: Callable[[], Tuple[bool, str]],
+    submit_cms: Callable[[], Tuple[bool, str]],
+) -> Tuple[bool, str, str]:
+    """Apply direct/CMS mode without treating task creation as completion."""
+    normalized = str(mode or "direct_then_cms").lower()
+    if normalized in {"direct_115", "direct_then_cms"}:
+        ok, message = submit_direct()
+        if ok:
+            return True, message, "115_direct"
+        if normalized == "direct_115":
+            return False, message, "115_direct"
+    ok, message = submit_cms()
+    return ok, message, "cms"

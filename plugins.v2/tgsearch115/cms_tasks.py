@@ -9,8 +9,15 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 
 _BTIH_RE = re.compile(r"(?:^|[?&])xt=urn:btih:([a-z0-9]+)", re.IGNORECASE)
-ACTIVE_STATUSES = {"waiting", "downloading", "pending_organize"}
+ACTIVE_STATUSES = {"waiting", "submitted", "downloading", "pending_organize"}
 TERMINAL_STATUSES = {"completed", "failed", "timed_out"}
+
+# v4.7.0 public generic ledger.  The compatibility class below keeps the
+# existing MoviePilot call signatures while old records are migrated safely.
+try:
+    from .offline_tasks import OfflineTaskLedger  # noqa: E402,F401
+except ImportError:  # direct unit-test module loading
+    OfflineTaskLedger = None  # type: ignore
 
 
 def utc_now() -> datetime:
@@ -43,7 +50,11 @@ class CmsTaskLedger:
         self.records: List[Dict[str, Any]] = []
         for record in records or []:
             if isinstance(record, dict) and record.get("btih"):
-                self.records.append(dict(record))
+                migrated = dict(record)
+                migrated.pop("magnet", None)
+                migrated["source"] = migrated.get("source") or "cms"
+                migrated["error_message"] = migrated.get("error_message") or migrated.get("error") or ""
+                self.records.append(migrated)
         self.records = self.records[-self.max_records:]
 
     def active_by_btih(self, btih: str) -> Optional[Dict[str, Any]]:
@@ -60,7 +71,8 @@ class CmsTaskLedger:
         return record
 
     def reserve(self, magnet: str, title: str, subscribe: Any = None,
-                status: str = "waiting") -> Tuple[Dict[str, Any], bool]:
+                status: str = "waiting", source: str = "cms", task_id: str = "",
+                target_cid: Any = "") -> Tuple[Dict[str, Any], bool]:
         """Atomically reserve a BTIH before the external CMS request is sent."""
         btih = btih_from_magnet(magnet)
         if not btih:
@@ -71,8 +83,8 @@ class CmsTaskLedger:
                 return existing, False
             now_text = self._now().isoformat(timespec="seconds")
             record = {
+                "source": str(source or "cms"),
                 "btih": btih,
-                "magnet": str(magnet or ""),
                 "title": str(title or "未命名资源")[:240],
                 "subscribe_id": getattr(subscribe, "id", None) if subscribe else None,
                 "tmdb_id": getattr(subscribe, "tmdbid", None) if subscribe else None,
@@ -80,6 +92,12 @@ class CmsTaskLedger:
                 "media_type": str(getattr(subscribe, "type", "") or "") if subscribe else "",
                 "season": getattr(subscribe, "season", None) if subscribe else None,
                 "status": status if status in ACTIVE_STATUSES else "waiting",
+                "task_id": str(task_id or ""),
+                "target_cid": str(target_cid or ""),
+                "progress": None,
+                "error_code": "",
+                "error_message": "",
+                "retry_count": 0,
                 "submitted_at": now_text,
                 "updated_at": now_text,
                 "error": "",
@@ -88,7 +106,7 @@ class CmsTaskLedger:
             self.records = self.records[-self.max_records:]
             return record, True
 
-    def update(self, btih: str, status: str, error: str = "") -> Optional[Dict[str, Any]]:
+    def update(self, btih: str, status: str, error: str = "", **fields: Any) -> Optional[Dict[str, Any]]:
         key = str(btih or "").lower()
         with self._lock:
             for record in reversed(self.records):
@@ -96,6 +114,10 @@ class CmsTaskLedger:
                     record["status"] = status
                     record["updated_at"] = self._now().isoformat(timespec="seconds")
                     record["error"] = str(error or "")[:300]
+                    record["error_message"] = record["error"]
+                    for key in ("task_id", "target_cid", "progress", "error_code", "error_message", "retry_count", "source"):
+                        if key in fields:
+                            record[key] = fields[key]
                     return record
         return None
 
@@ -127,11 +149,11 @@ class CmsTaskLedger:
         subscription_exists: Callable[[int], bool],
         history_exists: Callable[[Dict[str, Any]], bool],
         restore_subscription: Callable[[int], None],
+        direct_timeout_hours: Optional[int] = None,
     ) -> Dict[str, int]:
         """Complete records observed by MP, or time out and restore subscriptions."""
         now = self._now()
         result = {"completed": 0, "failed": 0, "timed_out": 0}
-        timeout_seconds = max(1, int(timeout_hours)) * 3600
         with self._lock:
             for record in self.records:
                 if record.get("status") not in ACTIVE_STATUSES:
@@ -150,6 +172,8 @@ class CmsTaskLedger:
                     result["failed"] += 1
                     continue
                 submitted_at = _parse_time(record.get("submitted_at"))
+                hours = direct_timeout_hours if record.get("source") == "115_direct" and direct_timeout_hours is not None else timeout_hours
+                timeout_seconds = max(1, int(hours)) * 3600
                 if not submitted_at or (now - submitted_at).total_seconds() < timeout_seconds:
                     continue
                 record["status"] = "timed_out"
@@ -166,6 +190,9 @@ class CmsTaskLedger:
             for item in reversed(self.records[-max(1, int(limit)):]):
                 public = dict(item)
                 public.pop("magnet", None)
+                public.pop("error", None)
+                task_id = str(public.get("task_id") or "")
+                public["task_id"] = f"{task_id[:12]}..." if len(task_id) > 12 else task_id
                 result.append(public)
             return result
 

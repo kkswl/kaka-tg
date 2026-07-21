@@ -31,6 +31,17 @@ def _is_115(url):
 
 
 class ResourceStrategyTest(unittest.TestCase):
+    def test_direct_failure_falls_back_to_cms(self):
+        calls = []
+        ok, message, source = resource_strategy.submit_magnet_with_fallback(
+            "direct_then_cms",
+            lambda: (calls.append("direct") or (False, "direct failed")),
+            lambda: (calls.append("cms") or (True, "created")),
+        )
+        self.assertTrue(ok)
+        self.assertEqual("cms", source)
+        self.assertEqual(["direct", "cms"], calls)
+
     def test_prefers_unique_guanying_magnet_before_115(self):
         magnet = "magnet:?xt=urn:btih:" + "a" * 40
         torrents = [
