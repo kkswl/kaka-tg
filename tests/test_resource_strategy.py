@@ -34,6 +34,27 @@ def _is_115(url):
 
 
 class ResourceStrategyTest(unittest.TestCase):
+    def test_magnet_seed_count_does_not_block_server_side_offline_filter(self):
+        magnet = _torrent(
+            "magnet:?xt=urn:btih:" + "0" * 40,
+            "magnet",
+            text="1080P 中文字幕",
+        )
+        share = _torrent("https://115.com/s/demo", "115")
+        magnet.seeders = 0
+        share.seeders = 0
+
+        def mp_rules(items):
+            return [item for item in items if item.seeders >= 5]
+
+        result = resource_strategy.filter_with_offline_seed_override(
+            [magnet, share], mp_rules
+        )
+
+        self.assertEqual([magnet], result)
+        self.assertEqual(0, magnet.seeders)
+        self.assertEqual(0, share.seeders)
+
     def test_direct_failure_falls_back_to_cms(self):
         calls = []
         ok, message, source = resource_strategy.submit_magnet_with_fallback(

@@ -61,6 +61,7 @@ from fastapi import Body
 
 from app.core.config import settings
 from app.chain.subscribe import SubscribeChain, build_subscribe_meta
+from app.chain.media import MediaChain
 from app.core.context import MediaInfo, TorrentInfo
 from app.core.event import Event, eventmanager
 from app.db.subscribe_oper import SubscribeOper
@@ -76,11 +77,28 @@ from .site_scraper import FilejinScraper
 from .juying_scraper import JuyingApi
 from .identity_matcher import confirm_candidate_identity
 from .search_relevance import extract_year, is_relevant_result
-from .resource_strategy import execute_auto_candidates, is_magnet_url, select_auto_candidates, submit_magnet_with_fallback
+from .resource_strategy import (
+    execute_auto_candidates,
+    filter_with_offline_seed_override,
+    is_magnet_url,
+    select_auto_candidates,
+    submit_magnet_with_fallback,
+)
 from .cms_client import Cms115Client
 from .cms_tasks import CmsTaskLedger, btih_from_magnet
 from .p115_offline import P115OfflineClient
 from .runtime_control import SearchCoordinator, SourceCircuitBreaker, TtlCache
+from .season_support import (
+    cache_covers_season,
+    deduplicate_search_hits,
+    season_distribution,
+    season_keywords,
+    supports_target_season,
+    source_cache_key,
+    target_seasons,
+)
+from .recognition_control import RecognitionGate, RecognitionUnavailable
+from .search_reporting import SearchReport
 
 
 # get_data / save_data 存储本插件配置使用的 key
@@ -199,7 +217,7 @@ class TgSearch115(_PluginBase):
         "并支持 115 分享直接转存；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.6"
+    plugin_version = "4.7.7"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -210,6 +228,7 @@ class TgSearch115(_PluginBase):
     _enabled = False
     _lock = threading.Lock()
     _running_ids: set = set()
+    _claimed_ids: set = set()
     _scraper: Optional[TgChannelScraper] = None
     _site_scraper: Optional[FilejinScraper] = None
     _juying_api: Optional[JuyingApi] = None
@@ -221,6 +240,8 @@ class TgSearch115(_PluginBase):
     _source_breaker: Optional[SourceCircuitBreaker] = None
     _cms_tasks: Optional[CmsTaskLedger] = None
     _offline_client: Optional[P115OfflineClient] = None
+    _recognition_gate: Optional[RecognitionGate] = None
+    _notification_cache: Optional[TtlCache] = None
 
     # 配置项（运行态缓存）
     _tg_channels: List[Dict[str, Any]] = []
@@ -228,7 +249,6 @@ class TgSearch115(_PluginBase):
     _p115_app = ""
     _p115_target = "/"
     _use_rule_groups = True
-    _delay_seconds = 3
     _notify_success = True
     _notify_fail = False
     _auto_finish = True  # True=插件直接标记完成(不用MP整理); False=只阻断搜索让MP自己整理
@@ -289,7 +309,6 @@ class TgSearch115(_PluginBase):
         self._p115_app = config.get("p115_app") or ""
         self._p115_target = config.get("p115_target") or "/"
         self._use_rule_groups = self._to_bool(config.get("use_rule_groups"), True)
-        self._delay_seconds = self._safe_int(config.get("delay_seconds"), 3)
         self._notify_success = self._to_bool(config.get("notify_success"), True)
         self._notify_fail = self._to_bool(config.get("notify_fail"), False)
         self._auto_finish = self._to_bool(config.get("auto_finish"), True)
@@ -313,10 +332,12 @@ class TgSearch115(_PluginBase):
         self._offline_max_retries = min(6, max(0, self._safe_int(config.get("offline_max_retries"), 3)))
         self._offline_allow_cancel = self._to_bool(config.get("offline_allow_cancel"), False)
         self._search_cache = TtlCache(ttl_seconds=cache_hours * 3600)
+        self._notification_cache = TtlCache(ttl_seconds=600, max_entries=256)
         self._source_breaker = SourceCircuitBreaker(
             failure_threshold=failure_threshold,
             cooldown_seconds=cooldown_minutes * 60,
         )
+        self._recognition_gate = RecognitionGate()
         # TG 频道列表：自定义前端直接以数组/JSON 字符串形式提交 tg_channels
         self._tg_channels = self._parse_channels(config.get("tg_channels"))
 
@@ -511,6 +532,13 @@ class TgSearch115(_PluginBase):
                 "summary": "取消 115 直接离线任务",
             },
             {
+                "path": "/tasks/clear",
+                "endpoint": self.__clear_offline_tasks_api,
+                "methods": ["POST"],
+                "auth": "bear",
+                "summary": "清除已结束的磁力任务账本记录",
+            },
+            {
                 "path": "/search",
                 "endpoint": self.__search_api,
                 "methods": ["GET"],
@@ -619,6 +647,14 @@ class TgSearch115(_PluginBase):
         self._coordinator = None
         if coordinator:
             coordinator.stop()
+        recognition_gate = self._recognition_gate
+        self._recognition_gate = None
+        if recognition_gate and not recognition_gate.stop(timeout=5):
+            logger.warning("【TG115】媒体识别仍在退出，已停止接收新的识别任务")
+        with self._lock:
+            claimed_ids = list(self._claimed_ids)
+        for subscribe_id in claimed_ids:
+            self._restore_claim(subscribe_id)
 
     def _start_offline_poller(self):
         """Start one stoppable status thread; the first poll waits one interval."""
@@ -654,6 +690,52 @@ class TgSearch115(_PluginBase):
         self._reconcile_cms_tasks()
         return SubscribeOper().list() or []
 
+    def _claim_subscription(self, subscribe_id: int) -> bool:
+        """Temporarily pause one subscription while all plugin sources are evaluated."""
+        with self._lock:
+            if subscribe_id in self._claimed_ids:
+                return True
+        subscribe = SubscribeOper().get(subscribe_id)
+        if not subscribe:
+            return False
+        state = str(getattr(subscribe, "state", "N") or "N").upper()
+        if state != "N":
+            return False
+        try:
+            SubscribeOper().update(subscribe_id, {"state": "P"})
+        except Exception as exc:
+            logger.warning(
+                f"【TG115】订阅 {subscribe_id} 临时认领失败 reason={type(exc).__name__}"
+            )
+            return False
+        with self._lock:
+            self._claimed_ids.add(subscribe_id)
+        return True
+
+    def _restore_claim(self, subscribe_id: int) -> None:
+        with self._lock:
+            claimed = subscribe_id in self._claimed_ids
+        if not claimed:
+            return
+        restored = False
+        try:
+            subscribe = SubscribeOper().get(subscribe_id)
+            if subscribe and str(getattr(subscribe, "state", "") or "").upper() == "P":
+                SubscribeOper().update(subscribe_id, {"state": "N"})
+                logger.info(f"【TG115】订阅 {subscribe_id} 未命中，已恢复 state=N")
+            restored = True
+        except Exception as exc:
+            logger.warning(
+                f"【TG115】订阅 {subscribe_id} 恢复失败 reason={type(exc).__name__}"
+            )
+        if restored:
+            with self._lock:
+                self._claimed_ids.discard(subscribe_id)
+
+    def _complete_claim(self, subscribe_id: int) -> None:
+        with self._lock:
+            self._claimed_ids.discard(subscribe_id)
+
     # ============================ 事件入口 ============================
     @eventmanager.register(EventType.SubscribeAdded)
     def on_subscribe_added(self, event: Event):
@@ -668,27 +750,39 @@ class TgSearch115(_PluginBase):
         subscribe_id = data.get("subscribe_id")
         if not subscribe_id:
             return
+        if not self._claim_subscription(int(subscribe_id)):
+            logger.warning(f"【TG115】订阅 {subscribe_id} 未能进入插件优先处理状态")
+            return
         if self._coordinator and self._coordinator.enqueue_subscription(
                 int(subscribe_id), priority=0):
             return
+        self._restore_claim(int(subscribe_id))
         logger.warn(f"【TG115】订阅 {subscribe_id} 未能进入搜索队列，将由周期任务重试")
 
     # ============================ 核心流程 ============================
     def _handle_subscribe(self, subscribe_id: int):
         """单订阅的 TG 搜索 -> 匹配 -> 转存 -> 完成流程；任何失败均平滑回退。"""
+        handled = False
         try:
             with self._lock:
                 if subscribe_id in self._running_ids:
                     return
                 self._running_ids.add(subscribe_id)
 
-            # 抢跑延迟：给 TG+115 一个先于 MP 默认搜索完成的窗口
-            if self._delay_seconds and self._delay_seconds > 0:
-                time.sleep(min(self._delay_seconds, 300))
-
             subscribe = SubscribeOper().get(subscribe_id)
             if not subscribe:
                 return
+            if not self._claim_subscription(subscribe_id):
+                logger.info(f"【TG115】订阅 {subscribe_id} 当前不可认领，本轮跳过")
+                return
+
+            source_report = SearchReport({
+                "tg": bool(self._scraper and any(
+                    channel.get("enabled", True) for channel in self._tg_channels
+                )),
+                "site": bool(self._site_scraper),
+                "juying": bool(self._juying_api),
+            })
 
             try:
                 meta = build_subscribe_meta(subscribe)
@@ -700,19 +794,56 @@ class TgSearch115(_PluginBase):
                 logger.warn(f"【TG115】订阅 {subscribe.name} 未识别到媒体信息，回退到默认搜索")
                 return
 
-            keyword = self._build_keyword(subscribe)
-            logger.info(f"【TG115】订阅 [{subscribe.name}] 开始搜索，关键字: {keyword}")
-            hits = self._search_auto_sources(keyword, subscribe.year)
+            seasons = target_seasons(subscribe)
+            target_season = seasons[0] if len(seasons) == 1 else getattr(subscribe, "season", None)
+            season_text = ",".join(f"S{season:02d}" for season in seasons) or "未指定"
+            logger.info(f"【TG115】订阅 [{subscribe.name}] 目标季解析完成: {season_text}")
+            keywords = self._build_keywords(subscribe, mediainfo, target_season)
+            hits = []
+            for keyword in keywords:
+                logger.info(
+                    f"【TG115】订阅 [{subscribe.name}] "
+                    f"{f'S{target_season:02d} ' if target_season is not None else ''}"
+                    f"开始搜索，关键字: {keyword}"
+                )
+                keyword_hits = self._search_auto_sources(
+                    keyword=keyword,
+                    year=subscribe.year,
+                    media_type=getattr(subscribe, "type", ""),
+                    target_season=target_season,
+                    source_report=source_report,
+                )
+                if target_season is not None:
+                    matched_season = [
+                        hit for hit in keyword_hits
+                        if supports_target_season(hit, target_season)
+                    ]
+                    logger.info(
+                        f"【TG115】订阅 [{subscribe.name}] S{target_season:02d} "
+                        f"本地季号初筛: {len(keyword_hits)} 条 -> {len(matched_season)} 条"
+                    )
+                    hits.extend(matched_season)
+                    if len(matched_season) >= 5:
+                        break
+                else:
+                    hits.extend(keyword_hits)
+                    if keyword_hits:
+                        break
+            hits = deduplicate_search_hits(hits)
             if not hits:
                 logger.info(f"【TG115】订阅 [{subscribe.name}] 未找到资源，回退到默认搜索")
-                self._send_fail_notify(subscribe, "TG、观影与聚影均未找到资源")
+                self._send_fail_notify(
+                    subscribe, "未找到符合目标季与标题的候选", source_report
+                )
                 return
 
             torrents = self._build_torrents(hits)
             matched = self._filter_resources(subscribe, mediainfo, torrents)
             if not matched:
                 logger.info(f"【TG115】订阅 [{subscribe.name}] 资源均不符合 MP 过滤规则，回退到默认搜索")
-                self._send_fail_notify(subscribe, "资源不符合过滤规则")
+                self._send_fail_notify(
+                    subscribe, "候选未通过 MoviePilot 规则", source_report
+                )
                 return
 
             is_tv = str(getattr(subscribe, "type", "") or "") == "TV"
@@ -738,13 +869,18 @@ class TgSearch115(_PluginBase):
                     f"【TG115】订阅 [{subscribe.name}] 命中 {len(matched)} 条资源，"
                     "但没有可安全自动处理的完整观影磁力或 115 分享，回退到默认搜索"
                 )
-                self._send_fail_notify(subscribe, f"命中 {len(matched)} 条但无可自动处理资源")
+                self._send_fail_notify(
+                    subscribe,
+                    f"命中 {len(matched)} 条，但没有符合中字 1080P/4K 或安全转存条件的资源",
+                    source_report,
+                )
                 return
             def confirm(candidate):
                 identity = confirm_candidate_identity(
                     subscribe=subscribe,
                     target_media=mediainfo,
                     torrent=candidate,
+                    recognize_candidate=self._recognize_candidate,
                 )
                 logger.info(
                     f"【TG115】候选身份确认 [{candidate.title}]: "
@@ -780,26 +916,35 @@ class TgSearch115(_PluginBase):
                 )
                 reason = execution.errors[-1] if execution.errors \
                     else "候选未通过 MoviePilot/TMDB 身份确认"
-                self._send_fail_notify(subscribe, reason)
+                self._send_fail_notify(subscribe, reason, source_report)
                 return
             logger.info(f"【TG115】订阅 [{subscribe.name}] 命中资源: {best.title}（链接已省略）")
 
-            self._finish_subscribe(
+            handled = self._finish_subscribe(
                 subscribe, meta, mediainfo, best, execution.message,
                 via_offline_magnet=execution.via_magnet,
+                source_summary=source_report.text(),
             )
         except Exception as e:
             logger.error(f"【TG115】处理订阅 {subscribe_id} 异常，回退到默认搜索: {e}")
         finally:
+            if handled:
+                self._complete_claim(subscribe_id)
+            else:
+                self._restore_claim(subscribe_id)
             with self._lock:
                 self._running_ids.discard(subscribe_id)
 
     # ============================ 辅助方法 ============================
-    def _search_auto_sources(self, keyword: str, year: Optional[int]) -> List[Any]:
+    def _search_auto_sources(
+            self, keyword: str, year: Optional[int], media_type: Any = "",
+            target_season: Optional[int] = None,
+            source_report: Optional[SearchReport] = None) -> List[Any]:
         """Search enabled sources with per-source TTL caching and circuit breaking."""
         hits: List[Any] = []
         source_calls = []
-        if self._scraper:
+        if self._scraper and any(
+                channel.get("enabled", True) for channel in self._tg_channels):
             source_calls.append(("tg", lambda: self._scraper.search(keyword), self._scraper))
         if self._site_scraper:
             source_calls.append((
@@ -813,8 +958,18 @@ class TgSearch115(_PluginBase):
             ))
 
         for source, callback, client in source_calls:
-            cache_key = (source, str(keyword).strip().casefold(), str(year or ""))
+            cache_key = source_cache_key(
+                source, keyword, year, media_type, target_season
+            )
             cached = self._search_cache.get(cache_key) if self._search_cache else None
+            if cached is not None:
+                distribution = season_distribution(cached)
+                if not cache_covers_season(cached, target_season):
+                    existing = ",".join(f"S{item:02d}" for item in distribution) or "无明确季号"
+                    logger.info(
+                        f"【TG115】{source} S{target_season:02d} 缓存仅包含 {existing}，重新搜索"
+                    )
+                    cached = None
             if cached is not None:
                 for hit in cached:
                     try:
@@ -822,11 +977,19 @@ class TgSearch115(_PluginBase):
                     except Exception:
                         pass
                 hits.extend(cached)
-                logger.info(f"【TG115】{source} 命中周期搜索缓存 {len(cached)} 条")
+                if source_report:
+                    source_report.record(source, cached, cached=True)
+                logger.info(
+                    f"【TG115】{source} S{target_season:02d} 命中周期搜索缓存 {len(cached)} 条"
+                    if target_season is not None
+                    else f"【TG115】{source} 命中周期搜索缓存 {len(cached)} 条"
+                )
                 continue
             allowed, remaining = self._source_breaker.allow(source) \
                 if self._source_breaker else (True, 0)
             if not allowed:
+                if source_report:
+                    source_report.mark(source, "cooldown")
                 logger.warn(f"【TG115】{source} 来源熔断中，剩余 {remaining} 秒，本轮跳过")
                 continue
             try:
@@ -839,7 +1002,11 @@ class TgSearch115(_PluginBase):
                     except Exception:
                         pass
                 status = getattr(client, "last_error_status", None)
+                if source_report:
+                    source_report.record(source, source_hits)
                 if status in (403, 429):
+                    if source_report:
+                        source_report.mark(source, "error")
                     opened = self._source_breaker.failure(source, f"HTTP {status}") \
                         if self._source_breaker else False
                     if opened:
@@ -850,6 +1017,8 @@ class TgSearch115(_PluginBase):
                     self._search_cache.set(cache_key, source_hits)
                 hits.extend(source_hits)
             except Exception as exc:
+                if source_report:
+                    source_report.mark(source, "error")
                 opened = self._source_breaker.failure(source, str(exc)) \
                     if self._source_breaker else False
                 logger.warn(
@@ -939,15 +1108,22 @@ class TgSearch115(_PluginBase):
 
     def _recognize(self, subscribe, meta) -> Optional[MediaInfo]:
         try:
-            mediainfo = SubscribeChain().recognize_media(
-                meta=meta, mtype=meta.type,
-                tmdbid=subscribe.tmdbid, doubanid=subscribe.doubanid,
-                episode_group=subscribe.episode_group, cache=False,
+            def operation(chain):
+                return chain.recognize_media(
+                    meta=meta, mtype=meta.type,
+                    tmdbid=subscribe.tmdbid, doubanid=subscribe.doubanid,
+                    episode_group=subscribe.episode_group, cache=True,
+                )
+
+            mediainfo = self._run_recognition(
+                factory=SubscribeChain,
+                operation=operation,
+                label="subscription",
             )
             if mediainfo:
                 return mediainfo
         except Exception as e:
-            logger.warn(f"【TG115】recognize_media 异常: {e}")
+            logger.warn(f"【TG115】recognize_media 异常 type={type(e).__name__}")
         try:
             return MediaInfo(
                 type=subscribe.type, title=subscribe.name, year=subscribe.year,
@@ -955,6 +1131,37 @@ class TgSearch115(_PluginBase):
             )
         except Exception:
             return None
+
+    def _run_recognition(self, factory, operation, label: str):
+        gate = self._recognition_gate
+        if not gate:
+            raise RecognitionUnavailable("媒体识别协调器未运行")
+
+        def on_retry(stage: str, attempt: int, reason: str):
+            if reason == "kill_cursor":
+                message = "遇到 NoneType.kill_cursor"
+            else:
+                message = "返回空结果（核心异常可能已被内部捕获）"
+            logger.warning(
+                f"【TG115】{stage} 识别第 {attempt} 次{message}，"
+                "已丢弃识别链并准备安全重试"
+            )
+
+        return gate.run(
+            factory, operation, label=label, on_retry=on_retry,
+            retry_none=True,
+        )
+
+    def _recognize_candidate(self, candidate_meta, episode_group=None):
+        return self._run_recognition(
+            factory=MediaChain,
+            operation=lambda chain: chain.recognize_by_meta(
+                candidate_meta,
+                episode_group=episode_group,
+                obtain_images=False,
+            ),
+            label="candidate",
+        )
 
     @staticmethod
     def _build_keyword(subscribe) -> str:
@@ -965,6 +1172,22 @@ class TgSearch115(_PluginBase):
         交给 MoviePilot 的规则引擎 ``_filter_resources`` 处理。
         """
         return str(subscribe.name or "").strip()
+
+    @classmethod
+    def _build_keywords(cls, subscribe, mediainfo, season: Optional[int]) -> List[str]:
+        """Build a bounded alias-aware query list for one MoviePilot subscription row."""
+        names: List[Any] = [
+            getattr(subscribe, "name", ""),
+            getattr(mediainfo, "title", ""),
+            getattr(mediainfo, "en_title", ""),
+            getattr(mediainfo, "original_title", ""),
+            getattr(mediainfo, "original_name", ""),
+        ]
+        aliases = getattr(mediainfo, "names", None) or []
+        if isinstance(aliases, (list, tuple, set)):
+            names.extend(aliases)
+        keywords = season_keywords(names, season, limit=6)
+        return keywords or [cls._build_keyword(subscribe)]
 
     @staticmethod
     def _build_torrents(hits) -> List[TorrentInfo]:
@@ -1074,9 +1297,14 @@ class TgSearch115(_PluginBase):
             rule_groups = self._get_rule_groups(subscribe)
             if rule_groups:
                 try:
-                    torrents = SubscribeChain().filter_torrents(
-                        rule_groups=rule_groups, torrent_list=torrents, mediainfo=mediainfo,
-                    ) or []
+                    torrents = filter_with_offline_seed_override(
+                        torrents,
+                        lambda items: SubscribeChain().filter_torrents(
+                            rule_groups=rule_groups,
+                            torrent_list=items,
+                            mediainfo=mediainfo,
+                        ) or [],
+                    )
                 except Exception as e:
                     logger.warn(f"【TG115】filter_torrents 异常，跳过规则组过滤: {e}")
         filter_params = self._get_filter_params(subscribe)
@@ -1119,7 +1347,8 @@ class TgSearch115(_PluginBase):
 
     def _finish_subscribe(
             self, subscribe, meta, mediainfo, torrent: TorrentInfo,
-            transfer_msg: str, via_offline_magnet: bool = False):
+            transfer_msg: str, via_offline_magnet: bool = False,
+            source_summary: str = "") -> bool:
         """转存成功后处理订阅，两种模式由 ``auto_finish`` 开关控制：
 
         ``auto_finish=True``（默认，不依赖 MP 整理 115）：
@@ -1147,16 +1376,19 @@ class TgSearch115(_PluginBase):
                     "等待离线下载及 MoviePilot 整理"
                 )
                 if self._notify_success:
-                    self.post_message(
+                    self._post_search_notification_once(
+                        subscribe=subscribe,
+                        outcome="submitted",
                         mtype=NotificationType.Subscribe,
-                        title=f"115 磁力离线任务：{subscribe.name}",
+                        title=f"TG115 搜索完成：{subscribe.name}",
                         text=(
-                            f"已通过 MoviePilot 规则与媒体 ID 确认资源，并提交到 115 离线链路。\n"
-                            "订阅已暂停，等待 115 离线下载及后续同步完成。\n"
-                            f"资源: {torrent.title}\n{transfer_msg}"
+                            "结果：已通过 MoviePilot 规则与媒体 ID 确认，并提交 115 磁力下载。\n"
+                            f"渠道：{source_summary or '已完成来源汇总'}\n"
+                            "后续：等待 115 下载和 MoviePilot 整理，当前不会标记订阅完成。\n"
+                            f"资源：{torrent.title}\n{transfer_msg}"
                         ),
                     )
-                return
+                return True
 
             raw_text = torrent.description or torrent.title or ""
             episode_info = self._parse_episode_info(raw_text) if is_tv else ""
@@ -1206,23 +1438,28 @@ class TgSearch115(_PluginBase):
             if self._notify_success:
                 try:
                     if is_tv:
-                        self.post_message(
+                        self._post_search_notification_once(
+                            subscribe=subscribe,
+                            outcome="transferred",
                             mtype=NotificationType.Subscribe,
-                            title=f"\U0001F4FA 剧集订阅更新：{subscribe.name}",
+                            title=f"TG115 搜索完成：{subscribe.name}",
                             text=(
-                                f"TG115 插件已转存《{subscribe.name}》{season_str}的资源"
-                                f"（{episode_info}）。\n"
+                                f"结果：已转存《{subscribe.name}》{season_str}资源（{episode_info}）。\n"
+                                f"渠道：{source_summary or '已完成来源汇总'}\n"
                             )
                                  + (f"资源: {torrent.title}\n{transfer_msg}" if self._auto_finish
                                     else f"已阻断 MP 搜索，等待系统整理 115 资源并刮削入库。\n"
                                          f"资源: {torrent.title}\n{transfer_msg}"),
                         )
                     else:
-                        self.post_message(
+                        self._post_search_notification_once(
+                            subscribe=subscribe,
+                            outcome="transferred",
                             mtype=NotificationType.Subscribe,
-                            title=f"\U0001F3AC 电影订阅完成：{subscribe.name}",
+                            title=f"TG115 搜索完成：{subscribe.name}",
                             text=(
-                                f"TG115 插件已成功将《{subscribe.name}》转存至 115 网盘。\n"
+                                f"结果：已将《{subscribe.name}》转存至 115 网盘。\n"
+                                f"渠道：{source_summary or '已完成来源汇总'}\n"
                             )
                                  + (f"资源: {torrent.title}\n{transfer_msg}" if self._auto_finish
                                     else f"已阻断 MP 搜索，等待系统整理 115 资源并刮削入库。\n"
@@ -1231,8 +1468,11 @@ class TgSearch115(_PluginBase):
                 except Exception:
                     pass
 
+            return True
+
         except Exception as e:
             logger.error(f"【TG115】更新订阅状态异常（不影响 MP 默认流程）: {e}")
+            return False
 
     @staticmethod
     def _parse_episode_info(text: str) -> str:
@@ -1417,14 +1657,39 @@ class TgSearch115(_PluginBase):
         return {"display_name": display_name, "meta": meta,
                 "is_complete": is_complete, "episode_num": episode_num}
 
-    def _send_fail_notify(self, subscribe, reason: str):
+    def _post_search_notification_once(
+            self, subscribe, outcome: str, mtype, title: str, text: str) -> None:
+        key = (
+            str(outcome or ""),
+            str(getattr(subscribe, "id", "") or ""),
+            str(getattr(subscribe, "season", "") if getattr(subscribe, "season", None) is not None else ""),
+        )
+        if self._notification_cache and self._notification_cache.get(key):
+            logger.info(
+                f"【TG115】订阅 {getattr(subscribe, 'id', '')} 相同结果通知已合并"
+            )
+            return
+        if self._notification_cache:
+            self._notification_cache.set(key, True)
+        self.post_message(mtype=mtype, title=title, text=text)
+
+    def _send_fail_notify(
+            self, subscribe, reason: str,
+            source_report: Optional[SearchReport] = None) -> None:
         if not self._notify_fail:
             return
         try:
-            self.post_message(
+            self._post_search_notification_once(
+                subscribe=subscribe,
+                outcome="missed",
                 mtype=NotificationType.Subscribe,
-                title=f"TG115 未命中 {subscribe.name}",
-                text=f"原因: {reason}，将使用 MoviePilot 默认搜索。",
+                title=f"TG115 搜索完成：{subscribe.name}",
+                text=(
+                    f"结果：未找到可安全自动处理的资源。\n"
+                    f"渠道：{source_report.text() if source_report else '已完成全部已启用来源'}\n"
+                    f"原因：{reason}。\n"
+                    "后续：订阅已恢复，MoviePilot 可在后续订阅搜索中继续处理。"
+                ),
             )
         except Exception:
             pass
@@ -1706,6 +1971,11 @@ class TgSearch115(_PluginBase):
         return JSONResponse({
             "success": True,
             "scheduler": scheduler,
+            "recognition": self._recognition_gate.status() if self._recognition_gate else {
+                "waiting": 0, "active": 0, "max_active": 0,
+                "last_wait_seconds": 0, "retries": 0,
+                "identity_unavailable": 0, "stopping": True,
+            },
             "sources": self._source_breaker.snapshot() if self._source_breaker else {},
             "tasks": self._cms_tasks.public_records() if self._cms_tasks else [],
         })
@@ -1745,6 +2015,26 @@ class TgSearch115(_PluginBase):
         self._save_cms_tasks()
         logger.info(f"【TG115】任务重试已恢复订阅 btih={btih[:12]}...")
         return JSONResponse({"success": True, "message": "订阅已恢复，下一轮将重新搜索并按当前离线策略提交"})
+
+    def __clear_offline_tasks_api(self):
+        """POST /tasks/clear: clear ledger records without losing active tracking."""
+        from starlette.responses import JSONResponse
+        if not self._cms_tasks:
+            return JSONResponse({"success": True, "message": "任务记录已为空", "cleared": 0})
+        cleared, active = self._cms_tasks.clear_if_idle()
+        if active:
+            return JSONResponse({
+                "success": False,
+                "message": f"仍有 {active} 个任务处理中，完成或取消后才能清除记录",
+                "cleared": 0,
+            }, status_code=409)
+        self._save_cms_tasks()
+        logger.info(f"【TG115】已清除磁力下载任务账本记录 {cleared} 条")
+        return JSONResponse({
+            "success": True,
+            "message": f"已清除 {cleared} 条磁力下载任务记录",
+            "cleared": cleared,
+        })
 
     def __cancel_offline_task_api(self, payload: dict = Body(default=None)):
         """POST /tasks/cancel: cancel a direct 115 task and restore subscription."""
@@ -2050,7 +2340,6 @@ class TgSearch115(_PluginBase):
             "p115_app": "",
             "p115_target": "/电影",
             "use_rule_groups": True,
-            "delay_seconds": 3,
             "notify_success": True,
             "notify_fail": False,
             "auto_finish": True,

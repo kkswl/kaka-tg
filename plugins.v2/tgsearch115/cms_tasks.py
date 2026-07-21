@@ -199,3 +199,15 @@ class CmsTaskLedger:
     def dump_records(self) -> List[Dict[str, Any]]:
         with self._lock:
             return [dict(item) for item in self.records]
+
+    def clear_if_idle(self) -> Tuple[int, int]:
+        """Clear ledger history only when no active task would lose tracking."""
+        with self._lock:
+            active = sum(
+                1 for item in self.records if item.get("status") in ACTIVE_STATUSES
+            )
+            if active:
+                return 0, active
+            cleared = len(self.records)
+            self.records.clear()
+            return cleared, 0

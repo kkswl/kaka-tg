@@ -2,7 +2,7 @@
 
 MoviePilot 插件：订阅新增或周期扫描时按 TG 频道、观影 115 中文字幕、观影磁力中文字幕、聚影顺序搜索，经 MoviePilot 原生媒体识别确认后通过 115 Cookie Web 离线接口或 CMS 离线到 115；失败时平滑回退到 MoviePilot 默认搜索。
 
-当前版本：`v4.7.6`。配置页与详情页共用同一手动搜索组件；磁力按画质/中字筛选，网盘按类型筛选。自动磁力仅处理中字 1080P/4K，默认插件内置 115 优先、失败回退 CMS。115 创建任务使用已实测成功的 Web 表单协议。
+当前版本：`v4.7.7`。周期搜索按独立订阅行处理 S00/S02/S03；插件内 MoviePilot/TMDB 识别最大并发固定为 1。115 服务端磁力离线忽略未知做种人数门槛，但仍执行其它 MP 规则、媒体身份和中字 1080P/4K 条件。所有来源结束后合并通知一次。
 
 ---
 
@@ -10,6 +10,11 @@ MoviePilot 插件：订阅新增或周期扫描时按 TG 频道、观影 115 中
 
 - **三源搜索**：TG 公开频道、观影资源站和聚影开发者 API
 - **媒体身份确认**：使用 `MetaInfo`、`TorrentHelper` 和 `MediaChain` 校验标题、年份、类型、季号及 TMDB/豆瓣 ID
+- **季级订阅搜索**：S00/S02/S03 使用独立关键词、周期键和来源缓存；错误季候选在 MoviePilot/TMDB 识别前剔除
+- **识别并发门控**：插件内 `SubscribeChain`/`MediaChain` 调用串行执行，`kill_cursor` 或异常空结果只重建重试一次
+- **磁力规则适配**：115 服务端磁力不因未知做种数被淘汰，其它 MoviePilot 规则与中字画质门槛不变
+- **来源汇总通知**：新增订阅先临时认领，TG/观影/聚影结束后统一通知，失败才恢复给 MoviePilot 后续搜索
+- **任务记录清理**：详情页“磁力下载任务”可一键清理；活动任务存在时保护性拒绝
 - **精准手动搜索**：TG/观影/聚影结果按规范化片名和年份过滤，并按分享码或 URL 去重
 - **双客户端观影详情**：httpx/HTML 路径被 WAF 拒绝时，使用 urllib 独立 Cookie/PoW 会话降级
 - **TG 服务端搜索**：用 `t.me/s/{channel}?q=片名` 让 Telegram 服务器搜频道**全部历史**（不是只看最近 200 条），解决「明明有资源却搜不到」
@@ -33,6 +38,8 @@ tgsearch115/
 ├── site_scraper.py      # 目标资源站爬虫：解 PoW + 搜索 + 全网盘资源提取
 ├── juying_scraper.py    # 聚影开发者 API
 ├── identity_matcher.py  # MoviePilot 原生媒体身份确认
+├── season_support.py    # 季号解析、季级关键词与缓存键
+├── recognition_control.py # MoviePilot/TMDB 识别串行门控与安全重试
 ├── search_relevance.py  # 手动搜索片名/年份精准过滤
 ├── cms_client.py        # CMS 官方 Token API / 115 磁力离线
 ├── p115_offline.py      # 115 Cookie Web 磁力离线、状态、取消与重试
@@ -54,7 +61,7 @@ tgsearch115/
 
 ```
 订阅新增 (SubscribeAdded 事件)
-  → 守护线程 _handle_subscribe（延迟 delay_seconds 抢跑 MP 默认搜索）
+  → 临时设 state=P，由单一队列运行 _handle_subscribe
   → recognize_media 识别媒体
   → _build_keyword → 只用片名（不含年份）
   → 三源搜索：
@@ -98,7 +105,7 @@ tgsearch115/
 | 测试连通 | 解 PoW + 试搜，验证 app_auth 是否有效 |
 | 插件直接标记完成 | auto_finish：True=插件标记完成；False=让 MP 整理 115 后完成 |
 | MP 过滤规则组 | 复用 MoviePilot 订阅过滤规则组 |
-| 触发延迟 / 通知开关 | 等 |
+| 周期搜索 / 汇总通知开关 | 等 |
 
 ### TG 频道模块 Tab
 - 单条添加 / JSON 批量导入 / 批量删除

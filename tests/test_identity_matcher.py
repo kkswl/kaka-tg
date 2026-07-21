@@ -55,7 +55,16 @@ MODULE_PATH = (
     / "tgsearch115"
     / "identity_matcher.py"
 )
-spec = importlib.util.spec_from_file_location("tgsearch115_identity_matcher", MODULE_PATH)
+PACKAGE_DIR = MODULE_PATH.parent
+package = sys.modules.setdefault("tgsearch115", types.ModuleType("tgsearch115"))
+package.__path__ = [str(PACKAGE_DIR)]
+season_spec = importlib.util.spec_from_file_location(
+    "tgsearch115.season_support", PACKAGE_DIR / "season_support.py"
+)
+season_module = importlib.util.module_from_spec(season_spec)
+sys.modules[season_spec.name] = season_module
+season_spec.loader.exec_module(season_module)
+spec = importlib.util.spec_from_file_location("tgsearch115.identity_matcher", MODULE_PATH)
 identity_matcher = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = identity_matcher
 spec.loader.exec_module(identity_matcher)
@@ -137,6 +146,52 @@ class IdentityMatcherTest(unittest.TestCase):
         self.assertFalse(result.confirmed)
         self.assertIn("季号不匹配", result.reason)
         self.assertEqual(0, _FakeMediaChain.calls)
+
+    def test_rejects_missing_tv_season_before_recognition(self):
+        target = SimpleNamespace(type="电视剧", tmdb_id=100, douban_id=None, season=2)
+        subscribe = SimpleNamespace(tmdbid=100, doubanid=None, season=2, episode_group=None)
+
+        result = identity_matcher.confirm_candidate_identity(
+            subscribe, target, _torrent(title="示例剧 1080P", local_match=True)
+        )
+
+        self.assertFalse(result.confirmed)
+        self.assertIn("无明确季号", result.reason)
+        self.assertEqual(0, _FakeMediaChain.calls)
+
+    def test_multi_season_collection_can_match_target_season(self):
+        target = SimpleNamespace(type="电视剧", tmdb_id=100, douban_id=None, season=2)
+        subscribe = SimpleNamespace(tmdbid=100, doubanid=None, season=2, episode_group=None)
+        candidate = SimpleNamespace(type="电视剧", tmdb_id=100, douban_id=None)
+        calls = []
+
+        result = identity_matcher.confirm_candidate_identity(
+            subscribe,
+            target,
+            _torrent(title="示例剧 S01-S03", local_match=True),
+            recognize_candidate=lambda _meta, _group: calls.append(1) or candidate,
+        )
+
+        self.assertTrue(result.confirmed)
+        self.assertEqual([1], calls)
+
+    def test_recognition_unavailable_does_not_confirm_candidate(self):
+        target = SimpleNamespace(type="电视剧", tmdb_id=100, douban_id=None, season=2)
+        subscribe = SimpleNamespace(tmdbid=100, doubanid=None, season=2, episode_group=None)
+
+        def unavailable(_meta, _group):
+            raise RuntimeError("identity_unavailable")
+
+        result = identity_matcher.confirm_candidate_identity(
+            subscribe,
+            target,
+            _torrent(title="示例剧 S02", local_match=True),
+            recognize_candidate=unavailable,
+        )
+
+        self.assertFalse(result.confirmed)
+        self.assertEqual("identity_unavailable", result.match_source)
+        self.assertTrue(result.recognition_attempted)
 
 
 if __name__ == "__main__":

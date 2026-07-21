@@ -5,6 +5,7 @@ from app.chain.media import MediaChain
 from app.core.metainfo import MetaInfo
 from app.helper.torrent import TorrentHelper
 from app.log import logger
+from .season_support import candidate_seasons
 
 
 @dataclass
@@ -20,7 +21,8 @@ def _normalize_id(value) -> str:
     return str(value or "").strip()
 
 
-def confirm_candidate_identity(subscribe, target_media, torrent) -> IdentityResult:
+def confirm_candidate_identity(
+        subscribe, target_media, torrent, recognize_candidate=None) -> IdentityResult:
     """Confirm one candidate without causing download or subscription side effects."""
     identity_title = str(
         getattr(torrent, "_tg115_identity_title", "") or torrent.title or ""
@@ -52,16 +54,22 @@ def confirm_candidate_identity(subscribe, target_media, torrent) -> IdentityResu
         expected_season = getattr(subscribe, "season", None)
         if expected_season is None:
             expected_season = getattr(target_media, "season", None)
-        expected_season = int(expected_season or 1)
-        season_list = list(getattr(candidate_meta, "season_list", None) or [])
-        if len(season_list) > 1:
-            return IdentityResult(False, reason=f"候选包含多季: {season_list}")
-        candidate_season = getattr(candidate_meta, "begin_season", None)
-        candidate_season = int(candidate_season if candidate_season is not None else 1)
-        if candidate_season != expected_season:
+        expected_season = int(expected_season if expected_season is not None else 1)
+        seasons = candidate_seasons(torrent)
+        if not seasons:
+            seasons.update(int(item) for item in (
+                getattr(candidate_meta, "season_list", None) or []
+            ))
+        if not seasons:
+            candidate_season = getattr(candidate_meta, "begin_season", None)
+            if candidate_season is not None:
+                seasons.add(int(candidate_season))
+        if expected_season not in seasons:
+            candidate_text = ",".join(f"S{item:02d}" for item in sorted(seasons)) \
+                or "无明确季号"
             return IdentityResult(
                 False,
-                reason=f"季号不匹配: 需要 S{expected_season:02d}，候选 S{candidate_season:02d}",
+                reason=f"季号不匹配: 需要 S{expected_season:02d}，候选 {candidate_text}",
             )
 
     target_tmdb = _normalize_id(
@@ -74,16 +82,23 @@ def confirm_candidate_identity(subscribe, target_media, torrent) -> IdentityResu
         return IdentityResult(False, reason="订阅缺少 TMDB/豆瓣 ID，禁止自动转存")
 
     try:
-        candidate_media = MediaChain().recognize_by_meta(
-            candidate_meta,
-            episode_group=getattr(subscribe, "episode_group", None),
-            obtain_images=False,
-        )
+        if recognize_candidate:
+            candidate_media = recognize_candidate(
+                candidate_meta,
+                getattr(subscribe, "episode_group", None),
+            )
+        else:
+            candidate_media = MediaChain().recognize_by_meta(
+                candidate_meta,
+                episode_group=getattr(subscribe, "episode_group", None),
+                obtain_images=False,
+            )
     except Exception as e:
-        logger.warn(f"【TG115】MoviePilot 候选媒体识别异常: {e}")
+        logger.warn(f"【TG115】MoviePilot 候选媒体识别异常 type={type(e).__name__}")
         return IdentityResult(
             False,
-            reason=f"MoviePilot 媒体识别异常: {e}",
+            match_source="identity_unavailable",
+            reason="MoviePilot 媒体识别暂时不可用，将在下一周期重试",
             recognition_attempted=True,
         )
     if not candidate_media:

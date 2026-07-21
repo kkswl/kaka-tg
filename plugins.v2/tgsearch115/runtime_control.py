@@ -17,7 +17,8 @@ def subscription_key(subscribe: Any) -> Tuple[str, str, str, str]:
         str(getattr(subscribe, "name", "") or "").strip().casefold(),
         str(getattr(subscribe, "year", "") or "").strip(),
         str(getattr(subscribe, "type", "") or "").strip().upper(),
-        str(getattr(subscribe, "season", "") or "").strip(),
+        "" if getattr(subscribe, "season", None) is None
+        else str(getattr(subscribe, "season")).strip(),
     )
 
 

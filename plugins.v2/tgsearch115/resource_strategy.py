@@ -17,6 +17,29 @@ def is_magnet_url(value: str) -> bool:
     return str(value or "").strip().lower().startswith("magnet:")
 
 
+def filter_with_offline_seed_override(
+    torrents: Iterable,
+    filter_callback: Callable[[List[Any]], List[Any]],
+) -> List[Any]:
+    """Ignore swarm seed thresholds for 115 server-side magnet offline tasks."""
+    torrent_list = list(torrents or [])
+    original_seeders = []
+    for torrent in torrent_list:
+        url = str(
+            getattr(torrent, "enclosure", "")
+            or getattr(torrent, "page_url", "")
+            or ""
+        )
+        if is_magnet_url(url):
+            original_seeders.append((torrent, getattr(torrent, "seeders", 0)))
+            setattr(torrent, "seeders", 2_147_483_647)
+    try:
+        return filter_callback(torrent_list)
+    finally:
+        for torrent, seeders in original_seeders:
+            setattr(torrent, "seeders", seeders)
+
+
 def _magnet_key(value: str) -> str:
     url = str(value or "").strip()
     match = _BTIH_RE.search(url)

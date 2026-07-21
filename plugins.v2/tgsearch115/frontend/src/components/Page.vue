@@ -29,8 +29,8 @@
             </div>
           </v-col>
           <v-col cols="12" md="4">
-            <div class="text-caption text-medium-emphasis">触发延迟</div>
-            <div class="text-h6">{{ config.delay_seconds || 0 }} 秒</div>
+            <div class="text-caption text-medium-emphasis">订阅处理</div>
+            <div class="text-h6">插件来源优先</div>
           </v-col>
           <v-col cols="12" md="4">
             <div class="text-caption text-medium-emphasis">上次周期扫描</div>
@@ -43,6 +43,18 @@
           <v-col cols="12" md="4">
             <div class="text-caption text-medium-emphasis">队列 / 本轮订阅</div>
             <div class="text-body-2">{{ runtime.scheduler.queue_size || 0 }} / {{ runtime.scheduler.scanned_count || 0 }}</div>
+          </v-col>
+          <v-col cols="12" md="4">
+            <div class="text-caption text-medium-emphasis">TMDB 识别队列</div>
+            <div class="text-body-2">等待 {{ runtime.recognition.waiting || 0 }} / 活动 {{ runtime.recognition.active || 0 }}</div>
+          </v-col>
+          <v-col cols="12" md="4">
+            <div class="text-caption text-medium-emphasis">TMDB 最大并发</div>
+            <div class="text-body-2">{{ runtime.recognition.max_active || 0 }} / 1</div>
+          </v-col>
+          <v-col cols="12" md="4">
+            <div class="text-caption text-medium-emphasis">识别恢复</div>
+            <div class="text-body-2">重试 {{ runtime.recognition.retries || 0 }} / 暂不可用 {{ runtime.recognition.identity_unavailable || 0 }}</div>
           </v-col>
         </v-row>
         <div v-if="sourceStates.length" class="d-flex flex-wrap ga-2 mt-3">
@@ -60,9 +72,13 @@
     <v-card v-if="runtime.tasks.length" variant="outlined" rounded="lg" class="mb-4">
       <v-card-title class="d-flex align-center px-4 py-3 task-toggle" @click="tasksExpanded = !tasksExpanded">
         <v-icon icon="mdi-cloud-sync-outline" color="primary" class="mr-2" />
-        CMS / 115 任务
+        磁力下载任务
         <v-chip size="x-small" variant="tonal" class="ml-2">{{ runtime.tasks.length }}</v-chip>
         <v-spacer />
+        <v-btn icon variant="text" size="small" color="error" :loading="clearingTasks" @click.stop="clearTasks">
+          <v-icon icon="mdi-delete-sweep-outline" />
+          <v-tooltip activator="parent" location="top">清除任务列表记录</v-tooltip>
+        </v-btn>
         <v-btn icon variant="text" size="small" :loading="statusLoading" @click.stop="loadRuntimeStatus">
           <v-icon icon="mdi-refresh" />
           <v-tooltip activator="parent" location="top">刷新任务状态</v-tooltip>
@@ -235,15 +251,17 @@ const props = defineProps({
 const PID = computed(() => props.pluginId || 'TgSearch115')
 
 // ---- 配置 / 状态 ----
-const config = reactive({ enabled: false, p115_cookie: '', cms_url: '', cms_token: '', offline_allow_cancel: false, delay_seconds: 0, tg_channels: [] })
+const config = reactive({ enabled: false, p115_cookie: '', cms_url: '', cms_token: '', offline_allow_cancel: false, tg_channels: [] })
 const runtime = reactive({
   scheduler: { running: false, last_run: '', next_run: '', scanned_count: 0, queue_size: 0 },
+  recognition: { waiting: 0, active: 0, max_active: 0, last_wait_seconds: 0, retries: 0, identity_unavailable: 0, stopping: false },
   sources: {},
   tasks: [],
 })
 const statusLoading = ref(false)
 const tasksExpanded = ref(false)
 const retryingBtih = ref('')
+const clearingTasks = ref(false)
 let statusTimer = null
 const sourceStates = computed(() => Object.entries(runtime.sources || {}).map(([name, state]) => ({ name, ...state })))
 const channelCount = computed(() => (Array.isArray(config.tg_channels) ? config.tg_channels.length : 0))
@@ -331,6 +349,7 @@ async function loadRuntimeStatus() {
     const data = res && typeof res === 'object' && 'data' in res && ('success' in res || 'code' in res) ? res.data : res
     if (data?.success) {
       Object.assign(runtime.scheduler, data.scheduler || {})
+      Object.assign(runtime.recognition, data.recognition || {})
       runtime.sources = data.sources || {}
       runtime.tasks = Array.isArray(data.tasks) ? data.tasks : []
     }
@@ -364,6 +383,21 @@ async function cancelTask(task) {
     await loadRuntimeStatus()
   } catch (e) {
     showSnack('取消异常：' + (e?.message || e), 'error')
+  }
+}
+
+async function clearTasks() {
+  if (!props.api?.post || clearingTasks.value) return
+  clearingTasks.value = true
+  try {
+    const res = await props.api.post(`plugin/${PID.value}/tasks/clear`, {})
+    const data = res && typeof res === 'object' && 'data' in res && ('success' in res || 'code' in res) ? res.data : res
+    showSnack(data?.message || '清除失败', data?.success ? 'success' : 'error')
+    await loadRuntimeStatus()
+  } catch (e) {
+    showSnack(e?.response?.data?.message || e?.message || '清除任务记录失败', 'error')
+  } finally {
+    clearingTasks.value = false
   }
 }
 

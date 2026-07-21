@@ -18,6 +18,26 @@ def magnet(char="a"):
 
 
 class CmsTaskLedgerTest(unittest.TestCase):
+    def test_clear_records_refuses_to_drop_active_task_tracking(self):
+        ledger = cms_tasks.CmsTaskLedger()
+        ledger.add("magnet:?xt=urn:btih:" + "a" * 40, "active")
+
+        cleared, active = ledger.clear_if_idle()
+
+        self.assertEqual((0, 1), (cleared, active))
+        self.assertEqual(1, len(ledger.dump_records()))
+
+    def test_clear_records_removes_terminal_history(self):
+        ledger = cms_tasks.CmsTaskLedger()
+        magnet = "magnet:?xt=urn:btih:" + "b" * 40
+        ledger.add(magnet, "done")
+        ledger.update("b" * 40, "completed")
+
+        cleared, active = ledger.clear_if_idle()
+
+        self.assertEqual((1, 0), (cleared, active))
+        self.assertEqual([], ledger.dump_records())
+
     def test_active_btih_is_deduplicated_across_reload(self):
         now = datetime(2026, 7, 20, tzinfo=timezone.utc)
         ledger = cms_tasks.CmsTaskLedger(now=lambda: now)

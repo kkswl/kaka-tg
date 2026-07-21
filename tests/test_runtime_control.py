@@ -26,6 +26,25 @@ class RuntimeControlTest(unittest.TestCase):
 
         self.assertEqual([1], [item.id for item in result])
 
+    def test_specials_and_numbered_seasons_have_distinct_keys(self):
+        base = dict(name="示例", year=2026, type="TV")
+        keys = {
+            runtime_control.subscription_key(SimpleNamespace(**base, season=value))
+            for value in (0, 2, 3)
+        }
+        self.assertEqual(3, len(keys))
+        self.assertIn("0", {key[-1] for key in keys})
+
+    def test_completed_season_does_not_deduplicate_another_active_season(self):
+        subscriptions = [
+            SimpleNamespace(id=2, state="P", name="示例剧", year=2022, type="TV", season=2),
+            SimpleNamespace(id=3, state="N", name="示例剧", year=2022, type="TV", season=3),
+        ]
+
+        result = runtime_control.active_unique_subscriptions(subscriptions)
+
+        self.assertEqual([3], [item.id for item in result])
+
     def test_ttl_cache_expires(self):
         now = [100.0]
         cache = runtime_control.TtlCache(ttl_seconds=60, clock=lambda: now[0])

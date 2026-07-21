@@ -293,9 +293,6 @@
               <v-spacer />
               <v-switch v-model="config.use_rule_groups" color="primary" hide-details density="compact" />
             </v-col>
-            <v-col cols="12" md="6">
-              <v-text-field v-model="config.delay_seconds" label="触发延迟（秒）" variant="outlined" density="comfortable" type="number" hide-details hint="订阅创建后等待几秒再触发" persistent-hint />
-            </v-col>
             <v-col cols="12" md="6" class="d-flex align-center">
               <span class="text-body-2 mr-2">周期搜索 MP 活动订阅</span>
               <v-spacer />
@@ -623,7 +620,6 @@ const DEFAULTS = {
   p115_cookie: '',
   p115_target: '/电影',
   use_rule_groups: true,
-  delay_seconds: 3,
   notify_success: true,
   notify_fail: false,
   auto_finish: true,
