@@ -224,7 +224,7 @@ class TgSearch115(_PluginBase):
         "并支持 115 分享直接转存；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.24"
+    plugin_version = "4.7.25"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -662,6 +662,12 @@ class TgSearch115(_PluginBase):
     def _start_coordinator(self):
         """Start the single bounded queue used by event, periodic and manual searches."""
         self._stop_coordinator()
+        # ``init_plugin`` creates the recognition gate before starting runtime
+        # services.  The defensive stop above disposes the previous runtime,
+        # including that gate, so always create a fresh accepting gate here.
+        # Without this, every candidate immediately falls into the unavailable
+        # path after a plugin install/reload.
+        self._recognition_gate = RecognitionGate()
         self._coordinator = SearchCoordinator(
             process_subscription=self._handle_subscribe,
             list_subscriptions=self._periodic_subscriptions,

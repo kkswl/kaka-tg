@@ -80,6 +80,16 @@ class SubscriptionDryRunContractTest(unittest.TestCase):
         self.assertIn("MediaInfo(tmdb_info=dict(tmdb_info))", body)
         self.assertNotIn('factory=TmdbChain', body)
 
+    def test_runtime_start_recreates_accepting_recognition_gate_after_stop(self):
+        start = self.source.index("def _start_coordinator")
+        end = self.source.index("def _stop_coordinator", start)
+        body = self.source[start:end]
+        stop_pos = body.index("self._stop_coordinator()")
+        gate_pos = body.index("self._recognition_gate = RecognitionGate()")
+        coordinator_pos = body.index("self._coordinator = SearchCoordinator(")
+        self.assertLess(stop_pos, gate_pos)
+        self.assertLess(gate_pos, coordinator_pos)
+
 
 if __name__ == "__main__":
     unittest.main()
