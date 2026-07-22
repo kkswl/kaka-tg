@@ -223,7 +223,7 @@ class TgSearch115(_PluginBase):
         "并支持 115 分享直接转存；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.18"
+    plugin_version = "4.7.19"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -555,6 +555,14 @@ class TgSearch115(_PluginBase):
                 "auth": "bear",
                 "summary": "只读验证订阅候选",
                 "description": "仅搜索、读取分享文件名、运行规则和身份确认；不转存、不提交任务、不修改订阅。",
+            },
+            {
+                "path": "/subscription/process",
+                "endpoint": self.__subscription_process_api,
+                "methods": ["POST"],
+                "auth": "bear",
+                "summary": "确认后正式处理单个订阅",
+                "description": "必须传 confirm=true；复用手动高优先级队列和严格身份确认，只有安全候选才会转存或提交下载。",
             },
             {
                 "path": "/search",
@@ -2392,6 +2400,28 @@ class TgSearch115(_PluginBase):
         except Exception as exc:
             logger.warning("【TG115】订阅干跑失败 subscribe_id=%s type=%s", subscribe_id, type(exc).__name__)
             return JSONResponse({"success": False, "message": "只读验证失败，请检查安全分类日志"}, status_code=500)
+
+    def __subscription_process_api(self, payload: dict = Body(default=None)):
+        """POST /subscription/process: explicitly enqueue one real subscription workflow."""
+        from starlette.responses import JSONResponse
+        payload = payload if isinstance(payload, dict) else {}
+        if payload.get("confirm") is not True:
+            return JSONResponse(
+                {"success": False, "message": "正式处理必须显式确认 confirm=true"},
+                status_code=400,
+            )
+        try:
+            subscribe_id = int(payload.get("subscribe_id"))
+        except (TypeError, ValueError):
+            return JSONResponse({"success": False, "message": "请输入有效的订阅 ID"}, status_code=400)
+        if not self._enabled or not self._coordinator:
+            return JSONResponse({"success": False, "message": "插件未启用或处理队列不可用"}, status_code=409)
+        if not SubscribeOper().get(subscribe_id):
+            return JSONResponse({"success": False, "message": "订阅不存在"}, status_code=404)
+        if not self._coordinator.enqueue_subscription(subscribe_id, priority=-5):
+            return JSONResponse({"success": False, "message": "订阅已在队列中或队列不可用"}, status_code=409)
+        logger.info("【TG115】已确认正式处理订阅 subscribe_id=%s", subscribe_id)
+        return JSONResponse({"success": True, "message": "订阅已进入正式处理队列"}, status_code=202)
 
     def __retry_cms_task_api(self, payload: dict = Body(default=None)):
         """POST /tasks/retry: restart direct task or restore CMS subscription."""

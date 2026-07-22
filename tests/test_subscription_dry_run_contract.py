@@ -16,6 +16,15 @@ class SubscriptionDryRunContractTest(unittest.TestCase):
         for forbidden in ("SubscribeOper().update", "_submit_magnet_to_115", "_transfer.transfer", "_cms_client.", "_save_cms_tasks", "post_message"):
             self.assertNotIn(forbidden, body)
 
+    def test_real_process_api_requires_explicit_confirmation_and_queue(self):
+        start = self.source.index("def __subscription_process_api")
+        end = self.source.index("def __retry_cms_task_api", start)
+        body = self.source[start:end]
+        self.assertIn('payload.get("confirm") is not True', body)
+        self.assertIn("enqueue_subscription(subscribe_id, priority=-5)", body)
+        self.assertNotIn("SubscribeOper().update", body)
+        self.assertNotIn("_submit_magnet_to_115", body)
+
     def test_evaluator_has_no_action_or_notification_calls(self):
         start = self.source.index("def _evaluate_subscription_candidates")
         end = self.source.index("def _dry_run_summary", start)
