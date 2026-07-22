@@ -10,6 +10,11 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 _BTIH_RE = re.compile(r"(?:^|[?&])xt=urn:btih:([a-z0-9]+)", re.IGNORECASE)
 ACTIVE_STATUSES = {"waiting", "submitted", "downloading", "pending_organize"}
+
+
+def has_explicit_clear_confirmation(payload: Any) -> bool:
+    """Require an exact opt-in before destructive ledger cleanup."""
+    return isinstance(payload, dict) and payload.get("confirm") is True
 TERMINAL_STATUSES = {"completed", "failed", "timed_out"}
 
 # v4.7.0 public generic ledger.  The compatibility class below keeps the

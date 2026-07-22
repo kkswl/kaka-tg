@@ -18,6 +18,12 @@ def magnet(char="a"):
 
 
 class CmsTaskLedgerTest(unittest.TestCase):
+    def test_clear_requires_explicit_confirmation(self):
+        self.assertFalse(cms_tasks.has_explicit_clear_confirmation(None))
+        self.assertFalse(cms_tasks.has_explicit_clear_confirmation({}))
+        self.assertFalse(cms_tasks.has_explicit_clear_confirmation({"confirm": "true"}))
+        self.assertTrue(cms_tasks.has_explicit_clear_confirmation({"confirm": True}))
+
     def test_clear_records_refuses_to_drop_active_task_tracking(self):
         ledger = cms_tasks.CmsTaskLedger()
         ledger.add("magnet:?xt=urn:btih:" + "a" * 40, "active")

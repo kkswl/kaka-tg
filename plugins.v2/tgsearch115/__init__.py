@@ -87,7 +87,7 @@ from .resource_strategy import (
 )
 from .offline_rule_compat import RuleCompatibilityDiagnostics, filter_offline_share_rules
 from .cms_client import Cms115Client
-from .cms_tasks import CmsTaskLedger, btih_from_magnet
+from .cms_tasks import CmsTaskLedger, btih_from_magnet, has_explicit_clear_confirmation
 from .p115_offline import P115OfflineClient
 from .runtime_control import SearchCoordinator, SourceCircuitBreaker, TtlCache
 from .season_support import (
@@ -219,7 +219,7 @@ class TgSearch115(_PluginBase):
         "并支持 115 分享直接转存；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.10"
+    plugin_version = "4.7.11"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -2085,9 +2085,15 @@ class TgSearch115(_PluginBase):
         logger.info(f"【TG115】任务重试已恢复订阅 btih={btih[:12]}...")
         return JSONResponse({"success": True, "message": "订阅已恢复，下一轮将重新搜索并按当前离线策略提交"})
 
-    def __clear_offline_tasks_api(self):
+    def __clear_offline_tasks_api(self, payload: dict = Body(default=None)):
         """POST /tasks/clear: clear ledger records without losing active tracking."""
         from starlette.responses import JSONResponse
+        if not has_explicit_clear_confirmation(payload):
+            return JSONResponse({
+                "success": False,
+                "message": "请在确认对话框中明确确认后再清除任务记录",
+                "cleared": 0,
+            }, status_code=400)
         if not self._cms_tasks:
             return JSONResponse({"success": True, "message": "任务记录已为空", "cleared": 0})
         cleared, active = self._cms_tasks.clear_if_idle()

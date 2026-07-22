@@ -75,9 +75,16 @@
         磁力下载任务
         <v-chip size="x-small" variant="tonal" class="ml-2">{{ runtime.tasks.length }}</v-chip>
         <v-spacer />
-        <v-btn icon variant="text" size="small" color="error" :loading="clearingTasks" @click.stop="clearTasks">
-          <v-icon icon="mdi-delete-sweep-outline" />
-          <v-tooltip activator="parent" location="top">清除任务列表记录</v-tooltip>
+        <v-btn
+          size="small"
+          variant="outlined"
+          color="error"
+          prepend-icon="mdi-delete-sweep-outline"
+          aria-label="清除已结束的磁力下载任务记录"
+          :loading="clearingTasks"
+          @click.stop="openClearTasksDialog"
+        >清除记录
+          <v-tooltip activator="parent" location="top">清除已结束的本地任务记录</v-tooltip>
         </v-btn>
         <v-btn icon variant="text" size="small" :loading="statusLoading" @click.stop="loadRuntimeStatus">
           <v-icon icon="mdi-refresh" />
@@ -130,6 +137,24 @@
       </div>
       </v-expand-transition>
     </v-card>
+
+    <v-dialog v-model="clearTasksDialog" max-width="480" persistent>
+      <v-card>
+        <v-card-title class="d-flex align-center">
+          <v-icon icon="mdi-alert-outline" color="error" class="mr-2" />确认清除任务记录
+        </v-card-title>
+        <v-card-text>
+          <p>将清除 {{ terminalTaskCount }} 条已结束的本地磁力下载任务记录。</p>
+          <p v-if="activeTaskCount" class="text-warning">当前有 {{ activeTaskCount }} 条任务仍在处理，服务器会拒绝此次清除。</p>
+          <p class="text-medium-emphasis">不会删除 115 文件，不会取消离线下载，也不会修改订阅。</p>
+        </v-card-text>
+        <v-card-actions class="px-6 pb-4">
+          <v-spacer />
+          <v-btn variant="text" :disabled="clearingTasks" @click="clearTasksDialog = false">取消</v-btn>
+          <v-btn color="error" variant="flat" :loading="clearingTasks" @click="clearTasksConfirmed">确认清除</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
 
     <!-- ============ 手动搜索 ============ -->
     <v-card variant="outlined" rounded="lg">
@@ -262,6 +287,10 @@ const statusLoading = ref(false)
 const tasksExpanded = ref(false)
 const retryingBtih = ref('')
 const clearingTasks = ref(false)
+const clearTasksDialog = ref(false)
+const ACTIVE_TASK_STATUSES = new Set(['waiting', 'submitted', 'downloading', 'pending_organize'])
+const terminalTaskCount = computed(() => runtime.tasks.filter(task => !ACTIVE_TASK_STATUSES.has(task.status)).length)
+const activeTaskCount = computed(() => runtime.tasks.filter(task => ACTIVE_TASK_STATUSES.has(task.status)).length)
 let statusTimer = null
 const sourceStates = computed(() => Object.entries(runtime.sources || {}).map(([name, state]) => ({ name, ...state })))
 const channelCount = computed(() => (Array.isArray(config.tg_channels) ? config.tg_channels.length : 0))
@@ -386,14 +415,22 @@ async function cancelTask(task) {
   }
 }
 
-async function clearTasks() {
+function openClearTasksDialog() {
+  if (clearingTasks.value) return
+  clearTasksDialog.value = true
+}
+
+async function clearTasksConfirmed() {
   if (!props.api?.post || clearingTasks.value) return
   clearingTasks.value = true
   try {
-    const res = await props.api.post(`plugin/${PID.value}/tasks/clear`, {})
+    const res = await props.api.post(`plugin/${PID.value}/tasks/clear`, { confirm: true })
     const data = res && typeof res === 'object' && 'data' in res && ('success' in res || 'code' in res) ? res.data : res
     showSnack(data?.message || '清除失败', data?.success ? 'success' : 'error')
-    await loadRuntimeStatus()
+    if (data?.success) {
+      clearTasksDialog.value = false
+      await loadRuntimeStatus()
+    }
   } catch (e) {
     showSnack(e?.response?.data?.message || e?.message || '清除任务记录失败', 'error')
   } finally {
