@@ -120,6 +120,12 @@ def confirm_candidate_identity(
     if not target_tmdb and not target_douban:
         return IdentityResult(False, reason="订阅缺少 TMDB/豆瓣 ID，禁止自动转存", **diagnostic)
 
+    # A plugin-side fallback may resolve the subscribed TMDB record directly
+    # when MP's generic recognizer loses its PostgreSQL cursor. It is still
+    # required to match the actual candidate title against that official record.
+    setattr(candidate_meta, "_tg115_target_tmdb_id", target_tmdb)
+    setattr(candidate_meta, "_tg115_target_type", target_type)
+
     try:
         if recognize_candidate:
             recognized = recognize_candidate(
@@ -149,6 +155,23 @@ def confirm_candidate_identity(
             identity_path=("share_metadata_tmdb_fallback" if not local_match else "local_match"),
             **diagnostic,
         )
+    if getattr(candidate_media, "_tg115_target_metadata_fallback", False):
+        try:
+            if not TorrentHelper.match_torrent(
+                    mediainfo=candidate_media, torrent_meta=candidate_meta, torrent=torrent):
+                return IdentityResult(
+                    False, reason="候选未通过目标 TMDB 标题/别名核验",
+                    recognition_attempted=True,
+                    identity_path="share_metadata_tmdb_fallback",
+                    **diagnostic,
+                )
+        except Exception as exc:
+            return IdentityResult(
+                False, reason=f"目标 TMDB 标题核验异常: {type(exc).__name__}",
+                recognition_attempted=True,
+                identity_path="share_metadata_tmdb_fallback",
+                **diagnostic,
+            )
 
     if not same_media_type(getattr(candidate_media, "type", None), target_type):
         return IdentityResult(

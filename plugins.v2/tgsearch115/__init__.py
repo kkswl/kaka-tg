@@ -223,7 +223,7 @@ class TgSearch115(_PluginBase):
         "并支持 115 分享直接转存；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.17"
+    plugin_version = "4.7.18"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -1416,17 +1416,31 @@ class TgSearch115(_PluginBase):
             )
         except RecognitionUnavailable:
             # Newer MP/PostgreSQL combinations can occasionally fail while
-            # releasing MediaChain's recognition cursor. Query the same native
-            # TMDB module directly as a read-only fallback. IdentityMatcher
-            # still requires an exact subscribed TMDB/Douban ID afterwards.
-            results = self._run_recognition(
+            # releasing MediaChain's recognition cursor. Resolve the already
+            # subscribed TMDB record directly, then IdentityMatcher re-runs
+            # TorrentHelper against its official aliases before accepting it.
+            target_tmdb_id = getattr(candidate_meta, "_tg115_target_tmdb_id", None)
+            target_type = to_moviepilot_media_type(
+                getattr(candidate_meta, "_tg115_target_type", None), MediaType
+            )
+            if not target_tmdb_id or not target_type:
+                raise
+            try:
+                target_tmdb_id = int(target_tmdb_id)
+            except (TypeError, ValueError):
+                raise
+            tmdb_info = self._run_recognition(
                 factory=TmdbChain,
                 operation=lambda chain: chain.run_module(
-                    "search_medias", meta=candidate_meta
+                    "tmdb_info", tmdbid=target_tmdb_id, mtype=target_type
                 ),
-                label="candidate_tmdb_fallback",
+                label="candidate_target_tmdb_fallback",
             )
-            return (results or [None])[0]
+            if not tmdb_info:
+                raise RecognitionUnavailable("目标 TMDB 媒体信息不可用")
+            candidate = MediaInfo(tmdb_info=tmdb_info)
+            setattr(candidate, "_tg115_target_metadata_fallback", True)
+            return candidate
 
     def _hydrate_tv_season_years(self, mediainfo, subscribe) -> None:
         """Fill missing TV season premiere years through MP's read-only TMDB chain."""
