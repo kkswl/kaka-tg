@@ -9,7 +9,11 @@ from typing import Any, Callable, Dict, Optional
 
 
 class RecognitionUnavailable(RuntimeError):
-    pass
+    """Identify a safe reason category without retaining an exception's raw details."""
+
+    def __init__(self, message: str, reason: str = "unknown") -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 class RecognitionGate:
@@ -97,8 +101,10 @@ class RecognitionGate:
                 self._sleep(self._random_uniform(1.0, 3.0))
         with self._metrics_lock:
             self._unavailable += 1
+        reason = "cursor_lifecycle" if last_error and self._cursor_failure(last_error) \
+            else type(last_error).__name__ if last_error else "unknown"
         raise RecognitionUnavailable(
-            f"{label} identity_unavailable: {type(last_error).__name__ if last_error else 'unknown'}"
+            f"{label} identity_unavailable: {reason}", reason=reason
         ) from last_error
 
     def stop(self, timeout: float = 5.0) -> bool:

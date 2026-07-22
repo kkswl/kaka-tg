@@ -10,13 +10,15 @@ import time
 from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
+from .media_types import media_type_key
+
 
 def subscription_key(subscribe: Any) -> Tuple[str, str, str, str]:
     """Return a stable media key used to deduplicate one periodic scan."""
     return (
         str(getattr(subscribe, "name", "") or "").strip().casefold(),
         str(getattr(subscribe, "year", "") or "").strip(),
-        str(getattr(subscribe, "type", "") or "").strip().upper(),
+        media_type_key(getattr(subscribe, "type", None)),
         "" if getattr(subscribe, "season", None) is None
         else str(getattr(subscribe, "season")).strip(),
     )

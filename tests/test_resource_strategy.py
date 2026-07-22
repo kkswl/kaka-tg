@@ -167,6 +167,26 @@ class ResourceStrategyTest(unittest.TestCase):
         self.assertEqual("https://115.com/s/fallback", result.candidate.page_url)
         self.assertFalse(result.via_magnet)
 
+    def test_identity_unavailable_does_not_submit_or_transfer(self):
+        candidate = _torrent("https://115.com/s/unavailable", "115")
+        submitted = []
+        transferred = []
+
+        result = resource_strategy.execute_auto_candidates(
+            candidates=[candidate],
+            confirm_identity=lambda _candidate: SimpleNamespace(
+                confirmed=False,
+                recognition_attempted=True,
+                reason="MoviePilot 媒体识别暂不可用",
+            ),
+            submit_magnet=lambda item: submitted.append(item) or (True, "unexpected"),
+            transfer_share=lambda item: transferred.append(item) or (True, "unexpected"),
+        )
+
+        self.assertIsNone(result.candidate)
+        self.assertEqual([], submitted)
+        self.assertEqual([], transferred)
+
 
 if __name__ == "__main__":
     unittest.main()

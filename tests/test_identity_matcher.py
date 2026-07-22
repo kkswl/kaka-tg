@@ -30,6 +30,8 @@ class _FakeMediaChain:
 class _FakeTorrentHelper:
     @staticmethod
     def match_torrent(mediainfo, torrent_meta, torrent):
+        if getattr(torrent, "match_error", None):
+            raise torrent.match_error
         return bool(getattr(torrent, "local_match", False))
 
 
@@ -58,6 +60,12 @@ MODULE_PATH = (
 PACKAGE_DIR = MODULE_PATH.parent
 package = sys.modules.setdefault("tgsearch115", types.ModuleType("tgsearch115"))
 package.__path__ = [str(PACKAGE_DIR)]
+media_type_spec = importlib.util.spec_from_file_location(
+    "tgsearch115.media_types", PACKAGE_DIR / "media_types.py"
+)
+media_type_module = importlib.util.module_from_spec(media_type_spec)
+sys.modules[media_type_spec.name] = media_type_module
+media_type_spec.loader.exec_module(media_type_module)
 season_spec = importlib.util.spec_from_file_location(
     "tgsearch115.season_support", PACKAGE_DIR / "season_support.py"
 )
@@ -192,6 +200,17 @@ class IdentityMatcherTest(unittest.TestCase):
         self.assertFalse(result.confirmed)
         self.assertEqual("identity_unavailable", result.match_source)
         self.assertTrue(result.recognition_attempted)
+
+    def test_type_value_attribute_error_is_reported_as_compatibility_failure(self):
+        target = SimpleNamespace(type="电视剧", tmdb_id=100, douban_id=None, season=2)
+        subscribe = SimpleNamespace(tmdbid=100, doubanid=None, season=2, episode_group=None)
+        torrent = _torrent(title="示例剧 S02", local_match=True)
+        torrent.match_error = AttributeError("'str' object has no attribute 'value'")
+
+        result = identity_matcher.confirm_candidate_identity(subscribe, target, torrent)
+
+        self.assertFalse(result.confirmed)
+        self.assertIn("媒体类型兼容错误", result.reason)
 
 
 if __name__ == "__main__":

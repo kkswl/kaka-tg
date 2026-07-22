@@ -2,13 +2,23 @@ import importlib.util
 import sys
 import threading
 import time
+import types
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "plugins.v2" / "tgsearch115" / "runtime_control.py"
-spec = importlib.util.spec_from_file_location("tgsearch115_runtime_control", MODULE_PATH)
+PACKAGE_DIR = MODULE_PATH.parent
+package = sys.modules.setdefault("tgsearch115", types.ModuleType("tgsearch115"))
+package.__path__ = [str(PACKAGE_DIR)]
+media_type_spec = importlib.util.spec_from_file_location(
+    "tgsearch115.media_types", PACKAGE_DIR / "media_types.py"
+)
+media_types = importlib.util.module_from_spec(media_type_spec)
+sys.modules[media_type_spec.name] = media_types
+media_type_spec.loader.exec_module(media_types)
+spec = importlib.util.spec_from_file_location("tgsearch115.runtime_control", MODULE_PATH)
 runtime_control = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = runtime_control
 spec.loader.exec_module(runtime_control)
@@ -34,6 +44,14 @@ class RuntimeControlTest(unittest.TestCase):
         }
         self.assertEqual(3, len(keys))
         self.assertIn("0", {key[-1] for key in keys})
+
+    def test_legacy_and_postgresql_types_share_one_deduplication_key(self):
+        legacy = SimpleNamespace(id=1, state="N", name="示例剧", year=2024, type="TV", season=2)
+        postgresql = SimpleNamespace(id=2, state="N", name="示例剧", year=2024, type="电视剧", season=2)
+
+        result = runtime_control.active_unique_subscriptions([legacy, postgresql])
+
+        self.assertEqual([1], [item.id for item in result])
 
     def test_completed_season_does_not_deduplicate_another_active_season(self):
         subscriptions = [

@@ -69,13 +69,14 @@ from app.db.systemconfig_oper import SystemConfigOper
 from app.helper.torrent import TorrentHelper
 from app.log import logger
 from app.plugins import _PluginBase
-from app.schemas.types import EventType, NotificationType, SystemConfigKey
+from app.schemas.types import EventType, MediaType, NotificationType, SystemConfigKey
 
 from .p115_transfer import P115Transfer
 from .tg_scraper import TgChannelScraper, repair_mojibake
 from .site_scraper import FilejinScraper
 from .juying_scraper import JuyingApi
 from .identity_matcher import confirm_candidate_identity
+from .media_types import is_tv_media, subscription_notification_title, to_moviepilot_media_type
 from .search_relevance import extract_year, is_relevant_result
 from .resource_strategy import (
     execute_auto_candidates,
@@ -217,7 +218,7 @@ class TgSearch115(_PluginBase):
         "并支持 115 分享直接转存；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.8"
+    plugin_version = "4.7.9"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -846,7 +847,7 @@ class TgSearch115(_PluginBase):
                 )
                 return
 
-            is_tv = str(getattr(subscribe, "type", "") or "") == "TV"
+            is_tv = is_tv_media(getattr(subscribe, "type", None))
             auto_candidates = select_auto_candidates(
                 torrents=matched,
                 prefer_site_magnet=(
@@ -1116,20 +1117,31 @@ class TgSearch115(_PluginBase):
                 )
 
             mediainfo = self._run_recognition(
-                factory=SubscribeChain,
+                factory=MediaChain,
                 operation=operation,
                 label="subscription",
             )
             if mediainfo:
                 return mediainfo
-        except Exception as e:
-            logger.warn(f"【TG115】recognize_media 异常 type={type(e).__name__}")
+        except RecognitionUnavailable as exc:
+            logger.warning(
+                f"【TG115】MoviePilot 媒体识别暂不可用 reason={exc.reason}"
+            )
+        except Exception as exc:
+            logger.warning(
+                f"【TG115】MoviePilot 媒体识别异常 type={type(exc).__name__}"
+            )
         try:
+            media_type = to_moviepilot_media_type(subscribe.type, MediaType)
+            if not media_type:
+                logger.warning("【TG115】订阅媒体类型无法兼容，已安全回退默认搜索")
+                return None
             return MediaInfo(
-                type=subscribe.type, title=subscribe.name, year=subscribe.year,
+                type=media_type, title=subscribe.name, year=subscribe.year,
                 tmdb_id=subscribe.tmdbid, douban_id=subscribe.doubanid,
             )
-        except Exception:
+        except Exception as exc:
+            logger.warning(f"【TG115】订阅媒体类型兜底失败 type={type(exc).__name__}")
             return None
 
     def _run_recognition(self, factory, operation, label: str):
@@ -1363,9 +1375,11 @@ class TgSearch115(_PluginBase):
         """
         try:
             oper = SubscribeOper()
-            is_tv = (subscribe.type == "TV" or
-                     getattr(mediainfo, "type", None) == "电视剧" or
-                     getattr(meta, "type", None) == "TV")
+            is_tv = any(is_tv_media(value) for value in (
+                getattr(subscribe, "type", None),
+                getattr(mediainfo, "type", None),
+                getattr(meta, "type", None),
+            ))
 
             # CMS 接口只确认离线任务已创建，不代表磁力内容已经下载完成。
             # 暂停订阅可避免 MoviePilot 同时重复搜索，但不能发送 SubscribeComplete。
@@ -1380,7 +1394,7 @@ class TgSearch115(_PluginBase):
                         subscribe=subscribe,
                         outcome="submitted",
                         mtype=NotificationType.Subscribe,
-                        title=f"TG115 搜索完成：{subscribe.name}",
+                        title=subscription_notification_title(subscribe),
                         text=(
                             "结果：已通过 MoviePilot 规则与媒体 ID 确认，并提交 115 磁力下载。\n"
                             f"渠道：{source_summary or '已完成来源汇总'}\n"
@@ -1442,7 +1456,7 @@ class TgSearch115(_PluginBase):
                             subscribe=subscribe,
                             outcome="transferred",
                             mtype=NotificationType.Subscribe,
-                            title=f"TG115 搜索完成：{subscribe.name}",
+                            title=subscription_notification_title(subscribe),
                             text=(
                                 f"结果：已转存《{subscribe.name}》{season_str}资源（{episode_info}）。\n"
                                 f"渠道：{source_summary or '已完成来源汇总'}\n"
@@ -1456,7 +1470,7 @@ class TgSearch115(_PluginBase):
                             subscribe=subscribe,
                             outcome="transferred",
                             mtype=NotificationType.Subscribe,
-                            title=f"TG115 搜索完成：{subscribe.name}",
+                            title=subscription_notification_title(subscribe),
                             text=(
                                 f"结果：已将《{subscribe.name}》转存至 115 网盘。\n"
                                 f"渠道：{source_summary or '已完成来源汇总'}\n"
@@ -1683,7 +1697,7 @@ class TgSearch115(_PluginBase):
                 subscribe=subscribe,
                 outcome="missed",
                 mtype=NotificationType.Subscribe,
-                title=f"TG115 搜索完成：{subscribe.name}",
+                title=subscription_notification_title(subscribe),
                 text=(
                     f"结果：未找到可安全自动处理的资源。\n"
                     f"渠道：{source_report.text() if source_report else '已完成全部已启用来源'}\n"

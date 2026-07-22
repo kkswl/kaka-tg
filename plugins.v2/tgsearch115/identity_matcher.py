@@ -5,6 +5,7 @@ from app.chain.media import MediaChain
 from app.core.metainfo import MetaInfo
 from app.helper.torrent import TorrentHelper
 from app.log import logger
+from .media_types import is_tv_media, same_media_type
 from .season_support import candidate_seasons
 
 
@@ -45,12 +46,14 @@ def confirm_candidate_identity(
             torrent=torrent,
         )
     except Exception as e:
-        return IdentityResult(False, reason=f"本地身份初筛异常: {e}")
+        if isinstance(e, AttributeError) and "value" in str(e):
+            return IdentityResult(False, reason="媒体类型兼容错误，候选已安全拒绝")
+        return IdentityResult(False, reason=f"本地身份初筛异常: {type(e).__name__}")
     if not local_match:
         return IdentityResult(False, reason="标题、别名、年份或媒体类型不匹配")
 
     target_type = getattr(target_media, "type", None)
-    if getattr(target_type, "value", target_type) in ("电视剧", "TV"):
+    if is_tv_media(target_type):
         expected_season = getattr(subscribe, "season", None)
         if expected_season is None:
             expected_season = getattr(target_media, "season", None)
@@ -106,7 +109,7 @@ def confirm_candidate_identity(
             False, reason="MoviePilot 无法识别候选媒体", recognition_attempted=True
         )
 
-    if getattr(candidate_media, "type", None) != target_type:
+    if not same_media_type(getattr(candidate_media, "type", None), target_type):
         return IdentityResult(
             False, reason="候选媒体类型与订阅不一致", recognition_attempted=True
         )
