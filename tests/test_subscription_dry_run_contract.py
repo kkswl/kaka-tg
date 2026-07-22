@@ -22,6 +22,8 @@ class SubscriptionDryRunContractTest(unittest.TestCase):
         body = self.source[start:end]
         self.assertIn('payload.get("confirm") is not True', body)
         self.assertIn("enqueue_subscription(subscribe_id, priority=-5)", body)
+        self.assertIn("_forced_process_states", body)
+        self.assertIn('original_state not in {"N", "R"}', body)
         self.assertNotIn("SubscribeOper().update", body)
         self.assertNotIn("_submit_magnet_to_115", body)
 

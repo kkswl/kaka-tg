@@ -223,7 +223,7 @@ class TgSearch115(_PluginBase):
         "并支持 115 分享直接转存；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.19"
+    plugin_version = "4.7.20"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -235,6 +235,7 @@ class TgSearch115(_PluginBase):
     _lock = threading.Lock()
     _running_ids: set = set()
     _claimed_ids: set = set()
+    _forced_process_states: Dict[int, str] = {}
     _scraper: Optional[TgChannelScraper] = None
     _site_scraper: Optional[FilejinScraper] = None
     _juying_api: Optional[JuyingApi] = None
@@ -729,11 +730,12 @@ class TgSearch115(_PluginBase):
         with self._lock:
             if subscribe_id in self._claimed_ids:
                 return True
+            forced_state = self._forced_process_states.get(subscribe_id)
         subscribe = SubscribeOper().get(subscribe_id)
         if not subscribe:
             return False
         state = str(getattr(subscribe, "state", "N") or "N").upper()
-        if state != "N":
+        if state != "N" and forced_state != state:
             return False
         try:
             SubscribeOper().update(subscribe_id, {"state": "P"})
@@ -749,14 +751,18 @@ class TgSearch115(_PluginBase):
     def _restore_claim(self, subscribe_id: int) -> None:
         with self._lock:
             claimed = subscribe_id in self._claimed_ids
+            original_state = self._forced_process_states.get(subscribe_id)
         if not claimed:
+            with self._lock:
+                self._forced_process_states.pop(subscribe_id, None)
             return
         restored = False
         try:
             subscribe = SubscribeOper().get(subscribe_id)
             if subscribe and str(getattr(subscribe, "state", "") or "").upper() == "P":
-                SubscribeOper().update(subscribe_id, {"state": "N"})
-                logger.info(f"【TG115】订阅 {subscribe_id} 未命中，已恢复 state=N")
+                restore_state = original_state or "N"
+                SubscribeOper().update(subscribe_id, {"state": restore_state})
+                logger.info(f"【TG115】订阅 {subscribe_id} 未命中，已恢复 state={restore_state}")
             restored = True
         except Exception as exc:
             logger.warning(
@@ -765,10 +771,12 @@ class TgSearch115(_PluginBase):
         if restored:
             with self._lock:
                 self._claimed_ids.discard(subscribe_id)
+                self._forced_process_states.pop(subscribe_id, None)
 
     def _complete_claim(self, subscribe_id: int) -> None:
         with self._lock:
             self._claimed_ids.discard(subscribe_id)
+            self._forced_process_states.pop(subscribe_id, None)
 
     # ============================ 事件入口 ============================
     @eventmanager.register(EventType.SubscribeAdded)
@@ -2416,9 +2424,17 @@ class TgSearch115(_PluginBase):
             return JSONResponse({"success": False, "message": "请输入有效的订阅 ID"}, status_code=400)
         if not self._enabled or not self._coordinator:
             return JSONResponse({"success": False, "message": "插件未启用或处理队列不可用"}, status_code=409)
-        if not SubscribeOper().get(subscribe_id):
+        subscribe = SubscribeOper().get(subscribe_id)
+        if not subscribe:
             return JSONResponse({"success": False, "message": "订阅不存在"}, status_code=404)
+        original_state = str(getattr(subscribe, "state", "N") or "N").upper()
+        if original_state not in {"N", "R"}:
+            return JSONResponse({"success": False, "message": "订阅当前状态不允许正式处理"}, status_code=409)
+        with self._lock:
+            self._forced_process_states[subscribe_id] = original_state
         if not self._coordinator.enqueue_subscription(subscribe_id, priority=-5):
+            with self._lock:
+                self._forced_process_states.pop(subscribe_id, None)
             return JSONResponse({"success": False, "message": "订阅已在队列中或队列不可用"}, status_code=409)
         logger.info("【TG115】已确认正式处理订阅 subscribe_id=%s", subscribe_id)
         return JSONResponse({"success": True, "message": "订阅已进入正式处理队列"}, status_code=202)

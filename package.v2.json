@@ -3,10 +3,11 @@
     "name": "拦截mp订阅",
     "description": "按 TG、观影 115 中文字幕、观影中字 1080P/4K 磁力、聚影顺序搜索；磁力默认插件内置 115，失败回退 CMS。",
     "labels": "订阅,Telegram,115网盘",
-    "version": "4.7.19",
+    "version": "4.7.20",
     "author": "MoviePilot User",
     "level": 2,
     "history": {
+      "v4.7.20": "修复显式正式处理对 R 状态订阅无效的问题：确认处理可临时认领 N/R 状态，失败后精确恢复原状态，成功才进入正常完成链路；其它状态和重复队列继续拒绝。",
       "v4.7.19": "新增显式确认的正式订阅处理接口：POST /subscription/process 必须携带 confirm=true，才将既有订阅加入手动高优先级队列；接口自身不修改订阅或任务，正式链路仍只处理通过完整身份、季号、剧集、字幕和规则确认的候选。",
       "v4.7.18": "修复 MediaChain 游标生命周期异常时的候选确认：不再依赖模糊 TMDB 搜索，按订阅精确 TMDB ID 读取宿主原生目标元数据后重新执行 MoviePilot 标题/别名校验；仍要求 TV 类型、目标季、完整剧集、字幕与规则通过。",
       "v4.7.17": "修复新版 MoviePilot/PostgreSQL 下季首播年份与候选识别兼容：MediaInfo 缺失 season_years 时通过宿主只读 TMDB 季接口补齐；MediaChain 游标生命周期异常时受限回退到宿主 TMDB 搜索，多个结果仅选择 TMDB/豆瓣 ID 精确一致项。未放宽类型、季号、完整剧集、字幕或规则门槛。",
