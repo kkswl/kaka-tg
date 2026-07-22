@@ -28,6 +28,15 @@ class SubscriptionDryRunContractTest(unittest.TestCase):
         self.assertIn("subscription/dry-run", self.page)
         self.assertIn("只读验证，不转存", self.page)
 
+    def test_dry_run_exposes_year_distribution_and_identity_counts(self):
+        self.assertIn('"candidate_year_distribution"', self.source)
+        self.assertIn('Counter(', self.source)
+        for field in ("year_rejected", "year_deferred", "tmdb_matched", "tmdb_mismatch",
+                      "type_mismatch", "season_mismatch", "safe_candidates"):
+            self.assertIn(field, self.source)
+            self.assertIn(field, self.page)
+        self.assertIn("formatYearDistribution", self.page)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -56,6 +56,7 @@ import json
 import random
 import threading
 import time
+from collections import Counter
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import Body
@@ -220,7 +221,7 @@ class TgSearch115(_PluginBase):
         "并支持 115 分享直接转存；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.13"
+    plugin_version = "4.7.14"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -900,7 +901,15 @@ class TgSearch115(_PluginBase):
                 "year_policy": str(getattr(identity, "year_policy", "") or ""),
                 "identity_path": str(getattr(identity, "identity_path", "") or ""),
             })
-        candidate_years = sorted({item.candidate_year for item in identities if item.candidate_year})
+        # A set of years is insufficient for diagnosing season-specific aliases:
+        # expose only a bounded year -> candidate count histogram, never titles or
+        # source URLs.  A 2026 S03 can therefore be distinguished from a stale
+        # 2023/S02 candidate without weakening the final ID/type/season checks.
+        candidate_year_distribution = {
+            str(year): count for year, count in sorted(Counter(
+                item.candidate_year for item in identities if item.candidate_year
+            ).items())
+        }
         return {
             "subscription": {"id": getattr(subscribe, "id", None), "title": str(getattr(subscribe, "name", "") or "")[:120],
                              "year": getattr(subscribe, "year", None), "season": target_season,
@@ -921,7 +930,7 @@ class TgSearch115(_PluginBase):
                 "season_mismatch": sum("季号" in item.reason for item in identities),
                 "safe_candidates": len(evaluation.get("confirmed") or []),
             },
-            "candidate_years": candidate_years,
+            "candidate_year_distribution": candidate_year_distribution,
             "reason": str(evaluation.get("reason") or ""),
             "candidates": candidates,
         }

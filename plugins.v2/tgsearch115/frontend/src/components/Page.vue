@@ -172,7 +172,8 @@
           <div class="text-body-2 font-weight-medium">{{ dryRunResult.subscription?.title }}（{{ dryRunResult.subscription?.year || '未知年份' }}）<span v-if="dryRunResult.subscription?.season != null">S{{ String(dryRunResult.subscription.season).padStart(2, '0') }}</span></div>
           <div class="text-caption text-medium-emphasis mt-1">渠道：{{ dryRunResult.sources }}</div>
           <div class="text-caption text-medium-emphasis">季号初筛：{{ dryRunResult.counts?.season_before || 0 }} → {{ dryRunResult.counts?.season_after || 0 }}；文件名探测：{{ dryRunResult.counts?.metadata_verified || 0 }}；最终安全候选：{{ dryRunResult.counts?.safe_candidates || 0 }}</div>
-          <div class="text-caption text-medium-emphasis">年份：订阅 {{ dryRunResult.subscription?.year || '未知' }}；目标季首播 {{ dryRunResult.subscription?.target_season_year || '未知' }}；候选 {{ (dryRunResult.candidate_years || []).join('、') || '未识别' }}</div>
+          <div class="text-caption text-medium-emphasis">年份：订阅 {{ dryRunResult.subscription?.year || '未知' }}；目标季首播 {{ dryRunResult.subscription?.target_season_year || '未知' }}；候选 {{ formatYearDistribution(dryRunResult.candidate_year_distribution) }}</div>
+          <div class="text-caption text-medium-emphasis">年份拒绝 {{ dryRunResult.counts?.year_rejected || 0 }}；季级 TMDB 延后确认 {{ dryRunResult.counts?.year_deferred || 0 }}；TMDB 一致/不一致 {{ dryRunResult.counts?.tmdb_matched || 0 }}/{{ dryRunResult.counts?.tmdb_mismatch || 0 }}；类型不一致 {{ dryRunResult.counts?.type_mismatch || 0 }}；季号不一致 {{ dryRunResult.counts?.season_mismatch || 0 }}</div>
           <div v-if="dryRunResult.reason" class="text-caption mt-2 text-warning">结论：{{ dryRunResult.reason }}</div>
         </div>
       </v-card-text>
@@ -382,6 +383,10 @@ function formatTime(value) {
   if (!value) return '尚未运行'
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
+}
+function formatYearDistribution(distribution) {
+  const entries = Object.entries(distribution || {})
+  return entries.length ? entries.map(([year, count]) => `${year}×${count}`).join('、') : '未识别'
 }
 function taskStatusLabel(status) {
   return {
