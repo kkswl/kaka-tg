@@ -7,6 +7,12 @@ PLUGIN_PATH = Path(__file__).resolve().parents[1] / "plugins.v2" / "tgsearch115"
 
 
 class ConfigDefaultsTest(unittest.TestCase):
+    def test_plugin_startup_uses_ttl_cache_public_constructor_arguments(self):
+        """启动初始化不得传入不存在的 TtlCache 参数而导致插件无法加载。"""
+        source = PLUGIN_PATH.read_text(encoding="utf-8")
+        self.assertIn("TtlCache(ttl_seconds=6 * 3600, max_entries=256)", source)
+        self.assertNotIn("TtlCache(ttl_seconds=6 * 3600, maxsize=256)", source)
+
     def test_v460_defaults_are_available_for_old_configs(self):
         tree = ast.parse(PLUGIN_PATH.read_text(encoding="utf-8"))
         defaults = None

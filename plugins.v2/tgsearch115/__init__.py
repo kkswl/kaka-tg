@@ -221,7 +221,7 @@ class TgSearch115(_PluginBase):
         "并支持 115 分享直接转存；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.15"
+    plugin_version = "4.7.16"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -294,7 +294,7 @@ class TgSearch115(_PluginBase):
         self._apply_config(config)
         stored_tasks = self.get_data(CMS_TASKS_KEY) or []
         self._cms_tasks = CmsTaskLedger(stored_tasks if isinstance(stored_tasks, list) else [])
-        self._share_metadata_cache = TtlCache(ttl_seconds=6 * 3600, maxsize=256)
+        self._share_metadata_cache = TtlCache(ttl_seconds=6 * 3600, max_entries=256)
 
         # 持久化（保证 get_data 可读、字段干净）
         try:
