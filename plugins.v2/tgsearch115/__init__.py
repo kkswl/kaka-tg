@@ -224,7 +224,7 @@ class TgSearch115(_PluginBase):
         "并支持 115 分享直接转存；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.23"
+    plugin_version = "4.7.24"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -252,6 +252,7 @@ class TgSearch115(_PluginBase):
     _notification_cache: Optional[TtlCache] = None
     _share_metadata_cache: Optional[TtlCache] = None
     _season_year_cache: Optional[TtlCache] = None
+    _target_tmdb_cache: Optional[TtlCache] = None
 
     # 配置项（运行态缓存）
     _tg_channels: List[Dict[str, Any]] = []
@@ -345,6 +346,7 @@ class TgSearch115(_PluginBase):
         self._search_cache = TtlCache(ttl_seconds=cache_hours * 3600)
         self._notification_cache = TtlCache(ttl_seconds=600, max_entries=256)
         self._season_year_cache = TtlCache(ttl_seconds=6 * 3600, max_entries=128)
+        self._target_tmdb_cache = TtlCache(ttl_seconds=6 * 3600, max_entries=128)
         self._source_breaker = SourceCircuitBreaker(
             failure_threshold=failure_threshold,
             cooldown_seconds=cooldown_minutes * 60,
@@ -1503,16 +1505,29 @@ class TgSearch115(_PluginBase):
                 target_tmdb_id = int(target_tmdb_id)
             except (TypeError, ValueError):
                 raise
-            tmdb_info = self._run_recognition(
-                factory=TmdbChain,
-                operation=lambda chain: chain.run_module(
-                    "tmdb_info", tmdbid=target_tmdb_id, mtype=target_type
-                ),
-                label="candidate_target_tmdb_fallback",
-            )
+            # Do not send the exact subscribed-ID fallback through the generic
+            # recognition gate. On current MoviePilot/PostgreSQL hosts that gate
+            # may be recovering MediaChain's cursor lifecycle error; TmdbChain
+            # is an independent, read-only native lookup and is already used by
+            # the season-year hydrator.
+            cache_key = (target_tmdb_id, str(getattr(target_type, "value", target_type)))
+            tmdb_info = self._target_tmdb_cache.get(cache_key) if self._target_tmdb_cache else None
+            if tmdb_info is None:
+                try:
+                    tmdb_info = TmdbChain().tmdb_info(
+                        tmdbid=target_tmdb_id, mtype=target_type
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "【TG115】目标 TMDB 元数据读取失败 type=%s",
+                        type(exc).__name__,
+                    )
+                    raise RecognitionUnavailable("目标 TMDB 媒体信息不可用") from exc
+                if tmdb_info and self._target_tmdb_cache:
+                    self._target_tmdb_cache.set(cache_key, tmdb_info)
             if not tmdb_info:
                 raise RecognitionUnavailable("目标 TMDB 媒体信息不可用")
-            candidate = MediaInfo(tmdb_info=tmdb_info)
+            candidate = MediaInfo(tmdb_info=dict(tmdb_info))
             setattr(candidate, "_tg115_target_metadata_fallback", True)
             return candidate
 

@@ -70,6 +70,16 @@ class SubscriptionDryRunContractTest(unittest.TestCase):
         self.assertIn('pan_type == "magnet"', build_body)
         self.assertIn('setattr(torrent, "_tg115_metadata_verified", True)', build_body)
 
+    def test_candidate_cursor_fallback_uses_direct_exact_tmdb_lookup(self):
+        start = self.source.index("def _recognize_candidate")
+        end = self.source.index("def _hydrate_tv_season_years", start)
+        body = self.source[start:end]
+        self.assertIn("TmdbChain().tmdb_info(", body)
+        self.assertIn("tmdbid=target_tmdb_id", body)
+        self.assertIn("mtype=target_type", body)
+        self.assertIn("MediaInfo(tmdb_info=dict(tmdb_info))", body)
+        self.assertNotIn('factory=TmdbChain', body)
+
 
 if __name__ == "__main__":
     unittest.main()
