@@ -62,6 +62,18 @@ class SeasonSupportTest(unittest.TestCase):
         self.assertIn("House of the Dragon S02", keywords)
         self.assertLessEqual(len(keywords), 6)
 
+    def test_site_title_keyword_removes_generated_season_suffix(self):
+        self.assertEqual("嗜血法医", season.site_title_keyword("嗜血法医 S01"))
+        self.assertEqual("Dexter", season.site_title_keyword("Dexter Season 1"))
+        self.assertEqual("末日地堡", season.site_title_keyword("末日地堡 第三季"))
+        self.assertEqual("示例特别篇章", season.site_title_keyword("示例特别篇章"))
+
+    def test_site_title_keyword_preserves_title_internal_season_text(self):
+        self.assertEqual(
+            "Season 1: The Beginning",
+            season.site_title_keyword("Season 1: The Beginning"),
+        )
+
     def test_alias_queries_do_not_repeat_the_same_candidate(self):
         first = SimpleNamespace(
             share_url="https://example.invalid/share/ABC", resource_title="示例剧 S02"

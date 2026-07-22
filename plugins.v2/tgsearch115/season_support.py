@@ -215,3 +215,21 @@ def season_keywords(base_names: Iterable[Any], season: Optional[int], limit: int
             if len(result) >= max(1, int(limit)):
                 return result
     return result
+
+
+def site_title_keyword(value: Any) -> str:
+    """Remove only a generated trailing season suffix for title-indexed sites.
+
+    Telegram searches benefit from a season-qualified query, while the target
+    site's suggestion endpoint indexes a work page by its base title. Season
+    selection remains strict after the detail page returns resource titles.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    return re.sub(
+        r"\s+(?:S(?:eason)?\s*0?\d{1,2}|第[零一二三四五六七八九十百\d]+季|Specials?|特别篇)\s*$",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    ).strip()

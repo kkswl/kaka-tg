@@ -98,6 +98,7 @@ from .season_support import (
     deduplicate_search_hits,
     season_distribution,
     season_keywords,
+    site_title_keyword,
     supports_target_season,
     source_cache_key,
     target_seasons,
@@ -224,7 +225,7 @@ class TgSearch115(_PluginBase):
         "并支持 115 分享直接转存；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.25"
+    plugin_version = "4.7.26"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -1246,10 +1247,11 @@ class TgSearch115(_PluginBase):
             # year, or no year at all. Each pass has an independent cache key.
             # Movies retain their single strict subscription-year query.
             query_years = site_years if site_years is not None else [year]
+            site_keyword = site_title_keyword(keyword) or keyword
             for query_year in query_years:
                 source_calls.append((
                     "site", lambda query_year=query_year: self._site_scraper.search(
-                        keyword, year=query_year, target_season=target_season
+                        site_keyword, year=query_year, target_season=target_season
                     )[0], self._site_scraper, query_year,
                 ))
         if self._juying_api:
@@ -1266,8 +1268,9 @@ class TgSearch115(_PluginBase):
         ]
 
         for source, callback, client, source_year in source_calls:
+            cache_keyword = site_keyword if source == "site" else keyword
             cache_key = source_cache_key(
-                source, keyword, source_year, media_type, target_season
+                source, cache_keyword, source_year, media_type, target_season
             )
             cached = self._search_cache.get(cache_key) if self._search_cache else None
             if cached is not None:
