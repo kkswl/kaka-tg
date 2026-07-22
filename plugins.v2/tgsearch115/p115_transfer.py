@@ -78,7 +78,7 @@ class P115Transfer:
         if not share_code or not receive_code:
             return False, "解析 115 分享链接失败，缺少分享码或提取码", result
 
-        logger.info(f"【TG115】手动转存 share_url={share_url} target={effective}")
+        logger.info("【TG115】115 分享转存请求已接收")
         # 目标目录：纯数字视为 cid 直接用；否则按路径查找/创建
         try:
             if effective.isdigit():
@@ -103,16 +103,21 @@ class P115Transfer:
                 "share_code": share_code, "receive_code": receive_code,
                 "cid": 0, "limit": 32, "offset": 0,
             })
-            logger.info(f"【TG115】share_snap 响应: {str(snap)[:400]}")
+            snap_data = snap.get("data") if isinstance(snap, dict) else None
+            snap_items = (snap_data.get("list") or snap_data.get("filelist") or []) \
+                if isinstance(snap_data, dict) else []
+            logger.info(
+                "【TG115】share_snap 完成 state=%s items=%s",
+                bool(self._response_ok(snap)), len(snap_items),
+            )
             if isinstance(snap, dict) and snap.get("state") not in (True, 1, "1"):
                 snap_err = snap.get("error") or snap.get("message") or "分享不可用"
                 return False, f"分享链接不可用：{snap_err}", result
-            snap_data = snap.get("data") if isinstance(snap, dict) else None
             if isinstance(snap_data, dict):
                 fl = snap_data.get("list") or snap_data.get("filelist") or []
                 if fl and isinstance(fl[0], dict):
                     file_id = fl[0].get("fid") or fl[0].get("cid") or 0
-            logger.info(f"【TG115】从分享信息提取 file_id={file_id}")
+            logger.info("【TG115】分享文件定位完成 has_file_id=%s", bool(file_id))
         except Exception as e:
             logger.warn(f"【TG115】share_snap 异常（继续用 file_id=0）: {e}")
 
@@ -125,10 +130,12 @@ class P115Transfer:
             "is_check": 0,
             "user_id": user_id,
         }
-        logger.info(f"【TG115】转存 payload={payload}")
         try:
             resp = self._api_post("/share/receive", payload)
-            logger.info(f"【TG115】share_receive 响应: {str(resp)[:300]}")
+            logger.info(
+                "【TG115】share_receive 完成 state=%s",
+                bool(self._response_ok(resp)),
+            )
         except Exception as e:
             logger.error(f"【TG115】share_receive 异常: {e}")
             return False, f"调用 115 转存接口失败: {e}", result
@@ -374,7 +381,8 @@ class P115Transfer:
     def _is_already_saved(text: Any) -> bool:
         t = str(text or "")
         return any(m in t for m in (
-            "已经转存", "已转存", "已经保存", "已保存", "already", "exist",
+            "已经转存", "已转存", "已经保存", "已保存", "已接收", "无需重复接收",
+            "already", "exist",
         ))
 
     @staticmethod
