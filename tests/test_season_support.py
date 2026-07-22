@@ -84,6 +84,13 @@ class SeasonSupportTest(unittest.TestCase):
             season.season_keywords(["海军罪案调查处", "NCIS"], 11, limit=1),
         )
 
+    def test_full_season_results_cannot_skip_pending_base_title_queries(self):
+        self.assertFalse(
+            season.can_stop_keyword_search(7, {"海军罪案调查处", "ncis"})
+        )
+        self.assertTrue(season.can_stop_keyword_search(7, set()))
+        self.assertFalse(season.can_stop_keyword_search(4, set()))
+
     def test_share_metadata_season_summary_can_confirm_late_season(self):
         names = [f"NCIS.S{number:02d}.1080p" for number in range(1, 24)]
         summary = " ".join(

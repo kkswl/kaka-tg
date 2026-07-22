@@ -94,6 +94,7 @@ from .cms_tasks import CmsTaskLedger, btih_from_magnet, has_explicit_clear_confi
 from .p115_offline import P115OfflineClient
 from .runtime_control import SearchCoordinator, SourceCircuitBreaker, TtlCache
 from .season_support import (
+    can_stop_keyword_search,
     cache_covers_season,
     deduplicate_search_hits,
     parse_seasons,
@@ -227,7 +228,7 @@ class TgSearch115(_PluginBase):
         "并支持 115 分享直接转存；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.29"
+    plugin_version = "4.7.30"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -854,7 +855,18 @@ class TgSearch115(_PluginBase):
         site_years = site_query_years(subscribe, mediainfo, target_season)
         result["site_query_years"] = site_years
         hits: List[Any] = []
-        for keyword in self._build_keywords(subscribe, mediainfo, target_season):
+        keywords = self._build_keywords(subscribe, mediainfo, target_season)
+        pending_base_keywords = {
+            keyword.casefold() for keyword in keywords
+            if target_season is not None and site_title_keyword(keyword) == keyword
+        }
+        for keyword in keywords:
+            logger.info(
+                "【TG115】订阅 [%s] %s开始搜索，关键字: %s",
+                subscribe.name,
+                f"S{target_season:02d} " if target_season is not None else "",
+                keyword,
+            )
             keyword_hits = self._search_auto_sources(
                 keyword=keyword, year=getattr(subscribe, "year", None),
                 media_type=getattr(subscribe, "type", ""), target_season=target_season,
@@ -875,7 +887,11 @@ class TgSearch115(_PluginBase):
                 ]
             result["season_after"] += len(keyword_hits)
             hits.extend(keyword_hits)
-            if len(keyword_hits) >= 5:
+            pending_base_keywords.discard(keyword.casefold())
+            # A season-qualified site lookup may already return five results,
+            # but TG multi-season shares are often published under the base
+            # title only. Do not stop until both bounded base fallbacks ran.
+            if can_stop_keyword_search(len(keyword_hits), pending_base_keywords):
                 break
         hits = deduplicate_search_hits(hits)
         result["hits"] = hits

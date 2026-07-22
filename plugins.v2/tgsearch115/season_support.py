@@ -266,3 +266,8 @@ def site_title_keyword(value: Any) -> str:
         text,
         flags=re.IGNORECASE,
     ).strip()
+
+
+def can_stop_keyword_search(hit_count: int, pending_base_keywords: Iterable[Any]) -> bool:
+    """Stop on a full result page only after mandatory base fallbacks ran."""
+    return int(hit_count or 0) >= 5 and not any(pending_base_keywords or [])
