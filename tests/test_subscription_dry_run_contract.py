@@ -28,6 +28,13 @@ class SubscriptionDryRunContractTest(unittest.TestCase):
         self.assertIn("subscription/dry-run", self.page)
         self.assertIn("只读验证，不转存", self.page)
 
+    def test_vue_detail_page_has_non_empty_host_compatibility_marker(self):
+        start = self.source.index("def get_page(self)")
+        end = self.source.index("def get_render_mode", start)
+        body = self.source[start:end]
+        self.assertIn('"component": "VSpacer"', body)
+        self.assertNotIn("return []", body)
+
     def test_dry_run_exposes_year_distribution_and_identity_counts(self):
         self.assertIn('"candidate_year_distribution"', self.source)
         self.assertIn('Counter(', self.source)

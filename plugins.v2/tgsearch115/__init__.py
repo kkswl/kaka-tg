@@ -221,7 +221,7 @@ class TgSearch115(_PluginBase):
         "并支持 115 分享直接转存；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.14"
+    plugin_version = "4.7.15"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -612,8 +612,16 @@ class TgSearch115(_PluginBase):
         return [], {}
 
     def get_page(self) -> List[dict]:
-        """详情页由自定义 Vue 前端（Page.vue）接管，这里返回空桩。"""
-        return []
+        """返回宿主详情页能力标记，实际内容由 Vue Page 组件渲染。
+
+        MoviePilot v2.14 的详情页会把空列表当作“没有详情页面”，即使插件已
+        声明 Vue Federation 的 ``./Page``。返回这个无状态占位项只用于保持
+        ``has_page`` 与页面接口为真；不携带凭据、任务或订阅数据。
+        """
+        return [{
+            "component": "VSpacer",
+            "props": {"class": "d-none"},
+        }]
 
     @staticmethod
     def get_render_mode() -> Tuple[str, Optional[str]]:
