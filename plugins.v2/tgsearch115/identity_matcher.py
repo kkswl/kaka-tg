@@ -7,6 +7,7 @@ from app.helper.torrent import TorrentHelper
 from app.log import logger
 from .media_types import is_tv_media, same_media_type
 from .season_support import candidate_seasons
+from .year_policy import decide_year_policy
 
 
 @dataclass
@@ -16,6 +17,10 @@ class IdentityResult:
     candidate_media_id: str = ""
     reason: str = ""
     recognition_attempted: bool = False
+    year_policy: str = ""
+    identity_path: str = "rejected_before_recognition"
+    candidate_year: int | None = None
+    target_season_year: int | None = None
 
 
 def _normalize_id(value) -> str:
@@ -36,9 +41,17 @@ def confirm_candidate_identity(
             title=identity_title,
             subtitle=str(torrent.description or ""),
         )
-    except Exception as e:
-        return IdentityResult(False, reason=f"MetaInfo 解析失败: {e}")
+    except Exception:
+        return IdentityResult(False, reason="候选元信息解析失败")
 
+    year_decision = decide_year_policy(subscribe, target_media, identity_title)
+    diagnostic = {
+        "year_policy": year_decision.policy,
+        "candidate_year": year_decision.candidate_year,
+        "target_season_year": year_decision.target_season_year,
+    }
+    if year_decision.hard_reject:
+        return IdentityResult(False, reason="电影候选年份不匹配", **diagnostic)
     try:
         local_match = TorrentHelper.match_torrent(
             mediainfo=target_media,
@@ -47,13 +60,13 @@ def confirm_candidate_identity(
         )
     except Exception as e:
         if isinstance(e, AttributeError) and "value" in str(e):
-            return IdentityResult(False, reason="媒体类型兼容错误，候选已安全拒绝")
-        return IdentityResult(False, reason=f"本地身份初筛异常: {type(e).__name__}")
+            return IdentityResult(False, reason="媒体类型兼容错误，候选已安全拒绝", **diagnostic)
+        return IdentityResult(False, reason=f"本地身份初筛异常: {type(e).__name__}", **diagnostic)
     # A 115 share's message often only has a generic title.  After an explicit
     # read-only file-name probe, MediaChain + exact media ID is safer than
     # rejecting a known alias before it can be confirmed.
     if not local_match and not getattr(torrent, "_tg115_metadata_verified", False):
-        return IdentityResult(False, reason="标题、别名、年份或媒体类型不匹配")
+        return IdentityResult(False, reason="标题、别名、年份或媒体类型不匹配", **diagnostic)
 
     target_type = getattr(target_media, "type", None)
     if is_tv_media(target_type):
@@ -76,6 +89,7 @@ def confirm_candidate_identity(
             return IdentityResult(
                 False,
                 reason=f"季号不匹配: 需要 S{expected_season:02d}，候选 {candidate_text}",
+                **diagnostic,
             )
 
     target_tmdb = _normalize_id(
@@ -85,7 +99,7 @@ def confirm_candidate_identity(
         getattr(subscribe, "doubanid", None) or getattr(target_media, "douban_id", None)
     )
     if not target_tmdb and not target_douban:
-        return IdentityResult(False, reason="订阅缺少 TMDB/豆瓣 ID，禁止自动转存")
+        return IdentityResult(False, reason="订阅缺少 TMDB/豆瓣 ID，禁止自动转存", **diagnostic)
 
     try:
         if recognize_candidate:
@@ -106,15 +120,21 @@ def confirm_candidate_identity(
             match_source="identity_unavailable",
             reason="MoviePilot 媒体识别暂时不可用，将在下一周期重试",
             recognition_attempted=True,
+            identity_path=("share_metadata_tmdb_fallback" if not local_match else "local_match"),
+            **diagnostic,
         )
     if not candidate_media:
         return IdentityResult(
-            False, reason="MoviePilot 无法识别候选媒体", recognition_attempted=True
+            False, reason="MoviePilot 无法识别候选媒体", recognition_attempted=True,
+            identity_path=("share_metadata_tmdb_fallback" if not local_match else "local_match"),
+            **diagnostic,
         )
 
     if not same_media_type(getattr(candidate_media, "type", None), target_type):
         return IdentityResult(
-            False, reason="候选媒体类型与订阅不一致", recognition_attempted=True
+            False, reason="候选媒体类型与订阅不一致", recognition_attempted=True,
+            identity_path=("share_metadata_tmdb_fallback" if not local_match else "local_match"),
+            **diagnostic,
         )
 
     candidate_tmdb = _normalize_id(getattr(candidate_media, "tmdb_id", None))
@@ -123,12 +143,16 @@ def confirm_candidate_identity(
             return IdentityResult(
                 True, "tmdb_id", candidate_tmdb, "TMDB ID 一致",
                 recognition_attempted=True,
+                identity_path=("share_metadata_tmdb_fallback" if not local_match else "local_match"),
+                **diagnostic,
             )
         return IdentityResult(
             False,
             candidate_media_id=candidate_tmdb,
-            reason=f"TMDB ID 不匹配: 需要 {target_tmdb}，候选 {candidate_tmdb or '无'}",
+            reason="TMDB ID 不匹配",
             recognition_attempted=True,
+            identity_path=("share_metadata_tmdb_fallback" if not local_match else "local_match"),
+            **diagnostic,
         )
 
     candidate_douban = _normalize_id(getattr(candidate_media, "douban_id", None))
@@ -137,12 +161,20 @@ def confirm_candidate_identity(
             return IdentityResult(
                 True, "douban_id", candidate_douban, "豆瓣 ID 一致",
                 recognition_attempted=True,
+                identity_path=("share_metadata_tmdb_fallback" if not local_match else "local_match"),
+                **diagnostic,
             )
         return IdentityResult(
             False,
             candidate_media_id=candidate_douban,
-            reason=f"豆瓣 ID 不匹配: 需要 {target_douban}，候选 {candidate_douban or '无'}",
+            reason="豆瓣 ID 不匹配",
             recognition_attempted=True,
+            identity_path=("share_metadata_tmdb_fallback" if not local_match else "local_match"),
+            **diagnostic,
         )
 
-    return IdentityResult(False, reason="候选缺少可比较的媒体 ID", recognition_attempted=True)
+    return IdentityResult(
+        False, reason="候选缺少可比较的媒体 ID", recognition_attempted=True,
+        identity_path=("share_metadata_tmdb_fallback" if not local_match else "local_match"),
+        **diagnostic,
+    )

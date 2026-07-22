@@ -2,7 +2,7 @@
 
 MoviePilot 插件：订阅新增或周期扫描时按 TG 频道、观影 115 中文字幕、观影磁力中文字幕、聚影顺序搜索，经 MoviePilot 原生媒体识别确认后通过 115 Cookie Web 离线接口或 CMS 离线到 115；失败时平滑回退到 MoviePilot 默认搜索。
 
-当前版本：`v4.7.12`。115 分享候选会受限地只读读取文件名，用真实文件名执行字幕、清晰度、季号和 TMDB/豆瓣确认；最多探测 3 个且缓存，不调用 `share_receive`。其它安全门槛不放宽。
+当前版本：`v4.7.13`。115 分享候选会受限地只读读取文件名，用真实文件名执行字幕、清晰度、季号和 TMDB/豆瓣确认；最多探测 3 个且缓存，不调用 `share_receive`。电视剧按目标季、TV 类型与 TMDB/豆瓣 ID 确认，订阅总年份与季首播年不同仅作诊断；电影年份仍严格校验。
 
 ---
 
@@ -19,8 +19,9 @@ MoviePilot 插件：订阅新增或周期扫描时按 TG 频道、观影 115 中
 - **双客户端观影详情**：httpx/HTML 路径被 WAF 拒绝时，使用 urllib 独立 Cookie/PoW 会话降级
 - **TG 服务端搜索**：用 `t.me/s/{channel}?q=片名` 让 Telegram 服务器搜频道**全部历史**（不是只看最近 200 条），解决「明明有资源却搜不到」
 - **资源站 PoW 破解**：站点用 RSW 时间锁 PoW 反机器人，本插件用纯 Python `pow(x,1<<t,N)` 约 1.5 秒解出（C 层快速模幂），**无需浏览器、无新依赖**
-- **115 自动转存**：命中 115 链接后用 `p115client` 的 `share_snap` + `share_receive` 转存到指定目录
-- **115 磁力离线**：完整观影磁力经 MP 规则和媒体 ID 确认后，通过 CMS Token API 创建 115 离线任务
+- **115 自动转存**：命中 115 链接后用 Cookie Web API 的 `share_snap` + `share_receive` 转存到指定目录
+- **115 磁力离线**：完整观影磁力经 MP 规则和媒体 ID 确认后，优先用插件内置 115 离线接口，失败才回退 CMS
+- **订阅干跑**：详情页可按订阅 ID 只读运行候选评估，返回脱敏的季级年份、规则及身份确认统计，不转存、不提交任务或修改订阅
 - **115 直连磁力（v4.7.0）**：使用 Cookie Web 云下载接口创建/查询任务；115 任务完成后仍等待 MP 整理历史，不误发 SubscribeComplete
 - **全网盘展示**：夸克/百度/阿里/迅雷等资源展示链接；115 分享可转存，磁力优先走插件内置 115 直连，失败再回退 CMS
 - **115 扫码登录**：直连 115 二维码接口，扫码即得含 UID/CID/SEID 的 Cookie
@@ -44,8 +45,7 @@ tgsearch115/
 ├── cms_client.py        # CMS 官方 Token API / 115 磁力离线
 ├── p115_offline.py      # 115 Cookie Web 磁力离线、状态、取消与重试
 ├── offline_tasks.py     # 115/CMS 通用脱敏任务账本
-├── p115_transfer.py     # 115 转存：p115client share_snap + share_receive
-├── requirements.txt     # beautifulsoup4 / p115client（httpx 随 p115client 安装）
+├── p115_transfer.py     # 115 转存：Cookie Web API share_snap + share_receive
 ├── README.md
 └── frontend/            # Vue 3 + Vuetify 3 + Vite 5 (Module Federation)
     ├── src/components/Config.vue   # 配置弹窗（4 Tab）

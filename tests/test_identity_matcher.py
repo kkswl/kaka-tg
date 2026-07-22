@@ -14,8 +14,8 @@ class _Logger:
 class _FakeMeta:
     def __init__(self, title):
         self.title = title
-        self.season_list = [2] if "S02" in title else []
-        self.begin_season = 2 if "S02" in title else None
+        self.season_list = [3] if "S03" in title else ([2] if "S02" in title else [])
+        self.begin_season = self.season_list[0] if self.season_list else None
 
 
 class _FakeMediaChain:
@@ -223,6 +223,85 @@ class IdentityMatcherTest(unittest.TestCase):
 
         self.assertFalse(result.confirmed)
         self.assertIn("媒体类型兼容错误", result.reason)
+
+    def test_tv_season_year_can_differ_from_series_year_after_exact_tmdb_confirmation(self):
+        target = SimpleNamespace(
+            type="TV", tmdb_id=100, douban_id=None, season=3, year=2023,
+            season_years={3: 2026},
+        )
+        subscribe = SimpleNamespace(
+            tmdbid=100, doubanid=None, season=3, year=2023, episode_group=None,
+        )
+        torrent = _torrent(title="Silo.S03.2026.2160p.CHINESE", local_match=False)
+        torrent._tg115_metadata_verified = True
+        _FakeMediaChain.candidate_media = SimpleNamespace(type="TV", tmdb_id=100, douban_id=None)
+
+        result = identity_matcher.confirm_candidate_identity(subscribe, target, torrent)
+
+        self.assertTrue(result.confirmed)
+        self.assertEqual("tv_season_year_match", result.year_policy)
+        self.assertEqual("share_metadata_tmdb_fallback", result.identity_path)
+        self.assertEqual(2026, result.candidate_year)
+        self.assertEqual(2026, result.target_season_year)
+
+    def test_tv_year_difference_without_season_year_is_deferred_to_exact_tmdb(self):
+        target = SimpleNamespace(type="TV", tmdb_id=100, douban_id=None, season=3, year=2023)
+        subscribe = SimpleNamespace(tmdbid=100, doubanid=None, season=3, year=2023, episode_group=None)
+        torrent = _torrent(title="Silo.S03.2026.1080p.CHINESE", local_match=False)
+        torrent._tg115_metadata_verified = True
+        _FakeMediaChain.candidate_media = SimpleNamespace(type="TV", tmdb_id=100, douban_id=None)
+
+        result = identity_matcher.confirm_candidate_identity(subscribe, target, torrent)
+
+        self.assertTrue(result.confirmed)
+        self.assertEqual("tv_year_deferred_to_tmdb", result.year_policy)
+
+    def test_tv_year_difference_still_rejects_wrong_tmdb_id(self):
+        target = SimpleNamespace(type="TV", tmdb_id=100, douban_id=None, season=3, year=2023)
+        subscribe = SimpleNamespace(tmdbid=100, doubanid=None, season=3, year=2023, episode_group=None)
+        torrent = _torrent(title="Silo.S03.2026.1080p.CHINESE", local_match=False)
+        torrent._tg115_metadata_verified = True
+        _FakeMediaChain.candidate_media = SimpleNamespace(type="TV", tmdb_id=200, douban_id=None)
+
+        result = identity_matcher.confirm_candidate_identity(subscribe, target, torrent)
+
+        self.assertFalse(result.confirmed)
+        self.assertIn("TMDB ID 不匹配", result.reason)
+
+    def test_tv_year_difference_still_rejects_wrong_type(self):
+        target = SimpleNamespace(type="TV", tmdb_id=100, douban_id=None, season=3, year=2023)
+        subscribe = SimpleNamespace(tmdbid=100, doubanid=None, season=3, year=2023, episode_group=None)
+        torrent = _torrent(title="Silo.S03.2026.1080p.CHINESE", local_match=False)
+        torrent._tg115_metadata_verified = True
+        _FakeMediaChain.candidate_media = SimpleNamespace(type="MOVIE", tmdb_id=100, douban_id=None)
+
+        result = identity_matcher.confirm_candidate_identity(subscribe, target, torrent)
+
+        self.assertFalse(result.confirmed)
+        self.assertIn("媒体类型", result.reason)
+
+    def test_tv_year_difference_rejects_wrong_target_season_before_recognition(self):
+        target = SimpleNamespace(type="TV", tmdb_id=100, douban_id=None, season=3, year=2023)
+        subscribe = SimpleNamespace(tmdbid=100, doubanid=None, season=3, year=2023, episode_group=None)
+        torrent = _torrent(title="Silo.S02.2026.1080p.CHINESE", local_match=True)
+
+        result = identity_matcher.confirm_candidate_identity(subscribe, target, torrent)
+
+        self.assertFalse(result.confirmed)
+        self.assertIn("季号不匹配", result.reason)
+        self.assertEqual(0, _FakeMediaChain.calls)
+
+    def test_movie_year_conflict_is_rejected_before_recognition(self):
+        target = SimpleNamespace(type="MOVIE", tmdb_id=100, douban_id=None, season=None, year=2023)
+        subscribe = SimpleNamespace(tmdbid=100, doubanid=None, season=None, year=2023, episode_group=None)
+
+        result = identity_matcher.confirm_candidate_identity(
+            subscribe, target, _torrent(title="Example.2026.1080p", local_match=True)
+        )
+
+        self.assertFalse(result.confirmed)
+        self.assertEqual("year_conflict_rejected", result.year_policy)
+        self.assertEqual(0, _FakeMediaChain.calls)
 
 
 if __name__ == "__main__":

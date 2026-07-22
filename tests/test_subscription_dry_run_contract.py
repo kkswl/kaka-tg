@@ -1,0 +1,33 @@
+import unittest
+from pathlib import Path
+
+
+class SubscriptionDryRunContractTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.source = (Path(__file__).resolve().parents[1] / "plugins.v2" / "tgsearch115" / "__init__.py").read_text(encoding="utf-8")
+        cls.page = (Path(__file__).resolve().parents[1] / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "Page.vue").read_text(encoding="utf-8")
+
+    def test_api_uses_shared_read_only_evaluator(self):
+        start = self.source.index("def __subscription_dry_run_api")
+        end = self.source.index("def __retry_cms_task_api", start)
+        body = self.source[start:end]
+        self.assertIn("self._evaluate_subscription_candidates(subscribe)", body)
+        for forbidden in ("SubscribeOper().update", "_submit_magnet_to_115", "_transfer.transfer", "_cms_client.", "_save_cms_tasks", "post_message"):
+            self.assertNotIn(forbidden, body)
+
+    def test_evaluator_has_no_action_or_notification_calls(self):
+        start = self.source.index("def _evaluate_subscription_candidates")
+        end = self.source.index("def _dry_run_summary", start)
+        body = self.source[start:end]
+        for forbidden in ("SubscribeOper().update", "_submit_magnet_to_115", "_transfer.transfer", "_cms_client.add_magnet", "_save_cms_tasks", "post_message", "_send_fail_notify"):
+            self.assertNotIn(forbidden, body)
+
+    def test_page_exposes_explicit_read_only_action(self):
+        self.assertIn("开始干跑，不转存", self.page)
+        self.assertIn("subscription/dry-run", self.page)
+        self.assertIn("只读验证，不转存", self.page)
+
+
+if __name__ == "__main__":
+    unittest.main()

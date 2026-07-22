@@ -220,7 +220,7 @@ class TgSearch115(_PluginBase):
         "并支持 115 分享直接转存；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.12"
+    plugin_version = "4.7.13"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -544,6 +544,14 @@ class TgSearch115(_PluginBase):
                 "summary": "清除已结束的磁力任务账本记录",
             },
             {
+                "path": "/subscription/dry-run",
+                "endpoint": self.__subscription_dry_run_api,
+                "methods": ["POST"],
+                "auth": "bear",
+                "summary": "只读验证订阅候选",
+                "description": "仅搜索、读取分享文件名、运行规则和身份确认；不转存、不提交任务、不修改订阅。",
+            },
+            {
                 "path": "/search",
                 "endpoint": self.__search_api,
                 "methods": ["GET"],
@@ -765,6 +773,159 @@ class TgSearch115(_PluginBase):
         logger.warn(f"【TG115】订阅 {subscribe_id} 未能进入搜索队列，将由周期任务重试")
 
     # ============================ 核心流程 ============================
+    def _new_source_report(self) -> SearchReport:
+        return SearchReport({
+            "tg": bool(self._scraper and any(
+                channel.get("enabled", True) for channel in self._tg_channels
+            )),
+            "site": bool(self._site_scraper),
+            "juying": bool(self._juying_api),
+        })
+
+    def _evaluate_subscription_candidates(self, subscribe) -> Dict[str, Any]:
+        """Evaluate a subscription without transfer, ledger, notification or state writes.
+
+        This is deliberately the one candidate path used by both formal handling and
+        ``/subscription/dry-run``.  The caller alone decides whether an already
+        confirmed candidate may be acted on.
+        """
+        report = self._new_source_report()
+        result: Dict[str, Any] = {
+            "source_report": report, "meta": None, "mediainfo": None,
+            "hits": [], "torrents": [], "matched": [], "candidates": [],
+            "identities": {}, "confirmed": [], "reason": "", "diagnostics": None,
+            "season_before": 0, "season_after": 0,
+        }
+        try:
+            meta = build_subscribe_meta(subscribe)
+        except Exception:
+            result["reason"] = "订阅元信息构造失败"
+            return result
+        mediainfo = self._recognize(subscribe, meta)
+        if not mediainfo:
+            result["reason"] = "MoviePilot 媒体识别不可用"
+            return result
+        result["meta"], result["mediainfo"] = meta, mediainfo
+
+        seasons = target_seasons(subscribe)
+        target_season = seasons[0] if len(seasons) == 1 else getattr(subscribe, "season", None)
+        hits: List[Any] = []
+        for keyword in self._build_keywords(subscribe, mediainfo, target_season):
+            keyword_hits = self._search_auto_sources(
+                keyword=keyword, year=getattr(subscribe, "year", None),
+                media_type=getattr(subscribe, "type", ""), target_season=target_season,
+                source_report=report,
+            )
+            result["season_before"] += len(keyword_hits)
+            if target_season is not None:
+                keyword_hits = [hit for hit in keyword_hits if supports_target_season(hit, target_season)]
+            result["season_after"] += len(keyword_hits)
+            hits.extend(keyword_hits)
+            if len(keyword_hits) >= 5:
+                break
+        hits = deduplicate_search_hits(hits)
+        result["hits"] = hits
+        if not hits:
+            result["reason"] = "未找到符合目标季与标题的候选"
+            return result
+
+        torrents = self._build_torrents(hits)
+        self._enrich_share_metadata(torrents)
+        result["torrents"] = torrents
+        matched, rule_diagnostics = self._filter_resources(subscribe, mediainfo, torrents)
+        result["matched"], result["diagnostics"] = matched, rule_diagnostics
+        if not matched:
+            result["reason"] = rule_diagnostics.summary() if rule_diagnostics else "候选未通过 MoviePilot 规则"
+            return result
+
+        auto_candidates = select_auto_candidates(
+            torrents=matched,
+            prefer_site_magnet=(self._site_magnet_priority and bool(
+                (self._offline_client and self._p115_cookie) or
+                (self._cms_client and self._cms_client.configured)
+            )),
+            is_tv=is_tv_media(getattr(subscribe, "type", None)),
+            is_115_url=P115Transfer._is_115_share_url,
+        )
+        magnets = [candidate for candidate in auto_candidates if is_magnet_url(candidate.page_url or "")]
+        shares = self._deduplicate_115_torrents([
+            candidate for candidate in auto_candidates
+            if P115Transfer._is_115_share_url(candidate.page_url or "")
+        ])
+        candidates = magnets + shares
+        result["candidates"] = candidates
+        if not candidates:
+            result["reason"] = "没有符合自动策略的完整中文字幕 1080P/4K 资源"
+            return result
+
+        for candidate in candidates[:3]:
+            identity = confirm_candidate_identity(
+                subscribe=subscribe, target_media=mediainfo, torrent=candidate,
+                recognize_candidate=self._recognize_candidate,
+            )
+            result["identities"][id(candidate)] = identity
+            if identity.confirmed:
+                result["confirmed"].append(candidate)
+        if not result["confirmed"]:
+            identities = list(result["identities"].values())
+            result["reason"] = next((item.reason for item in reversed(identities) if item.reason),
+                                    "候选未通过 MoviePilot/TMDB 身份确认")
+            if any(item.year_policy in {"tv_season_year_match", "tv_year_deferred_to_tmdb"}
+                   for item in identities):
+                result["reason"] += "；电视剧候选年份已按季级 TMDB 确认处理"
+        return result
+
+    @staticmethod
+    def _dry_run_summary(subscribe, evaluation: Dict[str, Any]) -> Dict[str, Any]:
+        """Return bounded diagnostics only; never return URLs, credentials or magnets."""
+        mediainfo = evaluation.get("mediainfo")
+        identities = list((evaluation.get("identities") or {}).values())
+        target_season = getattr(subscribe, "season", None)
+        try:
+            target_season = int(target_season) if target_season is not None else None
+        except (TypeError, ValueError):
+            target_season = None
+        season_years = getattr(mediainfo, "season_years", None) or {}
+        target_season_year = season_years.get(target_season, season_years.get(str(target_season))) \
+            if isinstance(season_years, dict) and target_season is not None else None
+        candidates = []
+        for candidate in evaluation.get("candidates", [])[:10]:
+            identity = (evaluation.get("identities") or {}).get(id(candidate))
+            candidates.append({
+                "title": str(getattr(candidate, "title", "") or "")[:120],
+                "source": str(getattr(candidate, "_tg115_source", "") or ""),
+                "metadata_verified": bool(getattr(candidate, "_tg115_metadata_verified", False)),
+                "confirmed": bool(identity and identity.confirmed),
+                "reason": str(getattr(identity, "reason", "未进入身份确认") or "")[:120],
+                "year_policy": str(getattr(identity, "year_policy", "") or ""),
+                "identity_path": str(getattr(identity, "identity_path", "") or ""),
+            })
+        candidate_years = sorted({item.candidate_year for item in identities if item.candidate_year})
+        return {
+            "subscription": {"id": getattr(subscribe, "id", None), "title": str(getattr(subscribe, "name", "") or "")[:120],
+                             "year": getattr(subscribe, "year", None), "season": target_season,
+                             "target_season_year": target_season_year},
+            "sources": evaluation["source_report"].text(),
+            "counts": {
+                "source_hits": len(evaluation.get("hits") or []),
+                "season_before": evaluation.get("season_before", 0),
+                "season_after": evaluation.get("season_after", 0),
+                "metadata_verified": sum(bool(getattr(item, "_tg115_metadata_verified", False)) for item in evaluation.get("torrents") or []),
+                "rule_passed": len(evaluation.get("matched") or []),
+                "identity_checked": len(identities), "identity_confirmed": len(evaluation.get("confirmed") or []),
+                "year_rejected": sum(item.year_policy == "year_conflict_rejected" for item in identities),
+                "year_deferred": sum(item.year_policy == "tv_year_deferred_to_tmdb" for item in identities),
+                "tmdb_matched": sum(item.match_source == "tmdb_id" for item in identities),
+                "tmdb_mismatch": sum("TMDB ID 不匹配" in item.reason for item in identities),
+                "type_mismatch": sum("媒体类型" in item.reason for item in identities),
+                "season_mismatch": sum("季号" in item.reason for item in identities),
+                "safe_candidates": len(evaluation.get("confirmed") or []),
+            },
+            "candidate_years": candidate_years,
+            "reason": str(evaluation.get("reason") or ""),
+            "candidates": candidates,
+        }
+
     def _handle_subscribe(self, subscribe_id: int):
         """单订阅的 TG 搜索 -> 匹配 -> 转存 -> 完成流程；任何失败均平滑回退。"""
         handled = False
@@ -780,6 +941,51 @@ class TgSearch115(_PluginBase):
             if not self._claim_subscription(subscribe_id):
                 logger.info(f"【TG115】订阅 {subscribe_id} 当前不可认领，本轮跳过")
                 return
+
+            evaluation = self._evaluate_subscription_candidates(subscribe)
+            source_report = evaluation["source_report"]
+            meta, mediainfo = evaluation.get("meta"), evaluation.get("mediainfo")
+            candidates = evaluation.get("confirmed") or []
+            if not candidates:
+                reason = evaluation.get("reason") or "候选未通过 MoviePilot/TMDB 身份确认"
+                logger.info("【TG115】订阅 [%s] 只读候选评估未命中：%s", subscribe.name, reason)
+                self._send_fail_notify(subscribe, reason, source_report)
+                return
+
+            identities = evaluation.get("identities") or {}
+
+            def confirm(candidate):
+                return identities[id(candidate)]
+
+            def transfer_share(candidate):
+                ok, message, _data = (
+                    self._transfer.transfer(candidate.page_url or "", self._p115_target)
+                    if self._transfer else (False, "转存模块未初始化", {})
+                )
+                return ok, message
+
+            execution = execute_auto_candidates(
+                candidates=candidates,
+                confirm_identity=confirm,
+                submit_magnet=lambda candidate: self._submit_magnet_to_115(candidate, subscribe=subscribe),
+                transfer_share=transfer_share,
+            )
+            for error in execution.errors:
+                logger.warning("【TG115】订阅 [%s] 候选处理失败，继续回退: %s", subscribe.name, error)
+            best = execution.candidate
+            if not best:
+                self._send_fail_notify(
+                    subscribe,
+                    execution.errors[-1] if execution.errors else "候选未能安全提交",
+                    source_report,
+                )
+                return
+            handled = self._finish_subscribe(
+                subscribe, meta, mediainfo, best, execution.message,
+                via_offline_magnet=execution.via_magnet,
+                source_summary=source_report.text(),
+            )
+            return
 
             source_report = SearchReport({
                 "tg": bool(self._scraper and any(
@@ -2080,6 +2286,29 @@ class TgSearch115(_PluginBase):
             "sources": self._source_breaker.snapshot() if self._source_breaker else {},
             "tasks": self._cms_tasks.public_records() if self._cms_tasks else [],
         })
+
+    def __subscription_dry_run_api(self, payload: dict = Body(default=None)):
+        """POST /subscription/dry-run: execute the shared evaluator with zero writes."""
+        from starlette.responses import JSONResponse
+        payload = payload if isinstance(payload, dict) else {}
+        try:
+            subscribe_id = int(payload.get("subscribe_id"))
+        except (TypeError, ValueError):
+            return JSONResponse({"success": False, "message": "请输入有效的订阅 ID"}, status_code=400)
+        subscribe = SubscribeOper().get(subscribe_id)
+        if not subscribe:
+            return JSONResponse({"success": False, "message": "订阅不存在"}, status_code=404)
+        try:
+            evaluation = self._evaluate_subscription_candidates(subscribe)
+            return JSONResponse({
+                "success": True,
+                "dry_run": True,
+                "message": "只读验证完成：未转存、未提交磁力、未调用 CMS、未修改订阅或任务账本",
+                "result": self._dry_run_summary(subscribe, evaluation),
+            })
+        except Exception as exc:
+            logger.warning("【TG115】订阅干跑失败 subscribe_id=%s type=%s", subscribe_id, type(exc).__name__)
+            return JSONResponse({"success": False, "message": "只读验证失败，请检查安全分类日志"}, status_code=500)
 
     def __retry_cms_task_api(self, payload: dict = Body(default=None)):
         """POST /tasks/retry: restart direct task or restore CMS subscription."""
