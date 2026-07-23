@@ -81,6 +81,7 @@ from .juying_scraper import JuyingApi
 from .identity_matcher import confirm_candidate_identity
 from .media_types import is_tv_media, subscription_notification_title, to_moviepilot_media_type
 from .search_relevance import extract_year, is_relevant_result
+from .candidate_identity import clean_identity_title, order_identity_candidates
 from .resource_strategy import (
     execute_auto_candidates,
     filter_with_offline_seed_override,
@@ -228,7 +229,7 @@ class TgSearch115(_PluginBase):
         "并支持 115 分享直接转存；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.31"
+    plugin_version = "4.7.32"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -900,7 +901,7 @@ class TgSearch115(_PluginBase):
             return result
 
         torrents = self._build_torrents(hits)
-        self._enrich_share_metadata(torrents)
+        self._enrich_share_metadata(torrents, subscribe=subscribe, mediainfo=mediainfo)
         if target_season is not None:
             before_metadata_season_filter = len(torrents)
             torrents = [
@@ -939,7 +940,12 @@ class TgSearch115(_PluginBase):
             result["reason"] = "没有符合自动策略的完整中文字幕 1080P/4K 资源"
             return result
 
-        for candidate in candidates[:3]:
+        identity_candidates = order_identity_candidates(candidates, mediainfo, subscribe)
+        logger.info(
+            "【TG115】候选身份确认排序完成: 总数=%d，进入有界确认=%d",
+            len(candidates), min(len(identity_candidates), 3),
+        )
+        for candidate in identity_candidates[:3]:
             identity = confirm_candidate_identity(
                 subscribe=subscribe, target_media=mediainfo, torrent=candidate,
                 recognize_candidate=self._recognize_candidate,
@@ -947,6 +953,10 @@ class TgSearch115(_PluginBase):
             result["identities"][id(candidate)] = identity
             if identity.confirmed:
                 result["confirmed"].append(candidate)
+        # Identity probing is relevance-ranked, but all side effects must retain
+        # the contractual TG -> Guanying share -> magnet -> Juying order.
+        confirmed_ids = {id(item) for item in result["confirmed"]}
+        result["confirmed"] = [item for item in candidates if id(item) in confirmed_ids]
         if not result["confirmed"]:
             identities = list(result["identities"].values())
             result["reason"] = next((item.reason for item in reversed(identities) if item.reason),
@@ -1165,7 +1175,7 @@ class TgSearch115(_PluginBase):
                 return
 
             torrents = self._build_torrents(hits)
-            self._enrich_share_metadata(torrents)
+            self._enrich_share_metadata(torrents, subscribe=subscribe, mediainfo=mediainfo)
             matched, rule_diagnostics = self._filter_resources(subscribe, mediainfo, torrents)
             if not matched:
                 reason = rule_diagnostics.summary() if rule_diagnostics else "候选未通过 MoviePilot 规则"
@@ -1652,16 +1662,10 @@ class TgSearch115(_PluginBase):
             resource_title = h.resource_title or ""
             source_title = str(getattr(h, "source_title", "") or "").strip()
             source_year = getattr(h, "year", None)
-            parsed = TgSearch115._parse_resource_meta(h.text or resource_title)
-            source_identity = f"{source_title} ({source_year})" if source_title and source_year else source_title
-            identity_title = " ".join(item for item in (
-                source_identity, resource_title, h.text or "", parsed.get("display_name") or ""
-            ) if item).strip()
-            if not identity_title:
-                identity_title = resource_title or "未命名资源"
-            display_title = identity_title or resource_title or "未命名资源"
-            if resource_title and resource_title not in display_title:
-                display_title = f"{display_title} {resource_title}"
+            identity_title = clean_identity_title(
+                resource_title, source_title, source_year, h.text or ""
+            )
+            display_title = resource_title or identity_title or "未命名资源"
             pan_type = str(getattr(h, "pan_type", "") or "").lower()
             parsed_meta = TgSearch115._parse_resource_meta(h.text or resource_title)
             torrent = TorrentInfo(
@@ -1675,6 +1679,8 @@ class TgSearch115(_PluginBase):
             )
             # 身份识别只使用干净标题；质量过滤仍使用包含资源格式的完整 title。
             setattr(torrent, "_tg115_identity_title", identity_title)
+            setattr(torrent, "_tg115_source_title", source_title)
+            setattr(torrent, "_tg115_source_year", source_year)
             setattr(torrent, "_tg115_pan_type", pan_type)
             setattr(torrent, "_tg115_source", str(getattr(h, "_tg115_source", "") or "").lower())
             setattr(torrent, "_tg115_is_complete", bool(parsed_meta.get("is_complete")))
@@ -1803,12 +1809,14 @@ class TgSearch115(_PluginBase):
             torrents = [t for t in torrents if TorrentHelper.filter_torrent(t, filter_params)]
         return torrents, diagnostics
 
-    def _enrich_share_metadata(self, torrents: List[TorrentInfo], max_probes: int = 3) -> None:
+    def _enrich_share_metadata(self, torrents: List[TorrentInfo], max_probes: int = 3,
+                               subscribe=None, mediainfo=None) -> None:
         """Append read-only 115 share names before MP rule/identity filtering."""
         if not self._transfer:
             return
         probed = 0
-        for torrent in torrents:
+        probe_candidates = order_identity_candidates(torrents, mediainfo, subscribe)
+        for torrent in probe_candidates:
             if probed >= max_probes or not P115Transfer._is_115_share_url(torrent.page_url or ""):
                 continue
             code, _ = P115Transfer._extract_payload(torrent.page_url or "")
@@ -1835,7 +1843,12 @@ class TgSearch115(_PluginBase):
                     " ".join(f"S{season:02d}" for season in detected_seasons),
                 )
             torrent.description = f"{torrent.description or ''}\n{metadata}".strip()
-            setattr(torrent, "_tg115_identity_title", metadata)
+            setattr(torrent, "_tg115_identity_title", clean_identity_title(
+                metadata,
+                getattr(torrent, "_tg115_source_title", ""),
+                getattr(torrent, "_tg115_source_year", None),
+                torrent.description or "",
+            ))
             setattr(torrent, "_tg115_metadata_verified", True)
             logger.info("【TG115】115 分享只读文件名已补充候选元数据")
 

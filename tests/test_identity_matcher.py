@@ -298,6 +298,16 @@ class IdentityMatcherTest(unittest.TestCase):
         self.assertFalse(result.confirmed)
         self.assertIn("TMDB ID 不匹配", result.reason)
 
+    def test_rejects_explicit_wrong_tmdb_before_recognition(self):
+        target = SimpleNamespace(type="电影", tmdb_id=100, douban_id=None, season=None)
+        subscribe = SimpleNamespace(tmdbid=100, doubanid=None, season=None, episode_group=None)
+        result = identity_matcher.confirm_candidate_identity(
+            subscribe, target, _torrent("示例电影 {tmdb-200} 2026")
+        )
+        self.assertFalse(result.confirmed)
+        self.assertIn("显式 TMDB ID 不一致", result.reason)
+        self.assertEqual(0, _FakeMediaChain.calls)
+
     def test_tv_year_difference_still_rejects_wrong_type(self):
         target = SimpleNamespace(type="TV", tmdb_id=100, douban_id=None, season=3, year=2023)
         subscribe = SimpleNamespace(tmdbid=100, doubanid=None, season=3, year=2023, episode_group=None)

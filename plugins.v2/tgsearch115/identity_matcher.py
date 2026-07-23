@@ -8,6 +8,7 @@ from app.log import logger
 from .media_types import is_tv_media, same_media_type
 from .season_support import candidate_seasons
 from .year_policy import decide_year_policy
+from .candidate_identity import extract_candidate_tmdb
 
 
 @dataclass
@@ -54,6 +55,13 @@ def confirm_candidate_identity(
     ).strip()
     if not identity_title:
         return IdentityResult(False, reason="候选缺少可识别标题")
+
+    explicit_candidate_tmdb = extract_candidate_tmdb(identity_title)
+    expected_tmdb = _normalize_id(
+        getattr(subscribe, "tmdbid", None) or getattr(target_media, "tmdb_id", None)
+    )
+    if explicit_candidate_tmdb and expected_tmdb and explicit_candidate_tmdb != expected_tmdb:
+        return IdentityResult(False, reason="候选显式 TMDB ID 不一致")
 
     try:
         candidate_meta = MetaInfo(
