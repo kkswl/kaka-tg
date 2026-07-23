@@ -228,7 +228,7 @@ class TgSearch115(_PluginBase):
         "并支持 115 分享直接转存；"
         "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.30"
+    plugin_version = "4.7.31"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -1356,6 +1356,7 @@ class TgSearch115(_PluginBase):
                     key = "无年份" if source_year is None else str(source_year)
                     search_diagnostics[key] = search_diagnostics.get(key, 0) + len(source_hits)
                 status = getattr(client, "last_error_status", None)
+                source_error = str(getattr(client, "last_error", "") or "")
                 if source_report:
                     source_report.record(source, source_hits)
                 if status in (403, 429):
@@ -1365,9 +1366,18 @@ class TgSearch115(_PluginBase):
                         if self._source_breaker else False
                     if opened:
                         logger.warn(f"【TG115】{source} 连续失败达到阈值，已进入冷却")
+                elif source_error and not source_hits:
+                    if source_report:
+                        source_report.mark(source, "error")
+                    opened = self._source_breaker.failure(source, source_error) \
+                        if self._source_breaker else False
+                    logger.warn(
+                        f"【TG115】{source} 搜索失败分类={source_error}，本轮未缓存空结果"
+                        f"{'，已进入冷却' if opened else ''}"
+                    )
                 elif self._source_breaker:
                     self._source_breaker.success(source)
-                if self._search_cache and status not in (403, 429):
+                if self._search_cache and status not in (403, 429) and not source_error:
                     self._search_cache.set(cache_key, source_hits)
                 hits.extend(source_hits)
             except Exception as exc:

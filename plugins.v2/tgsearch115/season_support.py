@@ -202,15 +202,53 @@ def _cn_label(number: int) -> str:
     return str(number)
 
 
-def season_keywords(base_names: Iterable[Any], season: Optional[int], limit: int = 6) -> List[str]:
+def preferred_search_names(base_names: Iterable[Any], limit: int = 3) -> List[str]:
+    """Keep high-value aliases without querying every localized TMDB name.
+
+    The first title is the subscribed/canonical name. Prefer one Latin alias
+    and one additional CJK alias; low-value Cyrillic/Indic aliases are omitted
+    unless they are the only available title. This bounds TG and site traffic.
+    """
     names: List[str] = []
-    seen_names = set()
+    seen = set()
     for value in base_names or []:
         name = str(value or "").strip()
         key = name.casefold()
-        if name and key not in seen_names:
-            seen_names.add(key)
+        if name and key not in seen:
+            seen.add(key)
             names.append(name)
+    max_items = max(1, int(limit or 1))
+    if len(names) <= max_items:
+        return names
+    result = [names[0]]
+
+    def has_latin(value: str) -> bool:
+        return bool(re.search(r"[A-Za-z]", value))
+
+    def has_cjk(value: str) -> bool:
+        return bool(re.search(r"[\u3400-\u9fff]", value))
+
+    latin = next((name for name in names[1:] if has_latin(name)), None)
+    cjk = next((name for name in names[1:] if has_cjk(name)), None)
+    for candidate in (latin, cjk):
+        if candidate and candidate.casefold() not in {item.casefold() for item in result}:
+            result.append(candidate)
+        if len(result) >= max_items:
+            return result[:max_items]
+    # For titles without a CJK/Latin alias, retain one additional name rather
+    # than returning no query at all.
+    if len(result) > 1:
+        return result[:max_items]
+    for candidate in names[1:]:
+        if candidate.casefold() not in {item.casefold() for item in result}:
+            result.append(candidate)
+        if len(result) >= max_items:
+            break
+    return result[:max_items]
+
+
+def season_keywords(base_names: Iterable[Any], season: Optional[int], limit: int = 6) -> List[str]:
+    names = preferred_search_names(base_names, limit=3)
     if not names:
         return []
     if season is None:

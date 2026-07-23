@@ -130,6 +130,7 @@ class FilejinScraper:
         self._cache_items = None     # search_suggest 作品列表缓存
         self.app_auth_valid = True   # app_auth 是否有效（失效则置 False，供 /search 提示）
         self.last_detail_error = ""  # 最近一次详情失败原因，供 API/连通测试展示
+        self.last_error = ""  # 最近一次可分类的搜索错误，供来源熔断使用
         low, high = detail_delay
         self.detail_delay = (max(0.5, float(low)), max(float(low), float(high)))
         self.max_retries = min(3, max(0, int(max_retries)))
@@ -159,6 +160,7 @@ class FilejinScraper:
             return [], False
         self.last_detail_error = ""
         self.last_error_status = None
+        self.last_error = ""
         cnt = count or self.count
         try:
             items = self._get_items(term, year, target_season=target_season)
@@ -188,6 +190,7 @@ class FilejinScraper:
             has_more = (offset + cnt) < len(items)
             return hits, has_more
         except Exception as e:
+            self.last_error = "timeout" if isinstance(e, TimeoutError) or "timed out" in str(e).lower() else type(e).__name__
             logger.error(f"【TG115】观影搜索失败: {e}")
             return [], False
 
@@ -379,20 +382,27 @@ class FilejinScraper:
             resp = self._get_with_backoff(url, headers={"Accept": "application/json"})
         except Exception as e:
             self.last_detail_error = f"网络异常: {e}"
+            self.last_error = (
+                "timeout" if isinstance(e, TimeoutError) or "timed out" in str(e).lower()
+                else type(e).__name__
+            )
             urllib_hits = self._fetch_resources_urllib(dir_, id_)
             if urllib_hits is not None:
                 self.last_detail_error = ""
+                self.last_error = ""
                 return urllib_hits
             logger.warn(f"【TG115】观影 downurl {dir_}/{id_} {self.last_detail_error}")
             return []
 
         hits = self._parse_detail_response(resp)
         if hits is not None:
+            self.last_error = ""
             return hits
         if self._looks_like_html(resp):
             html_hits = self._parse_resources_from_html(resp.text or "")
             if html_hits:
                 self.last_detail_error = ""
+                self.last_error = ""
                 return html_hits
 
         # WAF 常只封 API 特征；以同一会话模拟页面导航再试一次。
@@ -415,11 +425,13 @@ class FilejinScraper:
                 hits = self._parse_detail_response(retry)
                 if hits is not None:
                     self.last_error_status = None
+                    self.last_error = ""
                     return hits
                 html_hits = self._parse_resources_from_html(retry.text or "")
                 if html_hits:
                     self.last_detail_error = ""
                     self.last_error_status = None
+                    self.last_error = ""
                     logger.info(
                         f"【TG115】观影 downurl 页面兜底提取 {len(html_hits)} 条资源"
                     )
@@ -427,6 +439,10 @@ class FilejinScraper:
                 resp = retry
             except Exception as e:
                 self.last_detail_error = f"页面重试异常: {e}"
+                self.last_error = (
+                    "timeout" if isinstance(e, TimeoutError) or "timed out" in str(e).lower()
+                    else type(e).__name__
+                )
                 resp = None
 
         if not self.last_detail_error and resp is not None:
@@ -436,6 +452,7 @@ class FilejinScraper:
         if urllib_hits is not None:
             self.last_detail_error = ""
             self.last_error_status = None
+            self.last_error = ""
             logger.info(
                 f"【TG115】观影 downurl urllib 直连兜底成功，提取 {len(urllib_hits)} 条资源"
             )

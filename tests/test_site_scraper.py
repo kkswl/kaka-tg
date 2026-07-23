@@ -189,6 +189,18 @@ class SiteScraperTest(unittest.TestCase):
         self.assertEqual("https://115.com/s/urllib", hits[0].share_url)
         self.assertEqual("", scraper.last_detail_error)
 
+    def test_search_timeout_is_classified_for_source_circuit_breaker(self):
+        scraper = site_scraper.FilejinScraper(app_auth="test")
+        scraper._ensure_access = lambda: (_ for _ in ()).throw(
+            TimeoutError("timed out")
+        )
+
+        hits, has_more = scraper.search("宝莱坞鸡尾酒2", year=2026)
+
+        self.assertEqual([], hits)
+        self.assertFalse(has_more)
+        self.assertEqual("timeout", scraper.last_error)
+
 
 if __name__ == "__main__":
     unittest.main()

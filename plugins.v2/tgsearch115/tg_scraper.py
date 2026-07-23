@@ -92,6 +92,11 @@ def repair_mojibake(value: str) -> str:
     return text
 
 
+def display_search_term(value: str) -> str:
+    """Render a query for logs without URL percent-encoding."""
+    return unquote(str(value or "")).strip()
+
+
 def _is_private_channel(cid: str) -> bool:
     """判断是否为私有频道（无法网页抓取）。"""
     cid = cid.strip()
@@ -202,7 +207,7 @@ class TgChannelScraper:
         valid_channels = []
         for ch in self.channels:
             cid = (ch.get("id") or "").strip()
-            cname = (ch.get("name") or "").strip() or cid
+            cname = repair_mojibake((ch.get("name") or "").strip()) or cid
             if not cid:
                 continue
             if cid.startswith("@"):
@@ -346,7 +351,7 @@ class TgChannelScraper:
                     await asyncio.sleep(random.uniform(*self.page_delay))
 
                 logger.info(
-                    f"【TG115】频道 [{cname}] 搜索 '{encoded_term}' "
+                    f"【TG115】频道 [{cname}] 搜索 '{display_search_term(encoded_term)}' "
                     f"返回 {total_msgs} 条消息（{page+1} 页），命中 {len(ch_hits)} 条 115 资源"
                 )
             except Exception as e:

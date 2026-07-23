@@ -64,6 +64,15 @@ class SeasonSupportTest(unittest.TestCase):
         self.assertIn("House of the Dragon", keywords)
         self.assertLessEqual(len(keywords), 6)
 
+    def test_preferred_names_skip_low_value_localized_aliases(self):
+        self.assertEqual(
+            ["宝莱坞鸡尾酒2", "Cocktail 2"],
+            season.preferred_search_names(
+                ["宝莱坞鸡尾酒2", "Cocktail 2", "Коктейль 2", "कॉकटेल २"],
+                limit=3,
+            ),
+        )
+
     def test_seasonless_share_is_deferred_but_wrong_season_is_rejected(self):
         seasonless = SimpleNamespace(title="海军罪案调查处 115合集", description="")
         wrong_season = SimpleNamespace(title="海军罪案调查处 S02", description="")

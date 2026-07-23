@@ -85,6 +85,14 @@ class TgScraperTest(unittest.TestCase):
         self.assertEqual("剧迷", tg_scraper.repair_mojibake(broken))
         self.assertEqual("Movie Channel", tg_scraper.repair_mojibake("Movie Channel"))
 
+    def test_display_search_term_decodes_percent_encoded_query(self):
+        self.assertEqual(
+            "Коктейль 2",
+            tg_scraper.display_search_term(
+                "%D0%9A%D0%BE%D0%BA%D1%82%D0%B5%D0%B9%D0%BB%D1%8C%202"
+            ),
+        )
+
     def test_extracts_links_from_message_buttons_and_wrapped_urls(self):
         direct = "https://115.com/s/demo123?password=abcd"
         wrapped = "https://t.me/iv?url=" + tg_scraper.quote("https://115.com/s/wrapped456")
