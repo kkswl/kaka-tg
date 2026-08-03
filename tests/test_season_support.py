@@ -52,6 +52,21 @@ class SeasonSupportTest(unittest.TestCase):
         unyear = season.source_cache_key("site", "Silo S03", None, "TV", 3)
         self.assertEqual(3, len({s02_2024, s03_2026, unyear}))
 
+    def test_pansou_cache_variant_and_cross_source_resource_deduplication(self):
+        self.assertNotEqual(
+            season.source_cache_key("pansou", "示例", 2026, "TV", 2, "115"),
+            season.source_cache_key("pansou", "示例", 2026, "TV", 2, "115,magnet"),
+        )
+        shared = "https://115.com/s/SAME"
+        magnet = "magnet:?xt=urn:btih:" + "a" * 40
+        result = season.deduplicate_search_hits([
+            SimpleNamespace(share_url=shared, resource_title="A", source_title="A"),
+            SimpleNamespace(share_url=shared + "?password=abcd", resource_title="A", source_title="A"),
+            SimpleNamespace(share_url=magnet, resource_title="B", source_title="B"),
+            SimpleNamespace(share_url=magnet + "&dn=duplicate", resource_title="B", source_title="B"),
+        ])
+        self.assertEqual(2, len(result))
+
     def test_season_keywords_include_aliases_and_are_bounded(self):
         keywords = season.season_keywords(
             ["权力的游戏前传：龙族", "龙之家族", "House of the Dragon"], 2, limit=6

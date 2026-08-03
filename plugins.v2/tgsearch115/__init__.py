@@ -76,8 +76,9 @@ from app.schemas.types import EventType, MediaType, NotificationType, SystemConf
 
 from .p115_transfer import P115Transfer
 from .tg_scraper import TgChannelScraper, repair_mojibake
-from .site_scraper import FilejinScraper
+from .site_scraper import FilejinScraper, SiteHit
 from .juying_scraper import JuyingApi
+from .pansou_scraper import PanSouClient
 from .identity_matcher import confirm_candidate_identity
 from .media_types import is_tv_media, subscription_notification_title, to_moviepilot_media_type
 from .search_relevance import extract_year, is_relevant_result
@@ -225,11 +226,11 @@ class TgSearch115(_PluginBase):
     # ============================ 插件元信息 ============================
     plugin_name = "拦截mp订阅"
     plugin_desc = (
-        "新增订阅和周期任务搜索 Telegram、观影和聚影，确认匹配的中字 1080P/4K 观影磁力优先通过插件内置 115 离线，"
-        "并支持 115 分享直接转存；"
-        "未命中或转存失败则平滑回退到 MoviePilot 默认站点搜索。"
+        "新增订阅和周期任务聚合搜索 Telegram、观影、PanSou 和聚影，候选经 MoviePilot 规则与精确媒体身份确认后处理；"
+        "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
+        "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.32"
+    plugin_version = "4.7.33"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -328,7 +329,15 @@ class TgSearch115(_PluginBase):
         self._use_rule_groups = self._to_bool(config.get("use_rule_groups"), True)
         self._notify_success = self._to_bool(config.get("notify_success"), True)
         self._notify_fail = self._to_bool(config.get("notify_fail"), False)
-        self._auto_finish = self._to_bool(config.get("auto_finish"), True)
+        self._wait_for_mp_organize = self._to_bool(
+            config.get("wait_for_mp_organize"), True
+        )
+        # ``auto_finish`` is retained only as an explicit legacy opt-out.  The
+        # default workflow must wait for MP organization/history confirmation.
+        self._auto_finish = (
+            self._to_bool(config.get("auto_finish"), False)
+            and not self._wait_for_mp_organize
+        )
         self._periodic_enabled = self._to_bool(config.get("periodic_enabled"), True)
         self._period_hours = min(3, max(1, self._safe_int(config.get("period_hours"), 2)))
         self._jitter_minutes = min(10, max(0, self._safe_int(config.get("jitter_minutes"), 10)))
@@ -369,6 +378,33 @@ class TgSearch115(_PluginBase):
                 _proxy = _mp_proxy.get("https") or _mp_proxy.get("http") or ""
         except Exception:
             pass
+        old_pansou = getattr(self, "_pansou_client", None)
+        if old_pansou:
+            old_pansou.close()
+        self._pansou_enabled = self._to_bool(config.get("pansou_enabled"), True)
+        self._pansou_url = str(config.get("pansou_url") or "http://192.168.1.15:8888").strip().rstrip("/")
+        self._pansou_token = str(config.get("pansou_token") or "").strip()
+        self._pansou_timeout = min(60.0, max(3.0, self._safe_float(config.get("pansou_timeout"), 20.0)))
+        self._pansou_refresh = self._to_bool(config.get("pansou_refresh"), False)
+        self._pansou_max_results = min(100, max(1, self._safe_int(config.get("pansou_max_results"), 100)))
+        self._pansou_cloud_types = self._parse_string_list(config.get("pansou_cloud_types"), ["115", "magnet"])
+        # PanSou is normally a LAN service.  Do not inherit MP's outbound proxy
+        # implicitly; an explicit value is required when a proxy is desired.
+        pansou_proxy = str(config.get("pansou_proxy") or "").strip()
+        if pansou_proxy.lower() in {"direct", "none", "false"}:
+            pansou_proxy = ""
+        elif pansou_proxy.lower() in {"mp", "global"}:
+            pansou_proxy = _proxy
+        self._pansou_client = PanSouClient(
+            base_url=self._pansou_url, token=self._pansou_token,
+            timeout=self._pansou_timeout, proxy=pansou_proxy,
+            max_results=self._pansou_max_results,
+        ) if self._pansou_enabled and self._pansou_url else None
+        self._pansou_cache_hits = 0
+        self._pansou_dedup_count = 0
+        self._pansou_rule_passed = 0
+        self._pansou_identity_checked = 0
+        self._pansou_safe_candidates = 0
         tg_concurrency = min(3, max(1, self._safe_int(config.get("tg_concurrency"), 2)))
         tg_delay_min = self._safe_float(config.get("tg_page_delay_min"), 0.8)
         tg_delay_max = max(tg_delay_min, self._safe_float(config.get("tg_page_delay_max"), 1.5))
@@ -506,6 +542,20 @@ class TgSearch115(_PluginBase):
                 "description": "GET /transfer?share_url=&target=，target 留空用默认目录",
             },
             {
+                "path": "/manual/subscriptions",
+                "endpoint": self.__manual_subscriptions_api,
+                "methods": ["GET"],
+                "auth": "bear",
+                "summary": "列出手动验证可用的订阅",
+            },
+            {
+                "path": "/manual/process",
+                "endpoint": self.__manual_process_api,
+                "methods": ["POST"],
+                "auth": "bear",
+                "summary": "按订阅规则验证并处理一个手动候选",
+            },
+            {
                 "path": "/magnet/offline",
                 "endpoint": self.__magnet_offline_api,
                 "methods": ["POST"],
@@ -621,6 +671,14 @@ class TgSearch115(_PluginBase):
                 "summary": "检查聚影 API 鉴权",
                 "description": "用 AppID+API Key 试搜，验证聚影开发者接口是否可用",
             },
+            {
+                "path": "/check_pansou",
+                "endpoint": self.__check_pansou_api,
+                "methods": ["GET"],
+                "auth": "bear",
+                "summary": "只读检查 PanSou 服务",
+                "description": "只检查服务可访问性，不创建任务或修改资源",
+            },
         ]
         return apis
 
@@ -661,6 +719,9 @@ class TgSearch115(_PluginBase):
     def stop_service(self):
         """停止插件并等待内部调度线程退出。"""
         self._stop_coordinator()
+        pansou_client = getattr(self, "_pansou_client", None)
+        if pansou_client:
+            pansou_client.close()
         with self._lock:
             self._running_ids.clear()
 
@@ -822,6 +883,7 @@ class TgSearch115(_PluginBase):
                 channel.get("enabled", True) for channel in self._tg_channels
             )),
             "site": bool(self._site_scraper),
+            "pansou": bool(self._pansou_client),
             "juying": bool(self._juying_api),
         })
 
@@ -894,7 +956,16 @@ class TgSearch115(_PluginBase):
             # title only. Do not stop until both bounded base fallbacks ran.
             if can_stop_keyword_search(len(keyword_hits), pending_base_keywords):
                 break
+        raw_pansou_count = sum(
+            str(getattr(hit, "_tg115_source", "") or "").lower() == "pansou"
+            for hit in hits
+        )
         hits = deduplicate_search_hits(hits)
+        kept_pansou_count = sum(
+            str(getattr(hit, "_tg115_source", "") or "").lower() == "pansou"
+            for hit in hits
+        )
+        self._pansou_dedup_count = max(0, raw_pansou_count - kept_pansou_count)
         result["hits"] = hits
         if not hits:
             result["reason"] = "未找到符合目标季与标题的候选"
@@ -917,13 +988,18 @@ class TgSearch115(_PluginBase):
             )
         result["torrents"] = torrents
         matched, rule_diagnostics = self._filter_resources(subscribe, mediainfo, torrents)
+        self._pansou_rule_passed = sum(
+            str(getattr(item, "_tg115_source", "") or "").lower() == "pansou"
+            for item in matched
+        )
         result["matched"], result["diagnostics"] = matched, rule_diagnostics
         if not matched:
             result["reason"] = rule_diagnostics.summary() if rule_diagnostics else "候选未通过 MoviePilot 规则"
             return result
 
+        bounded_matched = order_identity_candidates(matched, mediainfo, subscribe)[:20]
         auto_candidates = select_auto_candidates(
-            torrents=matched,
+            torrents=bounded_matched,
             prefer_site_magnet=(self._site_magnet_priority and bool(
                 (self._offline_client and self._p115_cookie) or
                 (self._cms_client and self._cms_client.configured)
@@ -953,10 +1029,18 @@ class TgSearch115(_PluginBase):
             result["identities"][id(candidate)] = identity
             if identity.confirmed:
                 result["confirmed"].append(candidate)
+        self._pansou_identity_checked = sum(
+            str(getattr(item, "_tg115_source", "") or "").lower() == "pansou"
+            for item in identity_candidates[:3]
+        )
         # Identity probing is relevance-ranked, but all side effects must retain
         # the contractual TG -> Guanying share -> magnet -> Juying order.
         confirmed_ids = {id(item) for item in result["confirmed"]}
         result["confirmed"] = [item for item in candidates if id(item) in confirmed_ids]
+        self._pansou_safe_candidates = sum(
+            str(getattr(item, "_tg115_source", "") or "").lower() == "pansou"
+            for item in result["confirmed"]
+        )
         if not result["confirmed"]:
             identities = list(result["identities"].values())
             result["reason"] = next((item.reason for item in reversed(identities) if item.reason),
@@ -1118,6 +1202,7 @@ class TgSearch115(_PluginBase):
                     channel.get("enabled", True) for channel in self._tg_channels
                 )),
                 "site": bool(self._site_scraper),
+                "pansou": bool(self._pansou_client),
                 "juying": bool(self._juying_api),
             })
 
@@ -1296,6 +1381,13 @@ class TgSearch115(_PluginBase):
                         site_keyword, year=query_year, target_season=target_season
                     )[0], self._site_scraper, query_year,
                 ))
+        if self._pansou_client:
+            source_calls.append((
+                "pansou", lambda: self._pansou_client.search(
+                    keyword, year=year, media_type=media_type, season=target_season,
+                    refresh=self._pansou_refresh, cloud_types=self._pansou_cloud_types,
+                ), self._pansou_client, year,
+            ))
         if self._juying_api:
             source_calls.append((
                 "juying", lambda: self._juying_api.search(keyword, year=year),
@@ -1312,7 +1404,8 @@ class TgSearch115(_PluginBase):
         for source, callback, client, source_year in source_calls:
             cache_keyword = site_keyword if source == "site" else keyword
             cache_key = source_cache_key(
-                source, cache_keyword, source_year, media_type, target_season
+                source, cache_keyword, source_year, media_type, target_season,
+                ",".join(self._pansou_cloud_types) if source == "pansou" else "",
             )
             cached = self._search_cache.get(cache_key) if self._search_cache else None
             if cached is not None:
@@ -1335,6 +1428,8 @@ class TgSearch115(_PluginBase):
                     search_diagnostics[key] = search_diagnostics.get(key, 0) + len(cached)
                 if source_report:
                     source_report.record(source, cached, cached=True)
+                if source == "pansou":
+                    self._pansou_cache_hits += 1
                 logger.info(
                     f"【TG115】{source} S{target_season:02d} 命中周期搜索缓存 {len(cached)} 条"
                     if target_season is not None
@@ -1688,7 +1783,7 @@ class TgSearch115(_PluginBase):
             # title, page title and query year. Permit it to reach the exact
             # MoviePilot ID/type recognizer even if its local alias parser is
             # incomplete. It is not a confirmation and cannot bypass that check.
-            if (getattr(torrent, "_tg115_source", "") == "site"
+            if (getattr(torrent, "_tg115_source", "") in {"site", "pansou"}
                     and pan_type == "magnet" and source_title and resource_title):
                 setattr(torrent, "_tg115_metadata_verified", True)
             # 115 分享页不提供 Tracker 种子大小、做种、促销和发布时间。该标记只供
@@ -1946,6 +2041,30 @@ class TgSearch115(_PluginBase):
                             f"渠道：{source_summary or '已完成来源汇总'}\n"
                             "后续：等待 115 下载和 MoviePilot 整理，当前不会标记订阅完成。\n"
                             f"资源：{torrent.title}\n{transfer_msg}"
+                        ),
+                    )
+                return True
+
+            # A successful 115 share receive only proves that the cloud copy
+            # request completed.  It does not prove MP has seen, organized and
+            # recorded the media.  Keep the subscription paused and let MP's
+            # normal monitor/organizer own completion.
+            if self._wait_for_mp_organize:
+                oper.update(subscribe.id, {"state": "P"})
+                logger.info(
+                    "【TG115】订阅 [%s] 已完成 115 分享转存，等待 MoviePilot 整理确认",
+                    subscribe.name,
+                )
+                if self._notify_success:
+                    self._post_search_notification_once(
+                        subscribe=subscribe,
+                        outcome="pending_organize",
+                        mtype=NotificationType.Subscribe,
+                        title=subscription_notification_title(subscribe),
+                        text=(
+                            "结果：资源已通过规则与媒体身份确认，并已转存到 115。\n"
+                            f"渠道：{source_summary or '已完成来源汇总'}\n"
+                            "后续：等待 MoviePilot 监控、整理和订阅历史确认；当前不会标记订阅完成。"
                         ),
                     )
                 return True
@@ -2408,6 +2527,139 @@ class TgSearch115(_PluginBase):
             return JSONResponse({"status": 0, "msg": "等待扫码", "login_ok": False})
 
     # ---------------------------- 手动转存 / 手动搜索 API ----------------------------
+    def __manual_subscriptions_api(self):
+        """Return only non-secret subscription labels for manual verification."""
+        from starlette.responses import JSONResponse
+        items = []
+        for subscribe in SubscribeOper().list() or []:
+            state = str(getattr(subscribe, "state", "N") or "N").upper()
+            if state not in {"N", "R"}:
+                continue
+            season = getattr(subscribe, "season", None)
+            label = str(getattr(subscribe, "name", "") or "未命名订阅")
+            year = getattr(subscribe, "year", None)
+            if year:
+                label += f"（{year}）"
+            if season is not None:
+                try:
+                    label += f" S{int(season):02d}"
+                except (TypeError, ValueError):
+                    pass
+            items.append({"id": getattr(subscribe, "id", None), "label": label})
+        return JSONResponse({"success": True, "items": items})
+
+    def __manual_process_api(self, payload: dict = Body(default=None)):
+        """Verify one selected result with the subscription pipeline before writes."""
+        from starlette.responses import JSONResponse
+        payload = payload if isinstance(payload, dict) else {}
+        if payload.get("confirm") is not True:
+            return JSONResponse(
+                {"success": False, "message": "真实处理必须显式确认 confirm=true"},
+                status_code=400,
+            )
+        try:
+            subscribe_id = int(payload.get("subscribe_id"))
+        except (TypeError, ValueError):
+            return JSONResponse(
+                {"success": False, "message": "请先选择用于身份确认的订阅"},
+                status_code=400,
+            )
+        subscribe = SubscribeOper().get(subscribe_id)
+        if not subscribe:
+            return JSONResponse({"success": False, "message": "订阅不存在"}, status_code=404)
+        state = str(getattr(subscribe, "state", "N") or "N").upper()
+        if state not in {"N", "R"}:
+            return JSONResponse(
+                {"success": False, "message": "订阅当前状态不允许手动处理"},
+                status_code=409,
+            )
+
+        candidate = payload.get("candidate") if isinstance(payload.get("candidate"), dict) else {}
+        url = str(candidate.get("share_url") or "").strip()
+        title = str(candidate.get("title") or "").strip()
+        description = str(candidate.get("text") or title).strip()
+        pan_type = str(candidate.get("pan_type") or "").strip().lower()
+        source = str(candidate.get("source") or "manual").strip().lower()
+        if not url or not title or pan_type not in {"115", "magnet"}:
+            return JSONResponse(
+                {"success": False, "message": "候选资源字段不完整或类型不支持"},
+                status_code=400,
+            )
+
+        try:
+            meta = build_subscribe_meta(subscribe)
+            mediainfo = self._recognize(subscribe, meta)
+            if not mediainfo:
+                return JSONResponse(
+                    {"success": False, "message": "MoviePilot 无法识别目标订阅"},
+                    status_code=422,
+                )
+            hit = SiteHit(
+                share_url=url,
+                receive_code=str(candidate.get("receive_code") or "").strip(),
+                resource_title=title,
+                text=description[:1000],
+                pan_type=pan_type,
+                source_title=str(getattr(subscribe, "name", "") or ""),
+                year=getattr(subscribe, "year", None),
+                channel_name="手动搜索",
+            )
+            setattr(hit, "_tg115_source", source if source in {"tg", "site", "pansou", "juying"} else "manual")
+            torrents = self._build_torrents([hit])
+            self._enrich_share_metadata(torrents, subscribe=subscribe, mediainfo=mediainfo)
+            target = getattr(subscribe, "season", None)
+            if target is not None:
+                torrents = [item for item in torrents if supports_target_season(item, int(target))]
+            matched, diagnostics = self._filter_resources(subscribe, mediainfo, torrents)
+            if not matched:
+                reason = diagnostics.summary() if diagnostics else "候选未通过 MoviePilot 规则"
+                return JSONResponse({"success": False, "message": reason}, status_code=422)
+            torrent = matched[0]
+            identity = confirm_candidate_identity(
+                subscribe=subscribe,
+                target_media=mediainfo,
+                torrent=torrent,
+                recognize_candidate=self._recognize_candidate,
+            )
+            if not identity.confirmed:
+                return JSONResponse(
+                    {"success": False, "message": identity.reason or "候选身份确认失败"},
+                    status_code=422,
+                )
+            if is_magnet_url(torrent.page_url or ""):
+                ok, message = self._submit_magnet_to_115(torrent, subscribe=subscribe)
+                via_magnet = True
+            else:
+                ok, message, _data = self._transfer.transfer(
+                    torrent.page_url or "", self._p115_target
+                ) if self._transfer else (False, "115 转存模块未初始化", {})
+                via_magnet = False
+            if not ok:
+                return JSONResponse({"success": False, "message": message}, status_code=502)
+            self._finish_subscribe(
+                subscribe, meta, mediainfo, torrent, message,
+                via_offline_magnet=via_magnet,
+                source_summary="手动搜索（已通过 MoviePilot 规则与媒体身份确认）",
+            )
+            logger.info(
+                "【TG115】手动候选已通过验证并提交 subscribe_id=%s source=%s type=%s",
+                subscribe_id, source, pan_type,
+            )
+            return JSONResponse({
+                "success": True,
+                "message": "候选已验证并提交，等待 115 与 MoviePilot 整理确认",
+                "status": "pending_organize",
+            })
+        except Exception as exc:
+            logger.warning(
+                "【TG115】手动候选处理失败 subscribe_id=%s type=%s",
+                subscribe_id, type(exc).__name__,
+            )
+            return JSONResponse(
+                {"success": False, "message": "手动候选处理失败，请检查安全分类日志"},
+                status_code=500,
+            )
+
     def __transfer_api(self, share_url: str = "", target: str = ""):
         """GET /transfer?share_url=...&target=...：手动转存 115 分享链接到指定目录。
 
@@ -2423,11 +2675,11 @@ class TgSearch115(_PluginBase):
         target_path = (target or "").strip() or self._p115_target
         try:
             ok, msg, data = self._transfer.transfer(share_url, target_path)
-            logger.info(f"【TG115】手动转存 {share_url} -> {target_path}: ok={ok} msg={msg}")
+            logger.info("【TG115】手动 115 转存完成 ok=%s", ok)
             return JSONResponse({"success": ok, "message": msg})
         except Exception as e:
-            logger.error(f"【TG115】手动转存异常: {e}")
-            return JSONResponse({"success": False, "message": f"转存失败: {e}"}, status_code=500)
+            logger.error("【TG115】手动转存异常 type=%s", type(e).__name__)
+            return JSONResponse({"success": False, "message": "转存失败，请检查安全分类日志"}, status_code=500)
 
     def __magnet_offline_api(self, payload: dict = Body(default=None)):
         """Always return JSON, including unexpected direct/CMS client errors."""
@@ -2537,6 +2789,19 @@ class TgSearch115(_PluginBase):
                 "identity_unavailable": 0, "stopping": True,
             },
             "sources": self._source_breaker.snapshot() if self._source_breaker else {},
+            "pansou": {
+                "enabled": bool(self._pansou_client),
+                "last_request": getattr(self._pansou_client, "last_request_at", "") if self._pansou_client else "",
+                "last_success": getattr(self._pansou_client, "last_success_at", "") if self._pansou_client else "",
+                "last_error": getattr(self._pansou_client, "last_error", "") if self._pansou_client else "",
+                "result_count": getattr(self._pansou_client, "last_result_count", 0) if self._pansou_client else 0,
+                "type_counts": dict(getattr(self._pansou_client, "type_counts", {}) or {}) if self._pansou_client else {},
+                "cache_hits": self._pansou_cache_hits,
+                "deduplicated": self._pansou_dedup_count,
+                "rule_passed": self._pansou_rule_passed,
+                "identity_checked": self._pansou_identity_checked,
+                "safe_candidates": self._pansou_safe_candidates,
+            },
             "tasks": self._cms_tasks.public_records() if self._cms_tasks else [],
         })
 
@@ -2693,8 +2958,8 @@ class TgSearch115(_PluginBase):
         if not keyword:
             return JSONResponse({"success": False, "message": "请输入搜索关键字"}, status_code=400)
         if ((not self._scraper or not self._tg_channels)
-                and not self._site_scraper and not self._juying_api):
-            return JSONResponse({"success": False, "message": "未配置任何搜索源（TG、观影或聚影）"}, status_code=400)
+                and not self._site_scraper and not self._pansou_client and not self._juying_api):
+            return JSONResponse({"success": False, "message": "未配置任何搜索源（TG、观影、PanSou 或聚影）"}, status_code=400)
         try:
             offset = int(offset or 0)
         except Exception:
@@ -2719,8 +2984,10 @@ class TgSearch115(_PluginBase):
             if not self._source_breaker:
                 return
             status = getattr(client, "last_error_status", None)
-            if status in (403, 429):
-                self._source_breaker.failure(source_name, f"HTTP {status}")
+            error = str(getattr(client, "last_error", "") or "")
+            if status in (401, 403, 429) or error:
+                category = f"HTTP {status}" if status else (error or "请求失败")
+                self._source_breaker.failure(source_name, category)
             else:
                 self._source_breaker.success(source_name)
 
@@ -2737,6 +3004,12 @@ class TgSearch115(_PluginBase):
                     search_kw, year=manual_year, offset=offset, count=3)
                 hits.extend(site_hits)
                 _record_source("site", self._site_scraper)
+            if src in ("all", "pansou") and self._pansou_client and _allowed("pansou"):
+                hits.extend(self._pansou_client.search(
+                    search_kw, year=manual_year, refresh=self._pansou_refresh,
+                    cloud_types=self._pansou_cloud_types,
+                ))
+                _record_source("pansou", self._pansou_client)
             if src in ("all", "juying") and self._juying_api and _allowed("juying"):
                 hits.extend(self._juying_api.search(search_kw, year=manual_year))
                 _record_source("juying", self._juying_api)
@@ -2789,6 +3062,7 @@ class TgSearch115(_PluginBase):
                     "share_url": share_url,
                     "receive_code": getattr(h, "receive_code", "") or "",
                     "channel": getattr(h, "channel_name", "") or "",
+                    "source": getattr(h, "_tg115_source", "") or ("pansou" if getattr(h, "channel_name", "") == "PanSou" else ""),
                     "pan_type": pt,
                     "pub_date": h.pub_date or "",
                     "text": (h.text or "")[:500],
@@ -2928,6 +3202,21 @@ class TgSearch115(_PluginBase):
         ok, msg = self._juying_api.check()
         return JSONResponse({"success": ok, "message": msg})
 
+    def __check_pansou_api(self, base_url: str = ""):
+        """GET /check_pansou: read-only connectivity check without resource actions."""
+        from starlette.responses import JSONResponse
+        url = str(base_url or "").strip() or self._pansou_url
+        client = PanSouClient(
+            base_url=url, token=self._pansou_token,
+            timeout=self._pansou_timeout, proxy="",
+            max_results=self._pansou_max_results,
+        )
+        try:
+            ok, message = client.health_check()
+            return JSONResponse({"success": ok, "message": message})
+        finally:
+            client.close()
+
     # ============================ 依赖检查 ============================
     def _check_deps(self):
         missing = []
@@ -2961,7 +3250,7 @@ class TgSearch115(_PluginBase):
             "use_rule_groups": True,
             "notify_success": True,
             "notify_fail": False,
-            "auto_finish": True,
+            "auto_finish": False,
             "periodic_enabled": True,
             "period_hours": 2,
             "jitter_minutes": 10,
@@ -2994,8 +3283,31 @@ class TgSearch115(_PluginBase):
             "juying_api_key": "",
             "juying_domain": "",
             "juying_proxy": "",
+            "pansou_enabled": True,
+            "pansou_url": "http://192.168.1.15:8888",
+            "pansou_token": "",
+            "pansou_proxy": "",
+            "pansou_timeout": 20,
+            "pansou_refresh": False,
+            "pansou_cloud_types": ["115", "magnet"],
+            "pansou_max_results": 100,
             "tg_channels": [],
         }
+
+    @staticmethod
+    def _parse_string_list(raw: Any, default: List[str]) -> List[str]:
+        if raw is None or raw == "":
+            return list(default)
+        if isinstance(raw, str):
+            try:
+                parsed = json.loads(raw)
+                raw = parsed if isinstance(parsed, list) else raw.split(",")
+            except Exception:
+                raw = raw.split(",")
+        if not isinstance(raw, (list, tuple, set)):
+            return list(default)
+        values = [str(item).strip().lower() for item in raw if str(item).strip()]
+        return values or list(default)
 
     @staticmethod
     def _parse_channels(raw: Any) -> List[Dict[str, Any]]:

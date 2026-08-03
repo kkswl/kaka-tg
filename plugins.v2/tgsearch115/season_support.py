@@ -171,7 +171,14 @@ def deduplicate_search_hits(candidates: Iterable[Any]) -> List[Any]:
             url = str(getattr(candidate, "share_url", "") or "").strip().casefold()
             title = str(getattr(candidate, "resource_title", "") or "").strip().casefold()
             source_title = str(getattr(candidate, "source_title", "") or "").strip().casefold()
-        key = (url,) if url else (title, source_title)
+        btih_match = re.search(r"(?:^|[?&])xt=urn:btih:([a-z0-9]+)", url, re.IGNORECASE)
+        share_match = re.search(r"(?:115\.com|anxia\.com|115cdn\.com)/(?:s/|share\.php\?[^#]*?share_code=)([a-z0-9]+)", url, re.IGNORECASE)
+        if btih_match:
+            key = ("btih", btih_match.group(1).casefold())
+        elif share_match:
+            key = ("115", share_match.group(1).casefold())
+        else:
+            key = ("url", url.split("#", 1)[0].rstrip("/")) if url else ("title", title, source_title)
         if not any(key) or key in seen:
             continue
         seen.add(key)
@@ -181,13 +188,14 @@ def deduplicate_search_hits(candidates: Iterable[Any]) -> List[Any]:
 
 def source_cache_key(
         source: Any, keyword: Any, year: Any, media_type: Any,
-        season: Optional[int]) -> tuple:
+        season: Optional[int], variant: Any = "") -> tuple:
     return (
         str(source or "").strip().casefold(),
         str(keyword or "").strip().casefold(),
         str(year or "").strip(),
         str(getattr(media_type, "value", media_type) or "").strip().upper(),
         "" if season is None else str(int(season)),
+        str(variant or "").strip().casefold(),
     )
 
 

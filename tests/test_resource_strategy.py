@@ -66,13 +66,15 @@ class ResourceStrategyTest(unittest.TestCase):
         self.assertEqual("cms", source)
         self.assertEqual(["direct", "cms"], calls)
 
-    def test_orders_tg_then_guanying_115_then_guanying_magnet_then_juying(self):
+    def test_orders_direct_sources_then_pansou_then_magnets_then_juying(self):
         magnet = "magnet:?xt=urn:btih:" + "a" * 40
         torrents = [
             _torrent("https://115.com/s/juying", "115", source="juying"),
             _torrent(magnet, "magnet", text="1080P 中文字幕"),
             _torrent(magnet + "&dn=duplicate", "magnet", text="1080P 中文字幕"),
             _torrent("https://115.com/s/site", "115"),
+            _torrent("https://115.com/s/pansou", "115", source="pansou"),
+            _torrent("magnet:?xt=urn:btih:" + "9" * 40, "magnet", source="pansou", text="1080P 中文字幕"),
             _torrent("https://115.com/s/tg", "115", source="tg", text="频道资源"),
         ]
 
@@ -83,7 +85,9 @@ class ResourceStrategyTest(unittest.TestCase):
         self.assertEqual([
             "https://115.com/s/tg",
             "https://115.com/s/site",
+            "https://115.com/s/pansou",
             magnet,
+            "magnet:?xt=urn:btih:" + "9" * 40,
             "https://115.com/s/juying",
         ], [t.page_url for t in selected])
 

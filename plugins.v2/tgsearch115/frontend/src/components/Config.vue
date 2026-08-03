@@ -71,6 +71,7 @@
         <v-tab value="search" prepend-icon="mdi-magnify">手动搜索</v-tab>
         <v-tab value="channel" prepend-icon="mdi-bullhorn-outline">TG 频道模块</v-tab>
         <v-tab value="site" prepend-icon="mdi-movie-search-outline">观影</v-tab>
+        <v-tab value="pansou" prepend-icon="mdi-database-search-outline">PanSou</v-tab>
         <v-tab value="juying" prepend-icon="mdi-api">聚影</v-tab>
         <v-tab value="settings" prepend-icon="mdi-cog-outline">插件设置</v-tab>
       </v-tabs>
@@ -283,7 +284,7 @@
                 <div class="text-caption text-medium-emphasis">开启=转存后插件直接标记订阅完成（不用MP整理115）；关闭=只阻断搜索，让MP整理115资源后自己完成</div>
               </div>
               <v-spacer />
-              <v-switch v-model="config.auto_finish" color="primary" hide-details density="compact" />
+              <v-switch v-model="config.auto_finish" :disabled="config.wait_for_mp_organize" color="warning" hide-details density="compact" />
             </v-col>
             <v-col cols="12" md="6" class="d-flex align-center">
               <div class="mr-2">
@@ -415,6 +416,48 @@
             </v-col>
             <v-col cols="12">
               <v-text-field v-model="config.site_proxy" label="观影代理设置（留空为直连）" variant="outlined" density="compact" hide-details hint="观影站不允许使用翻墙代理，所以默认强制直连飞牛网络（不受 MP 全局代理影响）。如果有特殊需求可填特定代理 URL；填 proxy 强制跟随全局" persistent-hint />
+            </v-col>
+          </v-row>
+        </v-window-item>
+
+        <!-- ============ Tab：PanSou ============ -->
+        <v-window-item value="pansou" class="pa-4">
+          <div class="section-label mb-2">PanSou 聚合搜索</div>
+          <div class="text-caption text-medium-emphasis mb-3">作为 TG 和观影后的补充召回来源；结果仍需经过 MoviePilot 规则、媒体 ID、类型和季号确认。</div>
+          <v-row>
+            <v-col cols="12" md="6" class="d-flex align-center">
+              <div class="mr-2">
+                <div class="text-subtitle-2">启用 PanSou</div>
+                <div class="text-caption text-medium-emphasis">自动订阅和手动搜索同时使用</div>
+              </div>
+              <v-spacer />
+              <v-switch v-model="config.pansou_enabled" color="primary" hide-details density="compact" />
+            </v-col>
+            <v-col cols="12" md="6" class="d-flex align-center">
+              <v-btn size="small" variant="outlined" prepend-icon="mdi-connection" :loading="pansouChecking" @click="checkPanSou">测试连通</v-btn>
+            </v-col>
+            <v-col cols="12" md="8">
+              <v-text-field v-model="config.pansou_url" label="PanSou 服务地址" placeholder="http://192.168.1.15:8888" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-text-field v-model="config.pansou_timeout" label="请求超时（秒）" type="number" min="3" max="60" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="12" md="4">
+              <v-text-field v-model="config.pansou_proxy" label="PanSou 专用代理（可选）" placeholder="留空直连；填 mp 使用全局代理" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="12">
+              <v-text-field v-model="config.pansou_token" label="PanSou JWT Token（可选）" :type="showSecrets ? 'text' : 'password'" variant="outlined" density="compact" hide-details hint="仅在 PanSou 开启认证时填写；不会写入日志" persistent-hint />
+            </v-col>
+            <v-col cols="12" md="6">
+              <v-select v-model="config.pansou_cloud_types" :items="pansouCloudOptions" item-title="title" item-value="value" multiple chips closable-chips label="自动召回类型" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="12" md="3">
+              <v-text-field v-model="config.pansou_max_results" label="单次最大候选" type="number" min="1" max="100" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="12" md="3" class="d-flex align-center">
+              <span class="text-body-2 mr-2">强制刷新缓存</span>
+              <v-spacer />
+              <v-switch v-model="config.pansou_refresh" color="warning" hide-details density="compact" />
             </v-col>
           </v-row>
         </v-window-item>
@@ -622,7 +665,7 @@ const DEFAULTS = {
   use_rule_groups: true,
   notify_success: true,
   notify_fail: false,
-  auto_finish: true,
+  auto_finish: false,
   periodic_enabled: true,
   period_hours: 2,
   jitter_minutes: 10,
@@ -654,6 +697,14 @@ const DEFAULTS = {
   juying_app_id: '',
   juying_api_key: '',
   juying_domain: '',
+  pansou_enabled: true,
+  pansou_url: 'http://192.168.1.15:8888',
+  pansou_token: '',
+  pansou_proxy: '',
+  pansou_timeout: 20,
+  pansou_refresh: false,
+  pansou_cloud_types: ['115', 'magnet'],
+  pansou_max_results: 100,
   tg_channels: [],
 }
 
@@ -681,6 +732,17 @@ const cooldownOptions = [
   { title: '30 分钟', value: 30 },
   { title: '45 分钟', value: 45 },
   { title: '60 分钟', value: 60 },
+]
+const pansouCloudOptions = [
+  { title: '115 网盘', value: '115' },
+  { title: '磁力', value: 'magnet' },
+  { title: '夸克网盘', value: 'quark' },
+  { title: '百度网盘', value: 'baidu' },
+  { title: '阿里网盘', value: 'aliyun' },
+  { title: '迅雷网盘', value: 'xunlei' },
+  { title: '天翼网盘', value: 'tianyi' },
+  { title: 'UC 网盘', value: 'uc' },
+  { title: '123 网盘', value: '123' },
 ]
 
 const newName = ref('')
@@ -737,6 +799,7 @@ const transferringIndex = ref(-1)  // 正在转存的结果索引（-1=无）
 const siteChecking = ref(false)
 const cmsChecking = ref(false)
 const offlineChecking = ref(false)
+const pansouChecking = ref(false)
 // 115 目录查询/浏览
 const dirInfoName = ref('')
 const dirBrowserOpen = ref(false)
@@ -1037,6 +1100,15 @@ async function checkJuying() {
   const dom = encodeURIComponent((config.juying_domain || '').trim())
   const res = await apiGet(`/check_juying?app_id=${encodeURIComponent(aid)}&api_key=${encodeURIComponent(akey)}${dom ? '&domain=' + dom : ''}`)
   juyingChecking.value = false
+  snack((res && res.message) || '检查失败', (res && res.success) ? 'success' : 'error')
+}
+async function checkPanSou() {
+  const url = (config.pansou_url || '').trim()
+  if (!url) { snack('请先填写 PanSou 地址', 'warning'); return }
+  pansouChecking.value = true
+  const query = `/check_pansou?base_url=${encodeURIComponent(url)}`
+  const res = await apiGet(query)
+  pansouChecking.value = false
   snack((res && res.message) || '检查失败', (res && res.success) ? 'success' : 'error')
 }
 async function doSearch() {

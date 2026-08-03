@@ -20,6 +20,7 @@ const PAN_FILTERS = [
   { title: '115网盘', value: '115' },
   { title: 'UC网盘', value: 'uc' },
   { title: '阿里网盘', value: 'aliyun' },
+  { title: '123网盘', value: '123' },
 ];
 
 function resultText(result) {
@@ -99,7 +100,7 @@ const _hoisted_13 = {
   class: "empty-state"
 };
 
-const {computed,ref,watch} = await importShared('vue');
+const {computed,onMounted,ref,watch} = await importShared('vue');
 
 
 const _sfc_main = {
@@ -114,6 +115,8 @@ const source = ref('all');
 const resourceType = ref('all');
 const detailFilter = ref('all');
 const results = ref([]);
+const subscriptions = ref([]);
+const subscribeId = ref(null);
 const searching = ref(false);
 const searched = ref(false);
 const transferring = ref('');
@@ -158,11 +161,22 @@ async function copy(r) {
 }
 async function transfer(r) {
   if (!props.api) return notify('API 未就绪', 'error')
+  if (!subscribeId.value) return notify('请先选择用于身份确认的订阅', 'warning')
+  if (!window.confirm('将按所选订阅重新执行 MoviePilot 规则和媒体身份确认，通过后真实提交到 115。是否继续？')) return
   transferring.value = r.share_url;
   try {
-    const response = r.pan_type === 'magnet'
-      ? await props.api.post(`${base.value}/magnet/offline`, { magnet: fullUrl(r), title: r.display_name || r.title || '' })
-      : await props.api.get(`${base.value}/transfer?share_url=${encodeURIComponent(fullUrl(r))}`);
+    const response = await props.api.post(`${base.value}/manual/process`, {
+      subscribe_id: subscribeId.value,
+      confirm: true,
+      candidate: {
+        share_url: fullUrl(r),
+        receive_code: r.receive_code || '',
+        title: r.title || r.display_name || '',
+        text: r.text || '',
+        pan_type: r.pan_type || '',
+        source: r.source || '',
+      },
+    });
     const data = unwrap(response);
     if (!data || typeof data !== 'object') throw new Error('服务返回非 JSON，请检查插件日志')
     const success = data.success === true || data.code === 0;
@@ -171,12 +185,21 @@ async function transfer(r) {
     notify(e?.response?.data?.message || e?.message || '离线请求失败', 'error');
   } finally { transferring.value = ''; }
 }
-function panLabel(t) { return ({ '115':'115网盘', quark:'夸克网盘', baidu:'百度网盘', aliyun:'阿里网盘', xunlei:'迅雷网盘', cloud189:'天翼网盘', uc:'UC网盘', magnet:'磁力' })[t] || '其他' }
-function panColor(t) { return ({ '115':'success', quark:'info', baidu:'error', aliyun:'warning', xunlei:'secondary', cloud189:'primary', uc:'orange', magnet:'deep-purple' })[t] || 'grey' }
+async function loadSubscriptions() {
+  if (!props.api?.get) return
+  try {
+    const data = unwrap(await props.api.get(`${base.value}/manual/subscriptions`));
+    subscriptions.value = Array.isArray(data?.items) ? data.items : [];
+  } catch { subscriptions.value = []; }
+}
+onMounted(loadSubscriptions);
+function panLabel(t) { return ({ '115':'115网盘', quark:'夸克网盘', baidu:'百度网盘', aliyun:'阿里网盘', xunlei:'迅雷网盘', cloud189:'天翼网盘', uc:'UC网盘', '123':'123网盘', magnet:'磁力' })[t] || '其他' }
+function panColor(t) { return ({ '115':'success', quark:'info', baidu:'error', aliyun:'warning', xunlei:'secondary', cloud189:'primary', uc:'orange', '123':'teal', magnet:'deep-purple' })[t] || 'grey' }
 
 return (_ctx, _cache) => {
   const _component_v_btn = _resolveComponent("v-btn");
   const _component_v_btn_toggle = _resolveComponent("v-btn-toggle");
+  const _component_v_select = _resolveComponent("v-select");
   const _component_v_text_field = _resolveComponent("v-text-field");
   const _component_v_chip = _resolveComponent("v-chip");
   const _component_v_progress_circular = _resolveComponent("v-progress-circular");
@@ -190,7 +213,7 @@ return (_ctx, _cache) => {
 
   return (_openBlock(), _createElementBlock("div", _hoisted_1, [
     _createElementVNode("div", _hoisted_2, [
-      _cache[10] || (_cache[10] = _createElementVNode("span", { class: "text-caption text-medium-emphasis" }, "来源", -1)),
+      _cache[12] || (_cache[12] = _createElementVNode("span", { class: "text-caption text-medium-emphasis" }, "来源", -1)),
       _createVNode(_component_v_btn_toggle, {
         modelValue: source.value,
         "onUpdate:modelValue": _cache[0] || (_cache[0] = $event => ((source).value = $event)),
@@ -204,7 +227,7 @@ return (_ctx, _cache) => {
             value: "all",
             size: "small"
           }, {
-            default: _withCtx(() => [...(_cache[6] || (_cache[6] = [
+            default: _withCtx(() => [...(_cache[7] || (_cache[7] = [
               _createTextVNode("全部", -1)
             ]))]),
             _: 1
@@ -213,7 +236,7 @@ return (_ctx, _cache) => {
             value: "tg",
             size: "small"
           }, {
-            default: _withCtx(() => [...(_cache[7] || (_cache[7] = [
+            default: _withCtx(() => [...(_cache[8] || (_cache[8] = [
               _createTextVNode("TG", -1)
             ]))]),
             _: 1
@@ -222,8 +245,17 @@ return (_ctx, _cache) => {
             value: "site",
             size: "small"
           }, {
-            default: _withCtx(() => [...(_cache[8] || (_cache[8] = [
+            default: _withCtx(() => [...(_cache[9] || (_cache[9] = [
               _createTextVNode("观影", -1)
+            ]))]),
+            _: 1
+          }),
+          _createVNode(_component_v_btn, {
+            value: "pansou",
+            size: "small"
+          }, {
+            default: _withCtx(() => [...(_cache[10] || (_cache[10] = [
+              _createTextVNode("PanSou", -1)
             ]))]),
             _: 1
           }),
@@ -231,7 +263,7 @@ return (_ctx, _cache) => {
             value: "juying",
             size: "small"
           }, {
-            default: _withCtx(() => [...(_cache[9] || (_cache[9] = [
+            default: _withCtx(() => [...(_cache[11] || (_cache[11] = [
               _createTextVNode("聚影", -1)
             ]))]),
             _: 1
@@ -240,10 +272,22 @@ return (_ctx, _cache) => {
         _: 1
       }, 8, ["modelValue"])
     ]),
+    _createVNode(_component_v_select, {
+      modelValue: subscribeId.value,
+      "onUpdate:modelValue": _cache[1] || (_cache[1] = $event => ((subscribeId).value = $event)),
+      items: subscriptions.value,
+      "item-title": "label",
+      "item-value": "id",
+      label: "用于 MoviePilot 身份确认的订阅",
+      variant: "outlined",
+      density: "comfortable",
+      "hide-details": "",
+      class: "mb-3"
+    }, null, 8, ["modelValue", "items"]),
     _createElementVNode("div", _hoisted_3, [
       _createVNode(_component_v_text_field, {
         modelValue: keyword.value,
-        "onUpdate:modelValue": _cache[1] || (_cache[1] = $event => ((keyword).value = $event)),
+        "onUpdate:modelValue": _cache[2] || (_cache[2] = $event => ((keyword).value = $event)),
         label: "搜索关键字（影片名 + 年份）",
         variant: "outlined",
         density: "comfortable",
@@ -258,17 +302,17 @@ return (_ctx, _cache) => {
         "prepend-icon": "mdi-magnify",
         onClick: search
       }, {
-        default: _withCtx(() => [...(_cache[11] || (_cache[11] = [
+        default: _withCtx(() => [...(_cache[13] || (_cache[13] = [
           _createTextVNode("搜索", -1)
         ]))]),
         _: 1
       }, 8, ["loading"])
     ]),
     _createElementVNode("div", _hoisted_4, [
-      _cache[15] || (_cache[15] = _createElementVNode("span", { class: "filter-label" }, "资源", -1)),
+      _cache[17] || (_cache[17] = _createElementVNode("span", { class: "filter-label" }, "资源", -1)),
       _createVNode(_component_v_btn_toggle, {
         modelValue: resourceType.value,
-        "onUpdate:modelValue": _cache[2] || (_cache[2] = $event => ((resourceType).value = $event)),
+        "onUpdate:modelValue": _cache[3] || (_cache[3] = $event => ((resourceType).value = $event)),
         mandatory: "",
         color: "primary",
         density: "compact",
@@ -280,7 +324,7 @@ return (_ctx, _cache) => {
             value: "all",
             size: "small"
           }, {
-            default: _withCtx(() => [...(_cache[12] || (_cache[12] = [
+            default: _withCtx(() => [...(_cache[14] || (_cache[14] = [
               _createTextVNode("全部", -1)
             ]))]),
             _: 1
@@ -289,7 +333,7 @@ return (_ctx, _cache) => {
             value: "magnet",
             size: "small"
           }, {
-            default: _withCtx(() => [...(_cache[13] || (_cache[13] = [
+            default: _withCtx(() => [...(_cache[15] || (_cache[15] = [
               _createTextVNode("磁力", -1)
             ]))]),
             _: 1
@@ -298,7 +342,7 @@ return (_ctx, _cache) => {
             value: "pan",
             size: "small"
           }, {
-            default: _withCtx(() => [...(_cache[14] || (_cache[14] = [
+            default: _withCtx(() => [...(_cache[16] || (_cache[16] = [
               _createTextVNode("网盘", -1)
             ]))]),
             _: 1
@@ -322,10 +366,10 @@ return (_ctx, _cache) => {
     ]),
     (resourceType.value === 'magnet')
       ? (_openBlock(), _createElementBlock("div", _hoisted_5, [
-          _cache[16] || (_cache[16] = _createElementVNode("span", { class: "filter-label" }, "画质", -1)),
+          _cache[18] || (_cache[18] = _createElementVNode("span", { class: "filter-label" }, "画质", -1)),
           _createVNode(_component_v_btn_toggle, {
             modelValue: detailFilter.value,
-            "onUpdate:modelValue": _cache[3] || (_cache[3] = $event => ((detailFilter).value = $event)),
+            "onUpdate:modelValue": _cache[4] || (_cache[4] = $event => ((detailFilter).value = $event)),
             mandatory: "",
             color: "primary",
             density: "compact",
@@ -351,10 +395,10 @@ return (_ctx, _cache) => {
         ]))
       : (resourceType.value === 'pan')
         ? (_openBlock(), _createElementBlock("div", _hoisted_6, [
-            _cache[17] || (_cache[17] = _createElementVNode("span", { class: "filter-label" }, "网盘", -1)),
+            _cache[19] || (_cache[19] = _createElementVNode("span", { class: "filter-label" }, "网盘", -1)),
             _createVNode(_component_v_btn_toggle, {
               modelValue: detailFilter.value,
-              "onUpdate:modelValue": _cache[4] || (_cache[4] = $event => ((detailFilter).value = $event)),
+              "onUpdate:modelValue": _cache[5] || (_cache[5] = $event => ((detailFilter).value = $event)),
               mandatory: "",
               color: "primary",
               density: "compact",
@@ -432,7 +476,7 @@ return (_ctx, _cache) => {
                                     size: "x-small",
                                     variant: "tonal"
                                   }, {
-                                    default: _withCtx(() => [...(_cache[18] || (_cache[18] = [
+                                    default: _withCtx(() => [...(_cache[20] || (_cache[20] = [
                                       _createTextVNode("完结", -1)
                                     ]))]),
                                     _: 1
@@ -457,7 +501,7 @@ return (_ctx, _cache) => {
                               "prepend-icon": "mdi-content-copy",
                               onClick: $event => (copy(r))
                             }, {
-                              default: _withCtx(() => [...(_cache[19] || (_cache[19] = [
+                              default: _withCtx(() => [...(_cache[21] || (_cache[21] = [
                                 _createTextVNode("复制链接", -1)
                               ]))]),
                               _: 1
@@ -497,7 +541,7 @@ return (_ctx, _cache) => {
           : _createCommentVNode("", true),
     _createVNode(_component_v_snackbar, {
       modelValue: snack.value,
-      "onUpdate:modelValue": _cache[5] || (_cache[5] = $event => ((snack).value = $event)),
+      "onUpdate:modelValue": _cache[6] || (_cache[6] = $event => ((snack).value = $event)),
       color: snackColor.value,
       timeout: 3000,
       location: "top"
@@ -512,6 +556,6 @@ return (_ctx, _cache) => {
 }
 
 };
-const ManualSearch = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-60d35c2f"]]);
+const ManualSearch = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-82cdbcff"]]);
 
 export { ManualSearch as M, _export_sfc as _, filterSearchResults as f };

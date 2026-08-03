@@ -33,6 +33,7 @@ export const PAN_FILTERS = [
   { title: '115网盘', value: '115' },
   { title: 'UC网盘', value: 'uc' },
   { title: '阿里网盘', value: 'aliyun' },
+  { title: '123网盘', value: '123' },
 ]
 
 function resultText(result) {

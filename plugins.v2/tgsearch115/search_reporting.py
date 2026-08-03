@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable
 
 
-SOURCE_LABELS = {"tg": "TG 频道", "site": "观影", "juying": "聚影"}
+SOURCE_LABELS = {"tg": "TG 频道", "site": "观影", "pansou": "PanSou", "juying": "聚影"}
 
 
 def _candidate_key(candidate: Any) -> tuple:

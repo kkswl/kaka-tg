@@ -52,8 +52,11 @@ def select_auto_candidates(
     is_tv: bool,
     is_115_url: Callable[[str], bool],
 ) -> List:
-    """Order safe candidates: TG, Guanying 115 CHS, Guanying magnet CHS, Juying."""
-    buckets = {"tg": [], "site_share": [], "site_magnet": [], "juying": []}
+    """Order safe candidates without allowing aggregate sources to outrank direct sources."""
+    buckets = {
+        "tg": [], "site_share": [], "pansou_share": [],
+        "site_magnet": [], "pansou_magnet": [], "juying": [],
+    }
     bucket_seen = {name: set() for name in buckets}
 
     def add(bucket: str, key: str, torrent: Any) -> None:
@@ -79,6 +82,10 @@ def select_auto_candidates(
             add("site_share", url.lower(), torrent)
             continue
 
+        if source == "pansou" and is_115_url(url) and has_chinese_subtitle:
+            add("pansou_share", url.lower(), torrent)
+            continue
+
         if source == "site" and prefer_site_magnet and pan_type == "magnet" and is_magnet_url(url):
             if not has_chinese_subtitle or not _AUTO_MAGNET_QUALITY_RE.search(description):
                 continue
@@ -87,10 +94,21 @@ def select_auto_candidates(
             add("site_magnet", _magnet_key(url), torrent)
             continue
 
+        if source == "pansou" and prefer_site_magnet and pan_type == "magnet" and is_magnet_url(url):
+            if not has_chinese_subtitle or not _AUTO_MAGNET_QUALITY_RE.search(description):
+                continue
+            if is_tv and not bool(getattr(torrent, "_tg115_is_complete", False)):
+                continue
+            add("pansou_magnet", _magnet_key(url), torrent)
+            continue
+
         if source == "juying" and is_115_url(url):
             add("juying", url.lower(), torrent)
 
-    ordered = buckets["tg"] + buckets["site_share"] + buckets["site_magnet"] + buckets["juying"]
+    ordered = (
+        buckets["tg"] + buckets["site_share"] + buckets["pansou_share"]
+        + buckets["site_magnet"] + buckets["pansou_magnet"] + buckets["juying"]
+    )
     result = []
     seen = set()
     for torrent in ordered:

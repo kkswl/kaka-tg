@@ -69,6 +69,8 @@ def identity_candidate_score(candidate: Any, target_media: Any = None,
         score += 250
     if source == "site":
         score += 100
+    elif source == "pansou":
+        score += 40
     haystack = (title + " " + source_title).casefold()
     for name in target_names:
         name = name.strip().casefold()

@@ -32,6 +32,20 @@ class ConfigDefaultsTest(unittest.TestCase):
         self.assertEqual(12, defaults["cms_timeout_hours"])
         self.assertEqual("direct_then_cms", defaults["magnet_download_mode"])
         self.assertTrue(defaults["wait_for_mp_organize"])
+        self.assertFalse(defaults["auto_finish"])
+        self.assertTrue(defaults["pansou_enabled"])
+        self.assertEqual("http://192.168.1.15:8888", defaults["pansou_url"])
+        self.assertEqual("", defaults["pansou_proxy"])
+        self.assertEqual(["115", "magnet"], defaults["pansou_cloud_types"])
+        self.assertEqual(100, defaults["pansou_max_results"])
+
+    def test_share_transfer_waits_for_mp_before_subscribe_complete(self):
+        source = PLUGIN_PATH.read_text(encoding="utf-8")
+        finish = source[source.index("    def _finish_subscribe("):source.index("    @staticmethod\n    def _parse_episode_info")]
+        wait_branch = finish.index("if self._wait_for_mp_organize:")
+        complete_event = finish.index("eventmanager.send_event(EventType.SubscribeComplete")
+        self.assertLess(wait_branch, complete_event)
+        self.assertIn("return True", finish[wait_branch:complete_event])
 
 
 if __name__ == "__main__":

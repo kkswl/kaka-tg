@@ -56,6 +56,19 @@
             <div class="text-caption text-medium-emphasis">识别恢复</div>
             <div class="text-body-2">重试 {{ runtime.recognition.retries || 0 }} / 暂不可用 {{ runtime.recognition.identity_unavailable || 0 }}</div>
           </v-col>
+          <v-col cols="12" md="4">
+            <div class="text-caption text-medium-emphasis">PanSou</div>
+            <div class="text-body-2">{{ runtime.pansou.enabled ? '已启用' : '未启用' }} · 最近 {{ runtime.pansou.result_count || 0 }} 条</div>
+          </v-col>
+          <v-col cols="12" md="4">
+            <div class="text-caption text-medium-emphasis">PanSou 处理</div>
+            <div class="text-body-2">去重 {{ runtime.pansou.deduplicated || 0 }} / 规则 {{ runtime.pansou.rule_passed || 0 }} / 安全 {{ runtime.pansou.safe_candidates || 0 }}</div>
+          </v-col>
+          <v-col cols="12" md="4">
+            <div class="text-caption text-medium-emphasis">PanSou 最近状态</div>
+            <div class="text-body-2">{{ formatTime(runtime.pansou.last_success) }} · 缓存 {{ runtime.pansou.cache_hits || 0 }}</div>
+            <div v-if="runtime.pansou.last_error" class="text-caption text-warning">{{ runtime.pansou.last_error }}</div>
+          </v-col>
         </v-row>
         <div v-if="sourceStates.length" class="d-flex flex-wrap ga-2 mt-3">
           <v-chip
@@ -306,6 +319,7 @@ const runtime = reactive({
   scheduler: { running: false, last_run: '', next_run: '', scanned_count: 0, queue_size: 0 },
   recognition: { waiting: 0, active: 0, max_active: 0, last_wait_seconds: 0, retries: 0, identity_unavailable: 0, stopping: false },
   sources: {},
+  pansou: { enabled: false, last_request: '', last_success: '', last_error: '', result_count: 0, type_counts: {}, cache_hits: 0, deduplicated: 0, rule_passed: 0, identity_checked: 0, safe_candidates: 0 },
   tasks: [],
 })
 const statusLoading = ref(false)
@@ -413,6 +427,7 @@ async function loadRuntimeStatus() {
       Object.assign(runtime.scheduler, data.scheduler || {})
       Object.assign(runtime.recognition, data.recognition || {})
       runtime.sources = data.sources || {}
+      Object.assign(runtime.pansou, data.pansou || {})
       runtime.tasks = Array.isArray(data.tasks) ? data.tasks : []
     }
   } catch {

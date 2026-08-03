@@ -6,9 +6,14 @@
         <v-btn value="all" size="small">全部</v-btn>
         <v-btn value="tg" size="small">TG</v-btn>
         <v-btn value="site" size="small">观影</v-btn>
+        <v-btn value="pansou" size="small">PanSou</v-btn>
         <v-btn value="juying" size="small">聚影</v-btn>
       </v-btn-toggle>
     </div>
+
+    <v-select v-model="subscribeId" :items="subscriptions" item-title="label" item-value="id"
+      label="用于 MoviePilot 身份确认的订阅" variant="outlined" density="comfortable"
+      hide-details class="mb-3" />
 
     <div class="d-flex ga-2 mb-3 search-row">
       <v-text-field v-model="keyword" label="搜索关键字（影片名 + 年份）" variant="outlined"
@@ -73,7 +78,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { filterSearchResults, MAGNET_FILTERS, PAN_FILTERS } from '../searchFilters.js'
 
 const props = defineProps({ pluginId: { type: String, default: 'TgSearch115' }, api: { type: Object, default: null } })
@@ -83,6 +88,8 @@ const source = ref('all')
 const resourceType = ref('all')
 const detailFilter = ref('all')
 const results = ref([])
+const subscriptions = ref([])
+const subscribeId = ref(null)
 const searching = ref(false)
 const searched = ref(false)
 const transferring = ref('')
@@ -127,11 +134,22 @@ async function copy(r) {
 }
 async function transfer(r) {
   if (!props.api) return notify('API 未就绪', 'error')
+  if (!subscribeId.value) return notify('请先选择用于身份确认的订阅', 'warning')
+  if (!window.confirm('将按所选订阅重新执行 MoviePilot 规则和媒体身份确认，通过后真实提交到 115。是否继续？')) return
   transferring.value = r.share_url
   try {
-    const response = r.pan_type === 'magnet'
-      ? await props.api.post(`${base.value}/magnet/offline`, { magnet: fullUrl(r), title: r.display_name || r.title || '' })
-      : await props.api.get(`${base.value}/transfer?share_url=${encodeURIComponent(fullUrl(r))}`)
+    const response = await props.api.post(`${base.value}/manual/process`, {
+      subscribe_id: subscribeId.value,
+      confirm: true,
+      candidate: {
+        share_url: fullUrl(r),
+        receive_code: r.receive_code || '',
+        title: r.title || r.display_name || '',
+        text: r.text || '',
+        pan_type: r.pan_type || '',
+        source: r.source || '',
+      },
+    })
     const data = unwrap(response)
     if (!data || typeof data !== 'object') throw new Error('服务返回非 JSON，请检查插件日志')
     const success = data.success === true || data.code === 0
@@ -140,8 +158,16 @@ async function transfer(r) {
     notify(e?.response?.data?.message || e?.message || '离线请求失败', 'error')
   } finally { transferring.value = '' }
 }
-function panLabel(t) { return ({ '115':'115网盘', quark:'夸克网盘', baidu:'百度网盘', aliyun:'阿里网盘', xunlei:'迅雷网盘', cloud189:'天翼网盘', uc:'UC网盘', magnet:'磁力' })[t] || '其他' }
-function panColor(t) { return ({ '115':'success', quark:'info', baidu:'error', aliyun:'warning', xunlei:'secondary', cloud189:'primary', uc:'orange', magnet:'deep-purple' })[t] || 'grey' }
+async function loadSubscriptions() {
+  if (!props.api?.get) return
+  try {
+    const data = unwrap(await props.api.get(`${base.value}/manual/subscriptions`))
+    subscriptions.value = Array.isArray(data?.items) ? data.items : []
+  } catch { subscriptions.value = [] }
+}
+onMounted(loadSubscriptions)
+function panLabel(t) { return ({ '115':'115网盘', quark:'夸克网盘', baidu:'百度网盘', aliyun:'阿里网盘', xunlei:'迅雷网盘', cloud189:'天翼网盘', uc:'UC网盘', '123':'123网盘', magnet:'磁力' })[t] || '其他' }
+function panColor(t) { return ({ '115':'success', quark:'info', baidu:'error', aliyun:'warning', xunlei:'secondary', cloud189:'primary', uc:'orange', '123':'teal', magnet:'deep-purple' })[t] || 'grey' }
 </script>
 
 <style scoped>

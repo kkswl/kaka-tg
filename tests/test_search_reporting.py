@@ -14,17 +14,19 @@ spec.loader.exec_module(reporting)
 
 class SearchReportTest(unittest.TestCase):
     def test_summary_merges_sources_and_deduplicates_alias_hits(self):
-        report = reporting.SearchReport({"tg": True, "site": True, "juying": False})
+        report = reporting.SearchReport({"tg": True, "site": True, "pansou": True, "juying": False})
         same = SimpleNamespace(share_url="https://example.invalid/a", resource_title="示例")
         duplicate = SimpleNamespace(share_url="https://example.invalid/A", resource_title="别名")
         report.record("tg", [same], cached=True)
         report.record("tg", [duplicate])
         report.record("site", [])
+        report.record("pansou", [])
 
         text = report.text()
 
         self.assertIn("TG 频道 1 条（含缓存）", text)
         self.assertIn("观影 0 条", text)
+        self.assertIn("PanSou 0 条", text)
         self.assertIn("聚影 未启用", text)
 
     def test_summary_reports_cooldown_without_error_details(self):
