@@ -34,6 +34,9 @@ class _Client:
         self.calls.append((method, url, kwargs))
         return self.responses.pop(0)
 
+    def close(self):
+        self.closed = True
+
 
 ROOT = Path(__file__).resolve().parents[1] / "plugins.v2" / "tgsearch115"
 app = sys.modules.setdefault("app", types.ModuleType("app"))
@@ -52,6 +55,16 @@ pansou = sys.modules["tgsearch115.pansou_scraper"]
 
 
 class PanSouScraperTest(unittest.TestCase):
+    def test_health_check_reports_reachable_service(self):
+        client = pansou.PanSouClient("http://example.invalid")
+        client._http = _Client([_Response(200, {"code": 0})])
+
+        ok, message = client.health_check()
+
+        self.assertTrue(ok)
+        self.assertIn("PanSou", message)
+        self.assertEqual("GET", client._http.calls[0][0])
+
     def test_numeric_and_string_zero_are_success(self):
         self.assertTrue(pansou.PanSouClient._is_success({"code": 0, "data": {"total": 0}}))
         self.assertTrue(pansou.PanSouClient._is_success({"code": "0", "data": {}}))
@@ -103,6 +116,33 @@ class PanSouScraperTest(unittest.TestCase):
         self.assertIn("403", pansou.PanSouClient.safe_error(403, ""))
         self.assertIn("429", pansou.PanSouClient.safe_error(429, ""))
         self.assertIn("503", pansou.PanSouClient.safe_error(503, ""))
+
+    def test_http_failures_return_no_hits_and_keep_error_status(self):
+        for status in (401, 403):
+            client = pansou.PanSouClient("http://example.invalid")
+            client._http = _Client([_Response(status, {"code": status})])
+            self.assertEqual([], client.search("example"))
+            self.assertEqual(status, client.last_error_status)
+            self.assertIn(str(status), client.last_error)
+
+        client = pansou.PanSouClient("http://example.invalid")
+        client._http = _Client([_Response(503, {}), _Response(503, {}), _Response(503, {})])
+        with patch.object(pansou.time, "sleep") as sleep:
+            self.assertEqual([], client.search("example"))
+        self.assertEqual(503, client.last_error_status)
+        self.assertEqual(3, len(client._http.calls))
+        self.assertEqual(2, sleep.call_count)
+
+    def test_close_releases_http_client(self):
+        client = pansou.PanSouClient("http://example.invalid")
+        http = _Client([])
+        http.closed = False
+        client._http = http
+
+        client.close()
+
+        self.assertTrue(http.closed)
+        self.assertIsNone(client._http)
 
 
 if __name__ == "__main__":

@@ -71,6 +71,14 @@ class RuntimeControlTest(unittest.TestCase):
         now[0] += 61
         self.assertIsNone(cache.get("key"))
 
+    def test_source_cache_accepts_successful_empty_result_only(self):
+        self.assertTrue(runtime_control.should_cache_source_result(None, ""))
+        self.assertTrue(runtime_control.should_cache_source_result(200, ""))
+        for status in (401, 403, 429, 500, 503):
+            self.assertFalse(runtime_control.should_cache_source_result(status, ""))
+        self.assertFalse(runtime_control.should_cache_source_result(None, "request timeout"))
+        self.assertFalse(runtime_control.should_cache_source_result("invalid", ""))
+
     def test_circuit_breaker_opens_and_recovers(self):
         now = [100.0]
         breaker = runtime_control.SourceCircuitBreaker(

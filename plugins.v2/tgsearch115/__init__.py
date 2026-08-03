@@ -94,7 +94,12 @@ from .offline_rule_compat import RuleCompatibilityDiagnostics, filter_offline_sh
 from .cms_client import Cms115Client
 from .cms_tasks import CmsTaskLedger, btih_from_magnet, has_explicit_clear_confirmation
 from .p115_offline import P115OfflineClient
-from .runtime_control import SearchCoordinator, SourceCircuitBreaker, TtlCache
+from .runtime_control import (
+    SearchCoordinator,
+    SourceCircuitBreaker,
+    TtlCache,
+    should_cache_source_result,
+)
 from .season_support import (
     can_stop_keyword_search,
     cache_covers_season,
@@ -230,7 +235,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.33"
+    plugin_version = "4.7.34"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -1482,7 +1487,7 @@ class TgSearch115(_PluginBase):
                     )
                 elif self._source_breaker:
                     self._source_breaker.success(source)
-                if self._search_cache and status not in (403, 429) and not source_error:
+                if self._search_cache and should_cache_source_result(status, source_error):
                     self._search_cache.set(cache_key, source_hits)
                 hits.extend(source_hits)
             except Exception as exc:

@@ -40,6 +40,22 @@ def active_unique_subscriptions(subscriptions: Iterable[Any]) -> List[Any]:
     return result
 
 
+def should_cache_source_result(status_code: Optional[int], error: Any) -> bool:
+    """Cache only a completed, error-free source response.
+
+    An empty successful response is useful and may be cached. Transport,
+    protocol and business errors must remain retryable on the next cycle.
+    """
+    if str(error or "").strip():
+        return False
+    if status_code is None:
+        return True
+    try:
+        return int(status_code) < 400
+    except (TypeError, ValueError):
+        return False
+
+
 class TtlCache:
     """Small thread-safe in-memory cache used to avoid repeated source searches."""
 
