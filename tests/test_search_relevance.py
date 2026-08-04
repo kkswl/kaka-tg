@@ -42,6 +42,24 @@ class SearchRelevanceTest(unittest.TestCase):
             "法警小队", 2026, "雪迷宫 (2024)", 2024
         ))
 
+    def test_manual_tg_accepts_query_in_message_body(self):
+        self.assertTrue(search_relevance.is_manual_relevant_result(
+            "tg", "法警小队", 2026, "双姝美探", None,
+            "法警小队 2026 全集 1080P 中文字幕",
+        ))
+
+    def test_manual_non_tg_keeps_strict_title_match(self):
+        self.assertFalse(search_relevance.is_manual_relevant_result(
+            "pansou", "法警小队", 2026, "双姝美探", None,
+            "法警小队 2026 全集 1080P 中文字幕",
+        ))
+
+    def test_manual_tg_rejects_conflicting_year(self):
+        self.assertFalse(search_relevance.is_manual_relevant_result(
+            "tg", "同名作品", 2026, "资源合集", 2020,
+            "同名作品 2026 全集",
+        ))
+
 
 if __name__ == "__main__":
     unittest.main()

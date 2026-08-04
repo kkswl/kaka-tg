@@ -38,3 +38,27 @@ def is_relevant_result(
     if query_year and candidate_year and int(query_year) != int(candidate_year):
         return False
     return True
+
+
+def is_manual_relevant_result(
+    source: str,
+    query_title: str,
+    query_year: Optional[int],
+    candidate_title: str,
+    candidate_year: Optional[int],
+    candidate_text: str = "",
+) -> bool:
+    if is_relevant_result(
+        query_title=query_title,
+        query_year=query_year,
+        candidate_title=candidate_title,
+        candidate_year=candidate_year,
+    ):
+        return True
+    if str(source or "").lower() != "tg":
+        return False
+    if query_year and candidate_year and int(query_year) != int(candidate_year):
+        return False
+    query_key = canonical_title(query_title)
+    text_key = canonical_title(candidate_text)
+    return bool(query_key and text_key and query_key in text_key)

@@ -47,7 +47,8 @@
       </v-btn-toggle>
     </div>
 
-    <div v-if="sourceSummary" class="source-summary mb-3">{{ sourceSummary }}</div>
+    <div v-if="sourceSummary" class="source-summary mb-2">{{ sourceSummary }}</div>
+    <div v-if="searched" class="text-caption text-medium-emphasis mb-3">后端返回：{{ backendCount }} 条 · 前端筛选后：{{ filtered.length }} 条</div>
     <div v-if="message" class="text-caption mb-3" :class="ok ? 'text-success' : 'text-error'">{{ message }}</div>
     <div v-if="searching" class="empty-state"><v-progress-circular indeterminate size="40" color="primary" /></div>
     <v-row v-else-if="filtered.length" dense>
@@ -125,6 +126,7 @@ const resourceType = ref('all')
 const detailFilter = ref('all')
 const results = ref([])
 const sourceStatus = ref({})
+const sourceStats = ref({})
 const subscriptions = ref([])
 const subscribeId = ref(null)
 const selectedResult = ref(null)
@@ -138,6 +140,7 @@ const snack = ref(false)
 const snackColor = ref('')
 const snackText = ref('')
 const filtered = computed(() => filterSearchResults(results.value, resourceType.value, detailFilter.value))
+const backendCount = computed(() => Object.values(sourceStats.value).reduce((total, stat) => total + Number(stat?.returned_count || 0), 0) || results.value.length)
 const sourceSummary = computed(() => Object.entries(sourceStatus.value).map(([name, state]) => {
   const label = sourceLabel(name)
   if (state?.status === 'success') return `${label} ${state.count || 0} 条`
@@ -148,8 +151,13 @@ const sourceSummary = computed(() => Object.entries(sourceStatus.value).map(([na
 watch(resourceType, () => { detailFilter.value = 'all' })
 
 function unwrap(res) {
-  if (res && typeof res === 'object' && res.data && typeof res.data === 'object') return res.data
-  return res
+  let value = res
+  const seen = new Set()
+  while (value && typeof value === 'object' && value.data && typeof value.data === 'object' && !seen.has(value.data)) {
+    seen.add(value.data)
+    value = value.data
+  }
+  return value
 }
 function notify(text, color = 'success') { snackText.value = text; snackColor.value = color; snack.value = true }
 function fullUrl(r) {
@@ -171,6 +179,7 @@ async function search() {
     const data = unwrap(await props.api.get(`${base.value}/search?keyword=${encodeURIComponent(value)}&source=${source.value}`))
     results.value = Array.isArray(data?.results) ? data.results : []
     sourceStatus.value = data?.source_status && typeof data.source_status === 'object' ? data.source_status : {}
+    sourceStats.value = data?.source_stats && typeof data.source_stats === 'object' ? data.source_stats : {}
     ok.value = !!data?.success
     message.value = data?.warning || data?.message || (ok.value ? `找到 ${results.value.length} 条` : '搜索失败')
   } catch (e) {

@@ -57,6 +57,7 @@ import random
 import threading
 import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, wait
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import Body
@@ -81,7 +82,7 @@ from .juying_scraper import JuyingApi
 from .pansou_scraper import PanSouClient
 from .identity_matcher import confirm_candidate_identity
 from .media_types import is_tv_media, subscription_notification_title, to_moviepilot_media_type
-from .search_relevance import extract_year, is_relevant_result
+from .search_relevance import extract_year, is_manual_relevant_result
 from .candidate_identity import clean_identity_title, order_identity_candidates
 from .resource_strategy import (
     execute_auto_candidates,
@@ -235,7 +236,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.35"
+    plugin_version = "4.7.36"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -3009,48 +3010,67 @@ class TgSearch115(_PluginBase):
         def _do_search():
             hits = []
             has_more = False
+            jobs = {}
+            clients = {}
             if src in ("all", "tg") and self._scraper and offset == 0 and _allowed("tg"):
-                try:
-                    source_hits = self._scraper.search(search_kw) or []
-                    hits.extend(source_hits)
-                    _record_source("tg", self._scraper, len(source_hits))
-                except Exception as exc:
-                    _source_error("tg", exc)
+                jobs["tg"] = lambda: (self._scraper.search(search_kw) or [], False)
+                clients["tg"] = self._scraper
             if src in ("all", "site") and self._site_scraper and _allowed("site"):
-                try:
-                    site_hits, has_more = self._site_scraper.search(
-                        search_kw, year=manual_year, offset=offset, count=3)
-                    site_hits = site_hits or []
-                    hits.extend(site_hits)
-                    _record_source("site", self._site_scraper, len(site_hits))
-                except Exception as exc:
-                    _source_error("site", exc)
+                jobs["site"] = lambda: self._site_scraper.search(
+                    search_kw, year=manual_year, offset=offset, count=3)
+                clients["site"] = self._site_scraper
             if src in ("all", "pansou") and self._pansou_client and _allowed("pansou"):
-                try:
-                    source_hits = self._pansou_client.search(
+                jobs["pansou"] = lambda: (
+                    self._pansou_client.search(
                         search_kw, year=manual_year, refresh=self._pansou_refresh,
-                        cloud_types=self._pansou_cloud_types,
-                    ) or []
-                    hits.extend(source_hits)
-                    _record_source("pansou", self._pansou_client, len(source_hits))
-                except Exception as exc:
-                    _source_error("pansou", exc)
+                        cloud_types=self._pansou_cloud_types, retry=False,
+                        request_timeout=10.0,
+                    ) or [], False,
+                )
+                clients["pansou"] = self._pansou_client
             if src in ("all", "juying") and self._juying_api and _allowed("juying"):
+                jobs["juying"] = lambda: (
+                    self._juying_api.search(search_kw, year=manual_year) or [], False)
+                clients["juying"] = self._juying_api
+            if not jobs:
+                return hits, has_more
+            executor = ThreadPoolExecutor(max_workers=len(jobs), thread_name_prefix="tg115-manual-source")
+            futures = {executor.submit(job): source_name for source_name, job in jobs.items()}
+            done, pending = wait(futures, timeout=35.0)
+            source_results = {}
+            for future in done:
+                source_name = futures[future]
                 try:
-                    source_hits = self._juying_api.search(search_kw, year=manual_year) or []
-                    hits.extend(source_hits)
-                    _record_source("juying", self._juying_api, len(source_hits))
+                    source_hits, source_has_more = future.result()
+                    source_hits = source_hits or []
+                    for hit in source_hits:
+                        setattr(hit, "_tg115_source", source_name)
+                    source_results[source_name] = source_hits
+                    if source_name == "site":
+                        has_more = bool(source_has_more)
+                    _record_source(source_name, clients[source_name], len(source_hits))
                 except Exception as exc:
-                    _source_error("juying", exc)
+                    _source_error(source_name, exc)
+            for future in pending:
+                source_name = futures[future]
+                future.cancel()
+                _source_error(source_name, TimeoutError("source search exceeded 35 seconds"))
+            executor.shutdown(wait=False, cancel_futures=True)
+            for source_name in ("tg", "site", "pansou", "juying"):
+                hits.extend(source_results.get(source_name, []))
             return hits, has_more
 
         try:
             if self._coordinator:
-                hits, has_more = self._coordinator.submit_manual(_do_search, timeout=240)
+                hits, has_more = self._coordinator.submit_manual(_do_search, timeout=40)
             else:
                 hits, has_more = _do_search()
             results = []
             seen_results = set()
+            raw_counts = Counter()
+            relevance_rejected = Counter()
+            dedupe_rejected = Counter()
+            returned_counts = Counter()
             for h in hits:
                 pt = getattr(h, "pan_type", "") or ""
                 if not pt:
@@ -3066,12 +3086,19 @@ class TgSearch115(_PluginBase):
                 else:
                     display_name = meta["display_name"] or title
                 candidate_year = src_year or extract_year(h.text or display_name or title)
-                if not is_relevant_result(
+                hit_source = getattr(h, "_tg115_source", "") or (
+                    "pansou" if getattr(h, "channel_name", "") == "PanSou" else ""
+                )
+                raw_counts[hit_source or "unknown"] += 1
+                if not is_manual_relevant_result(
+                        source=hit_source,
                         query_title=search_kw,
                         query_year=manual_year,
                         candidate_title=src_title or display_name or title,
                         candidate_year=candidate_year,
+                        candidate_text=h.text or "",
                 ):
+                    relevance_rejected[hit_source or "unknown"] += 1
                     continue
                 share_url = h.share_url or ""
                 if P115Transfer._is_115_share_url(share_url):
@@ -3080,8 +3107,10 @@ class TgSearch115(_PluginBase):
                 else:
                     dedupe_key = share_url.strip().lower()
                 if not dedupe_key or dedupe_key in seen_results:
+                    dedupe_rejected[hit_source or "unknown"] += 1
                     continue
                 seen_results.add(dedupe_key)
+                returned_counts[hit_source or "unknown"] += 1
                 results.append({
                     "title": title,
                     "display_name": display_name,
@@ -3091,13 +3120,17 @@ class TgSearch115(_PluginBase):
                     "share_url": share_url,
                     "receive_code": getattr(h, "receive_code", "") or "",
                     "channel": getattr(h, "channel_name", "") or "",
-                    "source": getattr(h, "_tg115_source", "") or ("pansou" if getattr(h, "channel_name", "") == "PanSou" else ""),
+                    "source": hit_source,
                     "pan_type": pt,
                     "pub_date": h.pub_date or "",
                     "text": (h.text or "")[:500],
                 })
             # 排序：完结优先，然后按最大集数降序
             results.sort(key=lambda r: (r["is_complete"], r["episode_num"]), reverse=True)
+            for source_name, state in source_status.items():
+                if state.get("status") == "success":
+                    count = returned_counts.get(source_name, 0)
+                    state.update({"message": f"返回 {count} 条", "count": count})
             # app_auth 失效提示（观影搜不到资源时给出明确原因）
             warning = ""
             if self._site_scraper and not getattr(self._site_scraper, "app_auth_valid", True):
@@ -3116,6 +3149,15 @@ class TgSearch115(_PluginBase):
                 "has_more": has_more,
                 "warning": warning,
                 "source_status": source_status,
+                "source_stats": {
+                    name: {
+                        "raw_count": raw_counts.get(name, 0),
+                        "relevance_rejected": relevance_rejected.get(name, 0),
+                        "dedupe_rejected": dedupe_rejected.get(name, 0),
+                        "returned_count": returned_counts.get(name, 0),
+                    }
+                    for name in set(raw_counts) | set(source_status)
+                },
             })
         except TimeoutError:
             return JSONResponse({"success": False, "message": "搜索超时（连接或检索过久）"}, status_code=504)

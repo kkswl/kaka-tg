@@ -117,7 +117,8 @@ class PanSouClient:
     def search(self, keyword: str, year: Optional[int] = None, media_type: Any = None,
                season: Optional[int] = None, refresh: bool = False,
                cloud_types: Optional[Iterable[str]] = None,
-               title_en: str = "") -> List[SiteHit]:
+               title_en: str = "", retry: bool = True,
+               request_timeout: Optional[float] = None) -> List[SiteHit]:
         self.last_error_status = None
         self.last_error = ""
         self.last_result_count = 0
@@ -134,7 +135,10 @@ class PanSouClient:
             payload["ext"]["title_en"] = str(title_en)[:120]
         try:
             self.last_request_at = time.strftime("%Y-%m-%d %H:%M:%S")
-            response = self._request("POST", self.base_url + "/api/search", json=payload)
+            response = self._request(
+                "POST", self.base_url + "/api/search", json=payload,
+                retry=retry, timeout=request_timeout,
+            )
             self.last_error_status = response.status_code if response.status_code >= 400 else None
             if response.status_code >= 400:
                 self.last_error = self.safe_error(response.status_code, response.text)
@@ -161,12 +165,13 @@ class PanSouClient:
             logger.warning("【TG115】PanSou 请求异常分类=%s", self.last_error)
             return []
 
-    def _request(self, method: str, url: str, **kwargs):
+    def _request(self, method: str, url: str, retry: bool = True, **kwargs):
         """Retry only rate limiting and transient server failures."""
         last = None
-        for attempt in range(3):
+        attempts = 3 if retry else 1
+        for attempt in range(attempts):
             last = self._client().request(method, url, headers=self._headers(), **kwargs)
-            if last.status_code not in (429, 500, 502, 503, 504) or attempt >= 2:
+            if last.status_code not in (429, 500, 502, 503, 504) or attempt >= attempts - 1:
                 return last
             retry_after = str(last.headers.get("Retry-After") or "").strip()
             delay = self._retry_delay(retry_after, attempt)

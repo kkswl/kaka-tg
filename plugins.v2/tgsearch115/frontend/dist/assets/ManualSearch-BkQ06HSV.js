@@ -85,22 +85,26 @@ const _hoisted_6 = {
 };
 const _hoisted_7 = {
   key: 2,
-  class: "source-summary mb-3"
+  class: "source-summary mb-2"
 };
 const _hoisted_8 = {
-  key: 4,
+  key: 3,
+  class: "text-caption text-medium-emphasis mb-3"
+};
+const _hoisted_9 = {
+  key: 5,
   class: "empty-state"
 };
-const _hoisted_9 = { class: "d-flex align-center ga-1 mb-2" };
-const _hoisted_10 = { class: "text-body-2 font-weight-medium" };
-const _hoisted_11 = {
+const _hoisted_10 = { class: "d-flex align-center ga-1 mb-2" };
+const _hoisted_11 = { class: "text-body-2 font-weight-medium" };
+const _hoisted_12 = {
   key: 0,
   class: "text-caption text-primary mt-1"
 };
-const _hoisted_12 = { class: "text-caption text-medium-emphasis line-clamp-3 mt-1" };
-const _hoisted_13 = { class: "text-caption text-medium-emphasis mt-1" };
-const _hoisted_14 = {
-  key: 6,
+const _hoisted_13 = { class: "text-caption text-medium-emphasis line-clamp-3 mt-1" };
+const _hoisted_14 = { class: "text-caption text-medium-emphasis mt-1" };
+const _hoisted_15 = {
+  key: 7,
   class: "empty-state"
 };
 
@@ -120,6 +124,7 @@ const resourceType = ref('all');
 const detailFilter = ref('all');
 const results = ref([]);
 const sourceStatus = ref({});
+const sourceStats = ref({});
 const subscriptions = ref([]);
 const subscribeId = ref(null);
 const selectedResult = ref(null);
@@ -133,6 +138,7 @@ const snack = ref(false);
 const snackColor = ref('');
 const snackText = ref('');
 const filtered = computed(() => filterSearchResults(results.value, resourceType.value, detailFilter.value));
+const backendCount = computed(() => Object.values(sourceStats.value).reduce((total, stat) => total + Number(stat?.returned_count || 0), 0) || results.value.length);
 const sourceSummary = computed(() => Object.entries(sourceStatus.value).map(([name, state]) => {
   const label = sourceLabel(name);
   if (state?.status === 'success') return `${label} ${state.count || 0} 条`
@@ -143,8 +149,13 @@ const sourceSummary = computed(() => Object.entries(sourceStatus.value).map(([na
 watch(resourceType, () => { detailFilter.value = 'all'; });
 
 function unwrap(res) {
-  if (res && typeof res === 'object' && res.data && typeof res.data === 'object') return res.data
-  return res
+  let value = res;
+  const seen = new Set();
+  while (value && typeof value === 'object' && value.data && typeof value.data === 'object' && !seen.has(value.data)) {
+    seen.add(value.data);
+    value = value.data;
+  }
+  return value
 }
 function notify(text, color = 'success') { snackText.value = text; snackColor.value = color; snack.value = true; }
 function fullUrl(r) {
@@ -166,6 +177,7 @@ async function search() {
     const data = unwrap(await props.api.get(`${base.value}/search?keyword=${encodeURIComponent(value)}&source=${source.value}`));
     results.value = Array.isArray(data?.results) ? data.results : [];
     sourceStatus.value = data?.source_status && typeof data.source_status === 'object' ? data.source_status : {};
+    sourceStats.value = data?.source_stats && typeof data.source_stats === 'object' ? data.source_stats : {};
     ok.value = !!data?.success;
     message.value = data?.warning || data?.message || (ok.value ? `找到 ${results.value.length} 条` : '搜索失败');
   } catch (e) {
@@ -450,14 +462,17 @@ return (_ctx, _cache) => {
     (sourceSummary.value)
       ? (_openBlock(), _createElementBlock("div", _hoisted_7, _toDisplayString(sourceSummary.value), 1))
       : _createCommentVNode("", true),
+    (searched.value)
+      ? (_openBlock(), _createElementBlock("div", _hoisted_8, "后端返回：" + _toDisplayString(backendCount.value) + " 条 · 前端筛选后：" + _toDisplayString(filtered.value.length) + " 条", 1))
+      : _createCommentVNode("", true),
     (message.value)
       ? (_openBlock(), _createElementBlock("div", {
-          key: 3,
+          key: 4,
           class: _normalizeClass(["text-caption mb-3", ok.value ? 'text-success' : 'text-error'])
         }, _toDisplayString(message.value), 3))
       : _createCommentVNode("", true),
     (searching.value)
-      ? (_openBlock(), _createElementBlock("div", _hoisted_8, [
+      ? (_openBlock(), _createElementBlock("div", _hoisted_9, [
           _createVNode(_component_v_progress_circular, {
             indeterminate: "",
             size: "40",
@@ -466,7 +481,7 @@ return (_ctx, _cache) => {
         ]))
       : (filtered.value.length)
         ? (_openBlock(), _createBlock(_component_v_row, {
-            key: 5,
+            key: 6,
             dense: ""
           }, {
             default: _withCtx(() => [
@@ -485,7 +500,7 @@ return (_ctx, _cache) => {
                       default: _withCtx(() => [
                         _createVNode(_component_v_card_item, null, {
                           default: _withCtx(() => [
-                            _createElementVNode("div", _hoisted_9, [
+                            _createElementVNode("div", _hoisted_10, [
                               _createVNode(_component_v_chip, {
                                 color: panColor(r.pan_type),
                                 size: "x-small",
@@ -522,12 +537,12 @@ return (_ctx, _cache) => {
                                   }))
                                 : _createCommentVNode("", true)
                             ]),
-                            _createElementVNode("div", _hoisted_10, _toDisplayString(r.display_name || r.title), 1),
+                            _createElementVNode("div", _hoisted_11, _toDisplayString(r.display_name || r.title), 1),
                             (r.meta)
-                              ? (_openBlock(), _createElementBlock("div", _hoisted_11, _toDisplayString(r.meta), 1))
+                              ? (_openBlock(), _createElementBlock("div", _hoisted_12, _toDisplayString(r.meta), 1))
                               : _createCommentVNode("", true),
-                            _createElementVNode("div", _hoisted_12, _toDisplayString(r.text || r.title), 1),
-                            _createElementVNode("div", _hoisted_13, _toDisplayString(r.channel || '未知来源'), 1)
+                            _createElementVNode("div", _hoisted_13, _toDisplayString(r.text || r.title), 1),
+                            _createElementVNode("div", _hoisted_14, _toDisplayString(r.channel || '未知来源'), 1)
                           ]),
                           _: 2
                         }, 1024),
@@ -576,7 +591,7 @@ return (_ctx, _cache) => {
             _: 1
           }))
         : (searched.value && !searching.value)
-          ? (_openBlock(), _createElementBlock("div", _hoisted_14, "所有可用来源均未找到符合条件的资源"))
+          ? (_openBlock(), _createElementBlock("div", _hoisted_15, "所有可用来源均未找到符合条件的资源"))
           : _createCommentVNode("", true),
     _createVNode(_component_v_dialog, {
       modelValue: processDialog.value,
@@ -666,6 +681,6 @@ return (_ctx, _cache) => {
 }
 
 };
-const ManualSearch = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-6bd27bd0"]]);
+const ManualSearch = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-d8b0f1b6"]]);
 
 export { ManualSearch as M, _export_sfc as _, filterSearchResults as f };

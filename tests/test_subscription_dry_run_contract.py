@@ -34,10 +34,10 @@ class SubscriptionDryRunContractTest(unittest.TestCase):
         for forbidden in ("SubscribeOper().update", "_submit_magnet_to_115", "_transfer.transfer", "_cms_client.add_magnet", "_save_cms_tasks", "post_message", "_send_fail_notify"):
             self.assertNotIn(forbidden, body)
 
-    def test_page_exposes_explicit_read_only_action(self):
-        self.assertIn("开始干跑，不转存", self.page)
-        self.assertIn("subscription/dry-run", self.page)
-        self.assertIn("只读验证，不转存", self.page)
+    def test_page_does_not_expose_removed_dry_run_action(self):
+        self.assertNotIn("开始干跑，不转存", self.page)
+        self.assertNotIn("subscription/dry-run", self.page)
+        self.assertNotIn("只读验证，不转存", self.page)
 
     def test_vue_detail_page_has_non_empty_host_compatibility_marker(self):
         start = self.source.index("def get_page(self)")
@@ -53,11 +53,7 @@ class SubscriptionDryRunContractTest(unittest.TestCase):
                       "type_mismatch", "season_mismatch", "site_magnets", "site_chinese_1080p",
                       "site_chinese_4k", "safe_candidates"):
             self.assertIn(field, self.source)
-            self.assertIn(field, self.page)
-        self.assertIn("formatYearDistribution", self.page)
         self.assertIn('"site_search"', self.source)
-        self.assertIn("formatSiteYears", self.page)
-        self.assertIn("formatSiteHits", self.page)
 
     def test_site_search_passes_target_season_and_marks_detail_magnets_for_exact_id_check(self):
         start = self.source.index("def _search_auto_sources")

@@ -44,6 +44,17 @@ class ManualVerifiedProcessContractTest(unittest.TestCase):
         self.assertNotIn("{share_url}", method)
         self.assertNotIn("{target_path}", method)
 
+    def test_manual_sources_run_in_parallel_with_bounded_collection(self):
+        source = PLUGIN.read_text(encoding="utf-8")
+        start = source.index("    def __search_api")
+        end = source.index("    def __dir_info_api", start)
+        method = source[start:end]
+        self.assertIn("ThreadPoolExecutor", method)
+        self.assertIn("wait(futures, timeout=35.0)", method)
+        self.assertIn("executor.shutdown(wait=False, cancel_futures=True)", method)
+        self.assertIn("is_manual_relevant_result(", method)
+        self.assertIn("relevant_counts", method)
+
 
 if __name__ == "__main__":
     unittest.main()

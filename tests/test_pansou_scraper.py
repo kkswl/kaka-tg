@@ -111,6 +111,17 @@ class PanSouScraperTest(unittest.TestCase):
         delay = pansou.PanSouClient._retry_delay("Wed, 21 Oct 2099 07:28:00 GMT", 0)
         self.assertEqual(30.0, delay)
 
+    def test_manual_deadline_disables_retry_and_sets_request_timeout(self):
+        client = pansou.PanSouClient("http://example.invalid")
+        client._http = _Client([_Response(503, {})])
+        with patch.object(pansou.time, "sleep") as sleep:
+            self.assertEqual([], client.search(
+                "示例", retry=False, request_timeout=35.0,
+            ))
+        self.assertEqual(1, len(client._http.calls))
+        self.assertEqual(35.0, client._http.calls[0][2]["timeout"])
+        sleep.assert_not_called()
+
     def test_safe_http_error_categories(self):
         self.assertIn("401", pansou.PanSouClient.safe_error(401, ""))
         self.assertIn("403", pansou.PanSouClient.safe_error(403, ""))
