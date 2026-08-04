@@ -14,7 +14,7 @@
     </div>
 
     <div class="filter-row mb-2">
-      <span class="filter-label">来源</span>
+      <span class="filter-label">搜索来源</span>
       <v-btn-toggle v-model="source" mandatory color="primary" density="compact" divided class="filter-toggle">
         <v-btn value="all" size="small">全部</v-btn>
         <v-btn value="tg" size="small">TG</v-btn>
@@ -22,6 +22,14 @@
         <v-btn value="pansou" size="small">PanSou</v-btn>
         <v-btn value="juying" size="small">聚影</v-btn>
       </v-btn-toggle>
+    </div>
+
+    <div v-if="results.length" class="filter-row mb-2">
+      <span class="filter-label">结果来源</span>
+      <v-btn-toggle v-model="resultSource" mandatory color="primary" density="compact" divided class="filter-toggle">
+        <v-btn v-for="item in resultSourceOptions" :key="item.value" :value="item.value" size="small">{{ item.title }}</v-btn>
+      </v-btn-toggle>
+      <v-btn size="small" variant="text" prepend-icon="mdi-delete-outline" @click="clearResults">清空结果</v-btn>
     </div>
 
     <div class="filter-row mb-2">
@@ -58,6 +66,7 @@
             <div class="d-flex align-center ga-1 mb-2">
               <v-chip :color="panColor(r.pan_type)" size="x-small" variant="tonal">{{ panLabel(r.pan_type) }}</v-chip>
               <v-chip v-if="r.source" size="x-small" variant="tonal">{{ sourceLabel(r.source) }}</v-chip>
+              <v-chip v-if="r.upstream_source" size="x-small" variant="outlined">{{ r.upstream_source }}</v-chip>
               <v-chip v-if="r.is_complete" color="success" size="x-small" variant="tonal">完结</v-chip>
             </div>
             <div class="text-body-2 font-weight-medium">{{ r.display_name || r.title }}</div>
@@ -118,10 +127,14 @@
 import { computed, ref, watch } from 'vue'
 import { filterSearchResults, MAGNET_FILTERS, PAN_FILTERS } from '../searchFilters.js'
 
+const CACHE_KEY = 'TgSearch115:manual-search:v1'
+const MAX_CACHED_RESULTS = 500
+const RESULT_FIELDS = ['title', 'display_name', 'meta', 'is_complete', 'episode_num', 'share_url', 'receive_code', 'channel', 'source', 'upstream_source', 'pan_type', 'pub_date', 'text']
 const props = defineProps({ pluginId: { type: String, default: 'TgSearch115' }, api: { type: Object, default: null } })
 const base = computed(() => `plugin/${props.pluginId || 'TgSearch115'}`)
 const keyword = ref('')
 const source = ref('all')
+const resultSource = ref('all')
 const resourceType = ref('all')
 const detailFilter = ref('all')
 const results = ref([])
@@ -139,7 +152,15 @@ const ok = ref(false)
 const snack = ref(false)
 const snackColor = ref('')
 const snackText = ref('')
-const filtered = computed(() => filterSearchResults(results.value, resourceType.value, detailFilter.value))
+const resultSourceOptions = computed(() => [
+  { title: '全部', value: 'all' },
+  ...Array.from(new Set(results.value.map((item) => String(item?.source || '')).filter(Boolean)))
+    .map((value) => ({ title: sourceLabel(value), value })),
+])
+const sourceFilteredResults = computed(() => resultSource.value === 'all'
+  ? results.value
+  : results.value.filter((item) => String(item?.source || '') === resultSource.value))
+const filtered = computed(() => filterSearchResults(sourceFilteredResults.value, resourceType.value, detailFilter.value))
 const backendCount = computed(() => Object.values(sourceStats.value).reduce((total, stat) => total + Number(stat?.returned_count || 0), 0) || results.value.length)
 const sourceSummary = computed(() => Object.entries(sourceStatus.value).map(([name, state]) => {
   const label = sourceLabel(name)
@@ -149,6 +170,63 @@ const sourceSummary = computed(() => Object.entries(sourceStatus.value).map(([na
 }).join(' · '))
 
 watch(resourceType, () => { detailFilter.value = 'all' })
+watch([source, resultSource, resourceType, detailFilter], persistSession)
+restoreSession()
+
+function sessionStore() {
+  try { return window.sessionStorage } catch { return null }
+}
+function safeResult(result) {
+  return Object.fromEntries(RESULT_FIELDS.filter((field) => result?.[field] !== undefined).map((field) => [field, result[field]]))
+}
+function persistSession() {
+  const store = sessionStore()
+  if (!store || !searched.value) return
+  try {
+    store.setItem(CACHE_KEY, JSON.stringify({
+      keyword: keyword.value,
+      source: source.value,
+      resultSource: resultSource.value,
+      resourceType: resourceType.value,
+      detailFilter: detailFilter.value,
+      results: results.value.slice(0, MAX_CACHED_RESULTS).map(safeResult),
+      sourceStatus: sourceStatus.value,
+      sourceStats: sourceStats.value,
+      searched: searched.value,
+      message: message.value,
+      ok: ok.value,
+    }))
+  } catch {}
+}
+function restoreSession() {
+  const store = sessionStore()
+  if (!store) return
+  try {
+    const cached = JSON.parse(store.getItem(CACHE_KEY) || 'null')
+    if (!cached || !Array.isArray(cached.results)) return
+    keyword.value = String(cached.keyword || '')
+    source.value = String(cached.source || 'all')
+    resultSource.value = String(cached.resultSource || 'all')
+    resourceType.value = String(cached.resourceType || 'all')
+    detailFilter.value = String(cached.detailFilter || 'all')
+    results.value = cached.results.slice(0, MAX_CACHED_RESULTS).map(safeResult)
+    sourceStatus.value = cached.sourceStatus && typeof cached.sourceStatus === 'object' ? cached.sourceStatus : {}
+    sourceStats.value = cached.sourceStats && typeof cached.sourceStats === 'object' ? cached.sourceStats : {}
+    searched.value = !!cached.searched
+    message.value = String(cached.message || '')
+    ok.value = !!cached.ok
+  } catch { store.removeItem(CACHE_KEY) }
+}
+function clearResults() {
+  results.value = []
+  sourceStatus.value = {}
+  sourceStats.value = {}
+  resultSource.value = 'all'
+  searched.value = false
+  message.value = ''
+  ok.value = false
+  sessionStore()?.removeItem(CACHE_KEY)
+}
 
 function unwrap(res) {
   let value = res
@@ -171,10 +249,10 @@ async function search() {
   const value = keyword.value.trim()
   if (!value) return notify('请输入搜索关键字', 'warning')
   if (!props.api?.get) return notify('API 未就绪', 'error')
+  clearResults()
   searching.value = true
   searched.value = true
   message.value = ''
-  sourceStatus.value = {}
   try {
     const data = unwrap(await props.api.get(`${base.value}/search?keyword=${encodeURIComponent(value)}&source=${source.value}`))
     results.value = Array.isArray(data?.results) ? data.results : []
@@ -186,7 +264,10 @@ async function search() {
     results.value = []
     ok.value = false
     message.value = e?.response?.data?.message || e?.message || '搜索失败'
-  } finally { searching.value = false }
+  } finally {
+    searching.value = false
+    persistSession()
+  }
 }
 async function copy(r) {
   try { await navigator.clipboard.writeText(fullUrl(r)); notify('已复制链接') }

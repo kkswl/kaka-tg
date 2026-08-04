@@ -236,7 +236,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.36"
+    plugin_version = "4.7.37"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -2951,9 +2951,9 @@ class TgSearch115(_PluginBase):
         return JSONResponse({"success": bool(result.get("success")), "message": result.get("message") or "取消失败"})
 
     def __search_api(self, keyword: str = "", offset: int = 0, source: str = "all"):
-        """GET /search?keyword=...&offset=N&source=all|tg|site：手动搜索。
+        """GET /search?keyword=...&offset=N&source=all|tg|site|pansou|juying：手动搜索。
 
-        source：all=全部(默认) / tg=仅TG频道 / site=仅观影。
+        source：all=全部 / tg=TG频道 / site=观影 / pansou=PanSou / juying=聚影。
         返回全部网盘类型（115/夸克/百度/阿里/迅雷…/磁力），前端按类型展示；
         115 分享可直接转存，磁力可通过 CMS 离线到 115。
         offset 用于观影翻页（按作品分批，每批 3 部）；TG 仅在首批(offset=0)搜索一次。
@@ -2977,6 +2977,8 @@ class TgSearch115(_PluginBase):
         search_kw = _re.sub(r'\s*[(（]\d{4}[)）]', '', keyword).strip() or keyword
 
         src = (source or "all").lower()
+        if src not in {"all", "tg", "site", "pansou", "juying"}:
+            return JSONResponse({"success": False, "message": "不支持的搜索来源"}, status_code=400)
         cooled_sources = []
         source_status = {}
 
@@ -3023,8 +3025,7 @@ class TgSearch115(_PluginBase):
                 jobs["pansou"] = lambda: (
                     self._pansou_client.search(
                         search_kw, year=manual_year, refresh=self._pansou_refresh,
-                        cloud_types=self._pansou_cloud_types, retry=False,
-                        request_timeout=10.0,
+                        cloud_types=(), retry=False, request_timeout=30.0,
                     ) or [], False,
                 )
                 clients["pansou"] = self._pansou_client
@@ -3121,6 +3122,7 @@ class TgSearch115(_PluginBase):
                     "receive_code": getattr(h, "receive_code", "") or "",
                     "channel": getattr(h, "channel_name", "") or "",
                     "source": hit_source,
+                    "upstream_source": getattr(h, "upstream_source", "") or "",
                     "pan_type": pt,
                     "pub_date": h.pub_date or "",
                     "text": (h.text or "")[:500],

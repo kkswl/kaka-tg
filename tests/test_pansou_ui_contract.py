@@ -30,6 +30,27 @@ class PanSouUiContractTest(unittest.TestCase):
         self.assertIn("value = value.data", unwrap)
         self.assertIn("results.value.length", manual)
 
+    def test_manual_search_separates_request_and_result_sources(self):
+        manual = (ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "ManualSearch.vue").read_text(encoding="utf-8")
+        self.assertIn("搜索来源", manual)
+        self.assertIn("结果来源", manual)
+        self.assertIn("v-model=\"resultSource\"", manual)
+        self.assertIn("item?.source", manual)
+        self.assertIn("upstream_source", manual)
+
+    def test_manual_search_uses_bounded_session_cache_without_process_state(self):
+        manual = (ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "ManualSearch.vue").read_text(encoding="utf-8")
+        cache = manual[manual.index("const CACHE_KEY"):manual.index("function unwrap")]
+        persisted = manual[manual.index("store.setItem(CACHE_KEY"):manual.index("function restoreSession")]
+        self.assertIn("TgSearch115:manual-search:v1", cache)
+        self.assertIn("window.sessionStorage", cache)
+        self.assertIn("MAX_CACHED_RESULTS = 500", cache)
+        self.assertIn("slice(0, MAX_CACHED_RESULTS).map(safeResult)", cache)
+        self.assertIn("sessionStore()?.removeItem(CACHE_KEY)", cache)
+        self.assertNotIn("subscribeId", persisted)
+        self.assertNotIn("selectedResult", persisted)
+        self.assertNotIn("transferring", persisted)
+
 
 if __name__ == "__main__":
     unittest.main()

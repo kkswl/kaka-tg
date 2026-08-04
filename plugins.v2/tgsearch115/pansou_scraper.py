@@ -103,7 +103,7 @@ class PanSouClient:
         if not self.is_ready():
             return False, "PanSou 地址未配置"
         try:
-            response = self._request("GET", self.base_url + "/")
+            response = self._request("GET", self.base_url + "/api/health")
             self.last_error_status = response.status_code if response.status_code >= 400 else None
             if response.status_code >= 400:
                 self.last_error = self.safe_error(response.status_code, response.text)
@@ -126,17 +126,17 @@ class PanSouClient:
         keyword = str(keyword or "").strip()
         if not self.is_ready() or not keyword:
             return []
-        clouds = [str(item).strip().lower() for item in (cloud_types or ("115", "magnet")) if str(item).strip()]
-        payload: Dict[str, Any] = {
-            "kw": keyword, "res": "all", "src": "all", "refresh": bool(refresh),
-            "cloud_types": clouds, "ext": {"is_all": True},
-        }
-        if title_en:
-            payload["ext"]["title_en"] = str(title_en)[:120]
+        requested_clouds = ("115", "magnet") if cloud_types is None else cloud_types
+        clouds = [str(item).strip().lower() for item in requested_clouds if str(item).strip()]
+        params: Dict[str, Any] = {"kw": keyword}
+        if refresh:
+            params["refresh"] = "true"
+        if clouds:
+            params["cloud_types"] = ",".join(clouds)
         try:
             self.last_request_at = time.strftime("%Y-%m-%d %H:%M:%S")
             response = self._request(
-                "POST", self.base_url + "/api/search", json=payload,
+                "GET", self.base_url + "/api/search", params=params,
                 retry=retry, timeout=request_timeout,
             )
             self.last_error_status = response.status_code if response.status_code >= 400 else None
@@ -208,21 +208,31 @@ class PanSouClient:
         status = str(payload.get("status") or "").lower()
         return code in (None, 0, "0", "success") and status not in {"error", "failed", "fail"}
 
-    @staticmethod
-    def normalize_response(payload: Any) -> List[Dict[str, Any]]:
+    @classmethod
+    def normalize_response(cls, payload: Any) -> List[Dict[str, Any]]:
         if not isinstance(payload, dict):
             return []
-        candidates: List[Any] = []
-        for key in ("results", "resources", "list", "items", "data"):
-            if key in payload:
-                value = payload[key]
-                # ``data`` can contain ``merged_by_type`` or release-specific
-                # nested result arrays. Scalar metadata such as ``total`` is
-                # flattened too but discarded by the final dict filter.
-                candidates.extend(_as_list(value))
-        merged = payload.get("merged_by_type")
-        candidates.extend(_as_list(merged))
-        return [item for item in candidates if isinstance(item, dict)]
+        candidates: List[Dict[str, Any]] = []
+        for key in ("results", "resources", "list", "items"):
+            value = payload.get(key)
+            for item in _as_list(value):
+                if not isinstance(item, dict):
+                    continue
+                links = item.get("links")
+                if links:
+                    for link in _as_list(links):
+                        if isinstance(link, dict):
+                            candidates.append({**item, **link})
+                elif any(name in item for name in ("url", "link", "share_url", "share_link", "magnet")):
+                    candidates.append(item)
+        for declared_type, items in (payload.get("merged_by_type") or {}).items():
+            for item in _as_list(items):
+                if isinstance(item, dict):
+                    candidates.append({"cloud_type": declared_type, **item})
+        data = payload.get("data")
+        if isinstance(data, dict):
+            candidates.extend(cls.normalize_response(data))
+        return candidates
 
     @classmethod
     def classify_cloud_type(cls, url: str, declared_type: Any = "") -> str:
@@ -252,14 +262,17 @@ class PanSouClient:
         if not code:
             query = dict(parse_qsl(urlparse(url).query, keep_blank_values=True))
             code = str(query.get("pwd") or query.get("password") or query.get("receive_code") or "").strip()
-        title = str(item.get("resource_title") or item.get("title") or item.get("name") or item.get("movie_title") or "").strip()
-        description = str(item.get("description") or item.get("content") or item.get("text") or title).strip()
-        source_title = str(item.get("source_title") or item.get("movie_title") or item.get("title") or title).strip()
-        return SiteHit(
+        title = str(item.get("resource_title") or item.get("title") or item.get("name") or item.get("movie_title") or item.get("note") or "").strip()
+        description = str(item.get("description") or item.get("content") or item.get("text") or item.get("note") or title).strip()
+        source_title = str(item.get("source_title") or item.get("movie_title") or item.get("title") or item.get("note") or title).strip()
+        hit = SiteHit(
             share_url=url, receive_code=code, resource_title=title or description[:300],
             text=description[:1000], pan_type=pan_type, pan_label=str(declared or ""),
-            source_title=source_title, channel_name="PanSou", year=item.get("year"),
+            source_title=source_title, channel_name="PanSou", pub_date=item.get("datetime"),
+            year=item.get("year"),
         )
+        setattr(hit, "upstream_source", str(item.get("source") or item.get("channel") or "").strip())
+        return hit
 
     @staticmethod
     def safe_error(status_code: Optional[int], error: Any) -> str:

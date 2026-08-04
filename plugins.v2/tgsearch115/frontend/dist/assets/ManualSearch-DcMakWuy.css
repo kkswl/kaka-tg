@@ -1,0 +1,21 @@
+
+.search-toolbar[data-v-f6d163a9] { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:8px; align-items:center;
+}
+.filter-row[data-v-f6d163a9] { display:flex; align-items:center; gap:8px; min-width:0; flex-wrap:wrap;
+}
+.filter-label[data-v-f6d163a9] { flex:0 0 32px; font-size:.75rem; color:rgba(var(--v-theme-on-surface),.6);
+}
+.filter-toggle[data-v-f6d163a9] { flex-wrap:wrap; height:auto;
+}
+.source-summary[data-v-f6d163a9] { padding:10px 12px; border:1px solid rgba(var(--v-border-color), var(--v-border-opacity)); border-radius:6px; font-size:.8rem;
+}
+.result-card[data-v-f6d163a9] { min-height:172px; border-radius:8px;
+}
+.line-clamp-3[data-v-f6d163a9] { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden;
+}
+.empty-state[data-v-f6d163a9] { padding:36px 20px; text-align:center; color:rgba(var(--v-theme-on-surface),.6);
+}
+@media (max-width:600px) {
+.search-toolbar[data-v-f6d163a9] { grid-template-columns:1fr;
+}
+}

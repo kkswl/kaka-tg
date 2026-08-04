@@ -53,7 +53,9 @@ class ManualVerifiedProcessContractTest(unittest.TestCase):
         self.assertIn("wait(futures, timeout=35.0)", method)
         self.assertIn("executor.shutdown(wait=False, cancel_futures=True)", method)
         self.assertIn("is_manual_relevant_result(", method)
-        self.assertIn("relevant_counts", method)
+        self.assertIn("returned_counts", method)
+        self.assertIn('"source_stats"', method)
+        self.assertIn('src not in {"all", "tg", "site", "pansou", "juying"}', method)
 
 
 if __name__ == "__main__":

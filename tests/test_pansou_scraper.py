@@ -80,6 +80,44 @@ class PanSouScraperTest(unittest.TestCase):
         result = pansou.PanSouClient.normalize_response(payload)
         self.assertEqual(3, len(result))
 
+    def test_normalizes_live_get_shape_and_preserves_upstream_source(self):
+        payload = {
+            "code": 0,
+            "data": {
+                "total": 1,
+                "merged_by_type": {
+                    "baidu": [{
+                        "url": "https://pan.baidu.com/s/demo?pwd=abcd",
+                        "password": "abcd",
+                        "note": "捉刀人 2024",
+                        "datetime": "2026-08-04T08:00:00+08:00",
+                        "source": "plugin:wanou",
+                    }],
+                },
+            },
+        }
+        items = pansou.PanSouClient.normalize_response(payload)
+        hit = pansou.PanSouClient.normalize_item(items[0])
+        self.assertEqual(1, len(items))
+        self.assertEqual("baidu", hit.pan_type)
+        self.assertEqual("捉刀人 2024", hit.resource_title)
+        self.assertEqual("plugin:wanou", hit.upstream_source)
+
+    def test_flattens_documented_results_links(self):
+        payload = {
+            "results": [{
+                "title": "捉刀人",
+                "channel": "tgsearchers7",
+                "links": [{"type": "115", "url": "https://115.com/s/demo", "password": "x1y2"}],
+            }],
+        }
+        items = pansou.PanSouClient.normalize_response(payload)
+        hit = pansou.PanSouClient.normalize_item(items[0])
+        self.assertEqual(1, len(items))
+        self.assertEqual("115", hit.pan_type)
+        self.assertEqual("x1y2", hit.receive_code)
+        self.assertEqual("tgsearchers7", hit.upstream_source)
+
     def test_total_only_data_does_not_create_fake_result(self):
         self.assertEqual([], pansou.PanSouClient.normalize_response({"code": 0, "data": {"total": 0}}))
 
@@ -111,6 +149,12 @@ class PanSouScraperTest(unittest.TestCase):
         delay = pansou.PanSouClient._retry_delay("Wed, 21 Oct 2099 07:28:00 GMT", 0)
         self.assertEqual(30.0, delay)
 
+    def test_empty_cloud_types_omits_manual_result_filter(self):
+        client = pansou.PanSouClient("http://example.invalid")
+        client._http = _Client([_Response(200, {"code": 0, "data": {"total": 0}})])
+        client.search("示例", cloud_types=(), retry=False)
+        self.assertNotIn("cloud_types", client._http.calls[0][2]["params"])
+
     def test_manual_deadline_disables_retry_and_sets_request_timeout(self):
         client = pansou.PanSouClient("http://example.invalid")
         client._http = _Client([_Response(503, {})])
@@ -119,7 +163,12 @@ class PanSouScraperTest(unittest.TestCase):
                 "示例", retry=False, request_timeout=35.0,
             ))
         self.assertEqual(1, len(client._http.calls))
-        self.assertEqual(35.0, client._http.calls[0][2]["timeout"])
+        method, url, kwargs = client._http.calls[0]
+        self.assertEqual("GET", method)
+        self.assertEqual("http://example.invalid/api/search", url)
+        self.assertEqual("示例", kwargs["params"]["kw"])
+        self.assertEqual(35.0, kwargs["timeout"])
+        self.assertNotIn("json", kwargs)
         sleep.assert_not_called()
 
     def test_safe_http_error_categories(self):
