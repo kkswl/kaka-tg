@@ -8,6 +8,31 @@ from typing import Any, Dict, Iterable
 SOURCE_LABELS = {"tg": "TG 频道", "site": "观影", "pansou": "PanSou", "juying": "聚影"}
 
 
+def candidate_source(candidate: Any) -> str:
+    if isinstance(candidate, dict):
+        value = candidate.get("source") or candidate.get("_tg115_source")
+    else:
+        value = getattr(candidate, "_tg115_source", "") or getattr(candidate, "source", "")
+    return str(value or "").strip().lower()
+
+
+def candidate_upstream_source(candidate: Any) -> str:
+    if isinstance(candidate, dict):
+        value = candidate.get("upstream_source") or candidate.get("_tg115_upstream_source")
+    else:
+        value = getattr(candidate, "_tg115_upstream_source", "") or getattr(candidate, "upstream_source", "")
+    return str(value or "").strip()
+
+
+def format_selected_source(candidate: Any) -> str:
+    source = candidate_source(candidate)
+    upstream = candidate_upstream_source(candidate)
+    label = SOURCE_LABELS.get(source, source or "未知来源")
+    if source == "pansou" and upstream:
+        return f"{label}（上游：{upstream}）"
+    return label
+
+
 def _candidate_key(candidate: Any) -> tuple:
     if isinstance(candidate, dict):
         url = str(candidate.get("share_url") or "").strip().casefold()
@@ -47,6 +72,9 @@ class SearchReport:
         state = self._states.get(source)
         if state:
             state["status"] = status
+
+    def counts(self) -> Dict[str, int]:
+        return {source: len(state["keys"]) for source, state in self._states.items()}
 
     def text(self) -> str:
         parts = []

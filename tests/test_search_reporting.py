@@ -29,6 +29,23 @@ class SearchReportTest(unittest.TestCase):
         self.assertIn("PanSou 0 条", text)
         self.assertIn("聚影 未启用", text)
 
+    def test_formats_direct_and_aggregated_selected_sources(self):
+        site = SimpleNamespace(_tg115_source="site", _tg115_upstream_source="")
+        pansou = SimpleNamespace(_tg115_source="pansou", _tg115_upstream_source="plugin:gying")
+        tg_upstream = {"source": "pansou", "upstream_source": "tg:QuarkFree"}
+
+        self.assertEqual("观影", reporting.format_selected_source(site))
+        self.assertEqual("PanSou（上游：plugin:gying）", reporting.format_selected_source(pansou))
+        self.assertEqual("PanSou（上游：tg:QuarkFree）", reporting.format_selected_source(tg_upstream))
+
+    def test_exposes_deduplicated_hit_counts(self):
+        report = reporting.SearchReport({"tg": True, "site": True, "pansou": True})
+        report.record("pansou", [
+            SimpleNamespace(share_url="https://example.invalid/a", resource_title="A"),
+            SimpleNamespace(share_url="https://example.invalid/A", resource_title="B"),
+        ])
+        self.assertEqual(1, report.counts()["pansou"])
+
     def test_summary_reports_cooldown_without_error_details(self):
         report = reporting.SearchReport({"tg": True, "site": True, "juying": True})
         report.mark("site", "cooldown")

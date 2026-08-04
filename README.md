@@ -1,5 +1,11 @@
 # 拦截 MP 订阅（tgsearch115）
 
+## v4.7.38 自动通知搜索命中与最终来源
+
+- 自动成功通知将来源数量明确标记为“搜索命中”，并增加实际执行成功候选的“最终来源”；直接观影显示观影，PanSou 候选显示 PanSou 及其 `upstream_source`。
+- PanSou 上游来源贯穿搜索命中、候选转换、MoviePilot 规则、媒体身份确认和最终通知，不会被错误改写为直接 TG 或观影来源。
+- 自动评估增加来源阶段统计：原始返回、目标季初筛拒绝、跨关键词/跨来源去重拒绝和进入统一搜索池数量；MoviePilot 规则通过数继续单独诊断。
+
 ## v4.7.37 PanSou GET、来源筛选与会话缓存
 
 - PanSou 手动搜索改用实际可用的 `GET /api/search?kw=...`，解析 `data.merged_by_type` 和文档兼容的 `results[].links`，统一标记 `source=PanSou` 并保留上游来源。

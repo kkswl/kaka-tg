@@ -115,7 +115,7 @@ from .season_support import (
     target_seasons,
 )
 from .recognition_control import RecognitionGate, RecognitionUnavailable
-from .search_reporting import SearchReport
+from .search_reporting import SearchReport, candidate_source, candidate_upstream_source, format_selected_source
 from .tmdb_support import season_year_map
 from .site_query_policy import site_query_years
 
@@ -236,7 +236,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.37"
+    plugin_version = "4.7.38"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -906,7 +906,7 @@ class TgSearch115(_PluginBase):
             "hits": [], "torrents": [], "matched": [], "candidates": [],
             "identities": {}, "confirmed": [], "reason": "", "diagnostics": None,
             "season_before": 0, "season_after": 0,
-            "site_query_years": [], "site_query_hits": {},
+            "site_query_years": [], "site_query_hits": {}, "source_stats": {},
         }
         try:
             meta = build_subscribe_meta(subscribe)
@@ -924,6 +924,8 @@ class TgSearch115(_PluginBase):
         site_years = site_query_years(subscribe, mediainfo, target_season)
         result["site_query_years"] = site_years
         hits: List[Any] = []
+        source_raw = Counter()
+        source_relevance_rejected = Counter()
         keywords = self._build_keywords(subscribe, mediainfo, target_season)
         pending_base_keywords = {
             keyword.casefold() for keyword in keywords
@@ -943,17 +945,22 @@ class TgSearch115(_PluginBase):
                 search_diagnostics=result["site_query_hits"],
             )
             result["season_before"] += len(keyword_hits)
+            for hit in keyword_hits:
+                source_raw[candidate_source(hit)] += 1
             if target_season is not None:
-                keyword_hits = [
-                    hit for hit in keyword_hits
+                season_kept = []
+                for hit in keyword_hits:
                     if supports_target_season_or_unknown_share(
                         hit,
                         target_season,
                         P115Transfer._is_115_share_url(
                             str(getattr(hit, "share_url", "") or "")
                         ),
-                    )
-                ]
+                    ):
+                        season_kept.append(hit)
+                    else:
+                        source_relevance_rejected[candidate_source(hit)] += 1
+                keyword_hits = season_kept
             result["season_after"] += len(keyword_hits)
             hits.extend(keyword_hits)
             pending_base_keywords.discard(keyword.casefold())
@@ -962,16 +969,21 @@ class TgSearch115(_PluginBase):
             # title only. Do not stop until both bounded base fallbacks ran.
             if can_stop_keyword_search(len(keyword_hits), pending_base_keywords):
                 break
-        raw_pansou_count = sum(
-            str(getattr(hit, "_tg115_source", "") or "").lower() == "pansou"
-            for hit in hits
-        )
+        before_dedup = Counter(candidate_source(hit) for hit in hits)
         hits = deduplicate_search_hits(hits)
-        kept_pansou_count = sum(
-            str(getattr(hit, "_tg115_source", "") or "").lower() == "pansou"
-            for hit in hits
-        )
-        self._pansou_dedup_count = max(0, raw_pansou_count - kept_pansou_count)
+        after_dedup = Counter(candidate_source(hit) for hit in hits)
+        source_dedupe_rejected = before_dedup - after_dedup
+        self._pansou_dedup_count = source_dedupe_rejected.get("pansou", 0)
+        result["source_stats"] = {
+            source: {
+                "raw_count": source_raw.get(source, 0),
+                "relevance_rejected": source_relevance_rejected.get(source, 0),
+                "dedupe_rejected": source_dedupe_rejected.get(source, 0),
+                "returned_count": after_dedup.get(source, 0),
+            }
+            for source in ("tg", "site", "pansou", "juying")
+        }
+        logger.info("【TG115】搜索渠道统计: %s", result["source_stats"])
         result["hits"] = hits
         if not hits:
             result["reason"] = "未找到符合目标季与标题的候选"
@@ -1137,6 +1149,7 @@ class TgSearch115(_PluginBase):
                 "years": ["无年份" if item is None else item for item in evaluation.get("site_query_years", [])],
                 "hits_by_year": dict(evaluation.get("site_query_hits") or {}),
             },
+            "source_stats": dict(evaluation.get("source_stats") or {}),
             "candidate_year_distribution": candidate_year_distribution,
             "reason": str(evaluation.get("reason") or ""),
             "candidates": candidates,
@@ -1784,6 +1797,7 @@ class TgSearch115(_PluginBase):
             setattr(torrent, "_tg115_source_year", source_year)
             setattr(torrent, "_tg115_pan_type", pan_type)
             setattr(torrent, "_tg115_source", str(getattr(h, "_tg115_source", "") or "").lower())
+            setattr(torrent, "_tg115_upstream_source", str(getattr(h, "upstream_source", "") or "").strip())
             setattr(torrent, "_tg115_is_complete", bool(parsed_meta.get("is_complete")))
             # A magnet returned by the site's detail API has a concrete resource
             # title, page title and query year. Permit it to reach the exact
@@ -2004,6 +2018,11 @@ class TgSearch115(_PluginBase):
             "effect": subscribe.effect,
         }.items() if v}
 
+    @staticmethod
+    def _source_notice(source_summary: str, torrent: TorrentInfo) -> str:
+        summary = source_summary or "已完成来源汇总"
+        return f"搜索命中：{summary}\n最终来源：{format_selected_source(torrent)}"
+
     def _finish_subscribe(
             self, subscribe, meta, mediainfo, torrent: TorrentInfo,
             transfer_msg: str, via_offline_magnet: bool = False,
@@ -2022,6 +2041,12 @@ class TgSearch115(_PluginBase):
         """
         try:
             oper = SubscribeOper()
+            source_notice = self._source_notice(source_summary, torrent)
+            logger.info(
+                "【TG115】最终资源来源: source=%s upstream_source=%s pan_type=%s title=%s",
+                candidate_source(torrent), candidate_upstream_source(torrent),
+                str(getattr(torrent, "_tg115_pan_type", "") or ""), torrent.title,
+            )
             is_tv = any(is_tv_media(value) for value in (
                 getattr(subscribe, "type", None),
                 getattr(mediainfo, "type", None),
@@ -2044,7 +2069,7 @@ class TgSearch115(_PluginBase):
                         title=subscription_notification_title(subscribe),
                         text=(
                             "结果：已通过 MoviePilot 规则与媒体 ID 确认，并提交 115 磁力下载。\n"
-                            f"渠道：{source_summary or '已完成来源汇总'}\n"
+                            f"{source_notice}\n"
                             "后续：等待 115 下载和 MoviePilot 整理，当前不会标记订阅完成。\n"
                             f"资源：{torrent.title}\n{transfer_msg}"
                         ),
@@ -2069,7 +2094,7 @@ class TgSearch115(_PluginBase):
                         title=subscription_notification_title(subscribe),
                         text=(
                             "结果：资源已通过规则与媒体身份确认，并已转存到 115。\n"
-                            f"渠道：{source_summary or '已完成来源汇总'}\n"
+                            f"{source_notice}\n"
                             "后续：等待 MoviePilot 监控、整理和订阅历史确认；当前不会标记订阅完成。"
                         ),
                     )
@@ -2130,7 +2155,7 @@ class TgSearch115(_PluginBase):
                             title=subscription_notification_title(subscribe),
                             text=(
                                 f"结果：已转存《{subscribe.name}》{season_str}资源（{episode_info}）。\n"
-                                f"渠道：{source_summary or '已完成来源汇总'}\n"
+                                f"{source_notice}\n"
                             )
                                  + (f"资源: {torrent.title}\n{transfer_msg}" if self._auto_finish
                                     else f"已阻断 MP 搜索，等待系统整理 115 资源并刮削入库。\n"
@@ -2144,7 +2169,7 @@ class TgSearch115(_PluginBase):
                             title=subscription_notification_title(subscribe),
                             text=(
                                 f"结果：已将《{subscribe.name}》转存至 115 网盘。\n"
-                                f"渠道：{source_summary or '已完成来源汇总'}\n"
+                                f"{source_notice}\n"
                             )
                                  + (f"资源: {torrent.title}\n{transfer_msg}" if self._auto_finish
                                     else f"已阻断 MP 搜索，等待系统整理 115 资源并刮削入库。\n"
@@ -2371,7 +2396,7 @@ class TgSearch115(_PluginBase):
                 title=subscription_notification_title(subscribe),
                 text=(
                     f"结果：未找到可安全自动处理的资源。\n"
-                    f"渠道：{source_report.text() if source_report else '已完成全部已启用来源'}\n"
+                    f"搜索命中：{source_report.text() if source_report else '已完成全部已启用来源'}\n"
                     f"原因：{reason}。\n"
                     "后续：订阅已恢复，MoviePilot 可在后续订阅搜索中继续处理。"
                 ),

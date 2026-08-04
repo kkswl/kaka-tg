@@ -86,6 +86,30 @@ class SubscriptionDryRunContractTest(unittest.TestCase):
         self.assertLess(stop_pos, gate_pos)
         self.assertLess(gate_pos, coordinator_pos)
 
+    def test_source_contract_survives_torrent_conversion_and_notification(self):
+        build_start = self.source.index("def _build_torrents")
+        build_end = self.source.index("def _submit_magnet_to_115", build_start)
+        build_body = self.source[build_start:build_end]
+        self.assertIn('setattr(torrent, "_tg115_source"', build_body)
+        self.assertIn('setattr(torrent, "_tg115_upstream_source"', build_body)
+
+        finish_start = self.source.index("def _source_notice")
+        finish_end = self.source.index("def _parse_episode_info", finish_start)
+        finish_body = self.source[finish_start:finish_end]
+        self.assertIn("搜索命中：", finish_body)
+        self.assertIn("最终来源：", finish_body)
+        self.assertIn("format_selected_source(torrent)", finish_body)
+        self.assertNotIn("渠道：", finish_body)
+        self.assertNotIn("渠道：", self.source)
+
+    def test_evaluator_exposes_source_stage_statistics(self):
+        start = self.source.index("def _evaluate_subscription_candidates")
+        end = self.source.index("def _dry_run_summary", start)
+        body = self.source[start:end]
+        for field in ("raw_count", "relevance_rejected", "dedupe_rejected", "returned_count"):
+            self.assertIn(field, body)
+        self.assertIn('logger.info("【TG115】搜索渠道统计: %s"', body)
+
     def test_evaluator_preserves_candidate_source_priority(self):
         start = self.source.index("def _evaluate_subscription_candidates")
         end = self.source.index("def _dry_run_summary", start)
