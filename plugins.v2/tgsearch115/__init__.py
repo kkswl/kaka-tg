@@ -2977,47 +2977,71 @@ class TgSearch115(_PluginBase):
 
         src = (source or "all").lower()
         cooled_sources = []
+        source_status = {}
 
         def _allowed(source_name: str) -> bool:
             allowed, remaining = self._source_breaker.allow(source_name) \
                 if self._source_breaker else (True, 0)
             if not allowed:
                 cooled_sources.append(f"{source_name} 冷却中（{remaining}秒）")
+                source_status[source_name] = {"status": "cooldown", "message": f"冷却中（{remaining}秒）"}
             return allowed
 
-        def _record_source(source_name: str, client):
-            if not self._source_breaker:
-                return
+        def _record_source(source_name: str, client, count: int = 0):
             status = getattr(client, "last_error_status", None)
             error = str(getattr(client, "last_error", "") or "")
             if status in (401, 403, 429) or error:
                 category = f"HTTP {status}" if status else (error or "请求失败")
-                self._source_breaker.failure(source_name, category)
+                source_status[source_name] = {"status": "error", "message": category, "count": count}
+                if self._source_breaker:
+                    self._source_breaker.failure(source_name, category)
             else:
-                self._source_breaker.success(source_name)
+                source_status[source_name] = {"status": "success", "message": f"返回 {count} 条", "count": count}
+                if self._source_breaker:
+                    self._source_breaker.success(source_name)
+
+        def _source_error(source_name: str, exc: Exception):
+            message = "请求超时" if "timeout" in type(exc).__name__.lower() else "请求失败"
+            source_status[source_name] = {"status": "error", "message": message, "count": 0}
+            if self._source_breaker:
+                self._source_breaker.failure(source_name, message)
 
         def _do_search():
             hits = []
             has_more = False
-            # TG 仅首批搜索一次（已抓全 max_pages 页）；翻页(offset>0)只追加观影作品
-            if (src in ("all", "tg") and self._scraper and offset == 0
-                    and _allowed("tg")):
-                hits.extend(self._scraper.search(search_kw))
-                _record_source("tg", self._scraper)
+            if src in ("all", "tg") and self._scraper and offset == 0 and _allowed("tg"):
+                try:
+                    source_hits = self._scraper.search(search_kw) or []
+                    hits.extend(source_hits)
+                    _record_source("tg", self._scraper, len(source_hits))
+                except Exception as exc:
+                    _source_error("tg", exc)
             if src in ("all", "site") and self._site_scraper and _allowed("site"):
-                site_hits, has_more = self._site_scraper.search(
-                    search_kw, year=manual_year, offset=offset, count=3)
-                hits.extend(site_hits)
-                _record_source("site", self._site_scraper)
+                try:
+                    site_hits, has_more = self._site_scraper.search(
+                        search_kw, year=manual_year, offset=offset, count=3)
+                    site_hits = site_hits or []
+                    hits.extend(site_hits)
+                    _record_source("site", self._site_scraper, len(site_hits))
+                except Exception as exc:
+                    _source_error("site", exc)
             if src in ("all", "pansou") and self._pansou_client and _allowed("pansou"):
-                hits.extend(self._pansou_client.search(
-                    search_kw, year=manual_year, refresh=self._pansou_refresh,
-                    cloud_types=self._pansou_cloud_types,
-                ))
-                _record_source("pansou", self._pansou_client)
+                try:
+                    source_hits = self._pansou_client.search(
+                        search_kw, year=manual_year, refresh=self._pansou_refresh,
+                        cloud_types=self._pansou_cloud_types,
+                    ) or []
+                    hits.extend(source_hits)
+                    _record_source("pansou", self._pansou_client, len(source_hits))
+                except Exception as exc:
+                    _source_error("pansou", exc)
             if src in ("all", "juying") and self._juying_api and _allowed("juying"):
-                hits.extend(self._juying_api.search(search_kw, year=manual_year))
-                _record_source("juying", self._juying_api)
+                try:
+                    source_hits = self._juying_api.search(search_kw, year=manual_year) or []
+                    hits.extend(source_hits)
+                    _record_source("juying", self._juying_api, len(source_hits))
+                except Exception as exc:
+                    _source_error("juying", exc)
             return hits, has_more
 
         try:
@@ -3091,6 +3115,7 @@ class TgSearch115(_PluginBase):
                 "results": results,
                 "has_more": has_more,
                 "warning": warning,
+                "source_status": source_status,
             })
         except TimeoutError:
             return JSONResponse({"success": False, "message": "搜索超时（连接或检索过久）"}, status_code=504)

@@ -6,15 +6,26 @@
 <template>
   <div class="tg115-page">
     <!-- ============ 状态概览 ============ -->
-    <v-card variant="outlined" rounded="lg" class="mb-4">
-      <v-card-title class="d-flex align-center px-4 py-3">
+    <v-card variant="outlined" rounded="lg" class="mb-3">
+      <v-card-title
+        class="d-flex align-center px-4 py-3 status-toggle"
+        role="button"
+        tabindex="0"
+        :aria-expanded="statusExpanded"
+        aria-label="展开或收起运行状态"
+        @click="statusExpanded = !statusExpanded"
+        @keydown.enter="statusExpanded = !statusExpanded"
+      >
         <v-icon icon="mdi-robot-outline" color="primary" class="mr-2" />
-        拦截mp订阅
+        运行状态
+        <span class="text-caption text-medium-emphasis ml-3 status-summary">
+          {{ config.enabled ? '运行中' : '已停用' }} · TG {{ channelCount }} · 115 {{ loginOk ? '已登录' : '未登录' }} · PanSou {{ runtime.pansou.enabled ? '已启用' : '未启用' }}
+        </span>
         <v-spacer />
-        <v-chip :color="config.enabled ? 'success' : 'grey'" variant="tonal" size="small">
-          {{ config.enabled ? '运行中' : '已停用' }}
-        </v-chip>
+        <v-icon :icon="statusExpanded ? 'mdi-chevron-up' : 'mdi-chevron-down'" />
       </v-card-title>
+      <v-expand-transition>
+        <div v-show="statusExpanded">
       <v-divider />
       <v-card-text class="px-4 py-4">
         <v-row>
@@ -80,6 +91,8 @@
           >{{ source.name }} · {{ source.cooldown_seconds > 0 ? `冷却 ${source.cooldown_seconds}s` : '可用' }}</v-chip>
         </div>
       </v-card-text>
+        </div>
+      </v-expand-transition>
     </v-card>
 
     <v-card v-if="runtime.tasks.length" variant="outlined" rounded="lg" class="mb-4">
@@ -169,35 +182,10 @@
       </v-card>
     </v-dialog>
 
-    <v-card variant="outlined" rounded="lg" class="mb-4">
-      <v-card-title class="d-flex align-center px-4 py-3">
-        <v-icon icon="mdi-shield-search-outline" color="primary" class="mr-2" />订阅干跑验证
-      </v-card-title>
-      <v-divider />
-      <v-card-text class="px-4 py-4">
-        <div class="text-body-2 text-medium-emphasis mb-3">只读验证，不转存、不提交磁力、不调用 CMS、不修改订阅或任务记录。</div>
-        <div class="d-flex align-center ga-2 dry-run-controls">
-          <v-text-field v-model="dryRunSubscriptionId" label="订阅 ID" type="number" variant="outlined" density="compact" hide-details />
-          <v-btn color="primary" prepend-icon="mdi-play-circle-outline" :loading="dryRunLoading" @click="runDryRun">开始干跑，不转存</v-btn>
-        </div>
-        <div v-if="dryRunError" class="text-caption text-error mt-3">{{ dryRunError }}</div>
-        <div v-if="dryRunResult" class="mt-4">
-          <div class="text-body-2 font-weight-medium">{{ dryRunResult.subscription?.title }}（{{ dryRunResult.subscription?.year || '未知年份' }}）<span v-if="dryRunResult.subscription?.season != null">S{{ String(dryRunResult.subscription.season).padStart(2, '0') }}</span></div>
-          <div class="text-caption text-medium-emphasis mt-1">渠道：{{ dryRunResult.sources }}</div>
-          <div class="text-caption text-medium-emphasis">季号初筛：{{ dryRunResult.counts?.season_before || 0 }} → {{ dryRunResult.counts?.season_after || 0 }}；文件名探测：{{ dryRunResult.counts?.metadata_verified || 0 }}；最终安全候选：{{ dryRunResult.counts?.safe_candidates || 0 }}</div>
-          <div class="text-caption text-medium-emphasis">年份：订阅 {{ dryRunResult.subscription?.year || '未知' }}；目标季首播 {{ dryRunResult.subscription?.target_season_year || '未知' }}；候选 {{ formatYearDistribution(dryRunResult.candidate_year_distribution) }}</div>
-          <div class="text-caption text-medium-emphasis">年份拒绝 {{ dryRunResult.counts?.year_rejected || 0 }}；季级 TMDB 延后确认 {{ dryRunResult.counts?.year_deferred || 0 }}；TMDB 一致/不一致 {{ dryRunResult.counts?.tmdb_matched || 0 }}/{{ dryRunResult.counts?.tmdb_mismatch || 0 }}；类型不一致 {{ dryRunResult.counts?.type_mismatch || 0 }}；季号不一致 {{ dryRunResult.counts?.season_mismatch || 0 }}</div>
-          <div class="text-caption text-medium-emphasis">观影查询年份：{{ formatSiteYears(dryRunResult.site_search?.years) }}；召回：{{ formatSiteHits(dryRunResult.site_search?.hits_by_year) }}</div>
-          <div class="text-caption text-medium-emphasis">观影详情磁力：{{ dryRunResult.counts?.site_magnets || 0 }}；中字 1080P：{{ dryRunResult.counts?.site_chinese_1080p || 0 }}；中字 4K：{{ dryRunResult.counts?.site_chinese_4k || 0 }}</div>
-          <div v-if="dryRunResult.reason" class="text-caption mt-2 text-warning">结论：{{ dryRunResult.reason }}</div>
-        </div>
-      </v-card-text>
-    </v-card>
-
     <!-- ============ 手动搜索 ============ -->
     <v-card variant="outlined" rounded="lg">
       <v-card-title class="d-flex align-center px-4 py-3">
-        <v-icon icon="mdi-magnify" color="primary" class="mr-2" />手动搜索（TG 频道 + 观影）
+        <v-icon icon="mdi-magnify" color="primary" class="mr-2" />手动搜索
       </v-card-title>
       <v-divider />
       <v-card-text><ManualSearch :plugin-id="PID" :api="props.api" /></v-card-text>
@@ -323,14 +311,11 @@ const runtime = reactive({
   tasks: [],
 })
 const statusLoading = ref(false)
+const statusExpanded = ref(false)
 const tasksExpanded = ref(false)
 const retryingBtih = ref('')
 const clearingTasks = ref(false)
 const clearTasksDialog = ref(false)
-const dryRunSubscriptionId = ref('')
-const dryRunLoading = ref(false)
-const dryRunResult = ref(null)
-const dryRunError = ref('')
 const ACTIVE_TASK_STATUSES = new Set(['waiting', 'submitted', 'downloading', 'pending_organize'])
 const terminalTaskCount = computed(() => runtime.tasks.filter(task => !ACTIVE_TASK_STATUSES.has(task.status)).length)
 const activeTaskCount = computed(() => runtime.tasks.filter(task => ACTIVE_TASK_STATUSES.has(task.status)).length)
@@ -399,10 +384,6 @@ function formatTime(value) {
   if (!value) return '尚未运行'
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
-}
-function formatYearDistribution(distribution) {
-  const entries = Object.entries(distribution || {})
-  return entries.length ? entries.map(([year, count]) => `${year}×${count}`).join('、') : '未识别'
 }
 function taskStatusLabel(status) {
   return {
@@ -484,41 +465,6 @@ async function clearTasksConfirmed() {
   } finally {
     clearingTasks.value = false
   }
-}
-
-async function runDryRun() {
-  const subscribeId = Number(dryRunSubscriptionId.value)
-  if (!Number.isInteger(subscribeId) || subscribeId <= 0) {
-    dryRunError.value = '请输入有效的订阅 ID'
-    return
-  }
-  if (!props.api?.post) {
-    dryRunError.value = 'API 未就绪'
-    return
-  }
-  dryRunLoading.value = true
-  dryRunError.value = ''
-  dryRunResult.value = null
-  try {
-    const res = await props.api.post(`plugin/${PID.value}/subscription/dry-run`, { subscribe_id: subscribeId })
-    const data = res && typeof res === 'object' && 'data' in res && ('success' in res || 'code' in res) ? res.data : res
-    if (data?.success) dryRunResult.value = data.result || null
-    else dryRunError.value = data?.message || '只读验证失败'
-  } catch (e) {
-    dryRunError.value = e?.response?.data?.message || e?.message || '只读验证失败'
-  } finally {
-    dryRunLoading.value = false
-  }
-}
-
-function formatSiteYears(years) {
-  return Array.isArray(years) && years.length ? years.join('、') : '无'
-}
-
-function formatSiteHits(values) {
-  if (!values || typeof values !== 'object') return '无'
-  const entries = Object.entries(values)
-  return entries.length ? entries.map(([year, count]) => `${year}:${count}`).join('、') : '无'
 }
 
 async function doSearch() {
