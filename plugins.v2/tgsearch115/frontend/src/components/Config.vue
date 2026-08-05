@@ -196,6 +196,15 @@
 
         <!-- ====== Tab 2：TG 频道模块 ====== -->
         <v-window-item value="channel" class="pa-4">
+          <div class="d-flex align-center mb-4">
+            <div>
+              <div class="section-label">启用 TG 频道搜索</div>
+              <div class="text-caption text-medium-emphasis">同时控制自动订阅和手动搜索，PanSou 不受影响</div>
+            </div>
+            <v-spacer />
+            <v-switch v-model="config.tg_search_enabled" color="primary" hide-details density="compact" />
+          </div>
+          <v-divider class="mb-4" />
           <div class="section-label mb-2">添加频道</div>
           <v-card variant="tonal" color="primary" rounded="lg" class="mb-4 add-card">
             <v-card-text>
@@ -343,7 +352,7 @@
         <!-- ============ Tab：观影 ============ -->
         <v-window-item value="site" class="pa-4">
           <div class="section-label mb-2">观影站点</div>
-          <div class="text-caption text-medium-emphasis mb-3">PoW 验证 + 全网盘资源 + 磁力链接搜索；中字 1080P/4K 磁力经 MoviePilot 确认后优先通过插件内置 115 离线，失败才回退 CMS。</div>
+          <div class="text-caption text-medium-emphasis mb-3">PoW 验证 + 全网盘资源 + 磁力链接搜索；完整磁力经 MoviePilot 确认后仅使用插件内置 115 离线。</div>
           <v-row>
             <v-col cols="12" md="6" class="d-flex align-center">
               <div class="mr-2">
@@ -359,26 +368,13 @@
             <v-col cols="12" class="d-flex align-center">
               <div class="mr-3">
                 <div class="text-subtitle-2">完整磁力优先离线到 115</div>
-                <div class="text-caption text-medium-emphasis">先用 MP 规则与媒体 ID 确认；只自动处理中字 1080P/4K 磁力，插件内置 115 失败时才回退 CMS</div>
+                <div class="text-caption text-medium-emphasis">先用 MP 规则与媒体 ID 确认；仅自动处理中字 1080P/4K 磁力，统一使用插件内置 115</div>
               </div>
               <v-spacer />
               <v-switch v-model="config.site_magnet_priority" color="primary" hide-details density="compact" />
             </v-col>
-            <v-col cols="12" md="8">
-              <v-text-field v-model="config.cms_url" label="CMS 服务地址" placeholder="http://192.168.1.15:9527" variant="outlined" density="compact" hide-details />
-            </v-col>
             <v-col cols="12" md="4" class="d-flex align-center">
-              <v-btn size="small" variant="outlined" prepend-icon="mdi-connection" :loading="cmsChecking" @click="checkCms">检查 CMS</v-btn>
-              <v-btn class="ml-2" size="small" variant="outlined" prepend-icon="mdi-cloud-check-outline" :loading="offlineChecking" @click="check115Offline">检查 115 离线</v-btn>
-            </v-col>
-            <v-col cols="12">
-              <v-text-field v-model="config.cms_token" label="CMS API Token" :type="showSecrets ? 'text' : 'password'" variant="outlined" density="compact" hide-details hint="对应 CMS_API_TOKEN；仅保存在 MoviePilot 插件配置中" persistent-hint />
-            </v-col>
-            <v-col cols="12" md="4">
-              <v-text-field v-model="config.cms_timeout_hours" label="CMS 任务超时（小时）" type="number" min="1" max="72" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="12" md="4">
-              <v-select v-model="config.magnet_download_mode" :items="magnetModeOptions" label="磁力离线方式" variant="outlined" density="compact" hide-details />
+              <v-btn size="small" variant="outlined" prepend-icon="mdi-cloud-check-outline" :loading="offlineChecking" @click="check115Offline">检查 115 离线</v-btn>
             </v-col>
             <v-col cols="6" md="4">
               <v-text-field v-model="config.direct_timeout_hours" label="115 直连超时（小时）" type="number" min="1" max="72" variant="outlined" density="compact" hide-details />
@@ -700,13 +696,13 @@ const DEFAULTS = {
   search_cache_hours: 2,
   source_failure_threshold: 3,
   source_cooldown_minutes: 60,
+  tg_search_enabled: true,
   tg_concurrency: 2,
   tg_page_delay_min: 0.8,
   tg_page_delay_max: 1.5,
   site_detail_delay_min: 1.5,
   site_detail_delay_max: 3,
-  cms_timeout_hours: 12,
-  magnet_download_mode: 'direct_then_cms',
+  magnet_download_mode: 'direct_115',
   direct_timeout_hours: 12,
   offline_poll_seconds: 45,
   offline_max_retries: 3,
@@ -722,8 +718,6 @@ const DEFAULTS = {
   site_enabled: false,
   site_app_auth: '',
   site_magnet_priority: true,
-  cms_url: '',
-  cms_token: '',
   site_proxy: '',
   site_domain: '',
   juying_enabled: false,
@@ -750,11 +744,6 @@ const periodOptions = [
   { title: '每 1 小时', value: 1 },
   { title: '每 2 小时', value: 2 },
   { title: '每 3 小时', value: 3 },
-]
-const magnetModeOptions = [
-  { title: '插件内置 115 优先，失败回退 CMS（默认）', value: 'direct_then_cms' },
-  { title: '仅插件内置 115，不回退', value: 'direct_115' },
-  { title: '仅 CMS', value: 'cms_only' },
 ]
 const tgConcurrencyOptions = [
   { title: '1（最保守）', value: 1 },
@@ -830,7 +819,6 @@ const displayLimit = ref(3)
 const transferringIndex = ref(-1)  // 正在转存的结果索引（-1=无）
 // 观影连通检查
 const siteChecking = ref(false)
-const cmsChecking = ref(false)
 const offlineChecking = ref(false)
 const pansouChecking = ref(false)
 // 115 目录查询/浏览
@@ -1106,19 +1094,6 @@ async function checkSite() {
   siteChecking.value = false
   snack((res && res.message) || '检查失败', (res && res.success) ? 'success' : 'error')
 }
-async function checkCms() {
-  if (!(config.cms_url || '').trim() || !(config.cms_token || '').trim()) {
-    snack('请先填写 CMS 地址和 API Token', 'warning')
-    return
-  }
-  cmsChecking.value = true
-  const res = await apiPost('/check_cms', {
-    cms_url: config.cms_url.trim(),
-    cms_token: config.cms_token.trim(),
-  })
-  cmsChecking.value = false
-  snack(res.message || '检查失败', res.success ? 'success' : 'error')
-}
 async function check115Offline() {
   if (!(config.p115_cookie || '').trim()) {
     snack('请先扫码登录并保存 115 Cookie', 'warning')
@@ -1236,6 +1211,7 @@ function selectCurrent() {
 /* --------------------------- 保存 --------------------------- */
 async function saveAll(showMessage = true) {
   saving.value = true
+  config.tg_search_enabled = config.tg_search_enabled === true
   config.magnet_failover_enabled = config.magnet_failover_enabled === true
   config.magnet_max_attempts = clampInteger(config.magnet_max_attempts, 1, 10, DEFAULTS.magnet_max_attempts)
   config.magnet_attempt_timeout_minutes = clampInteger(config.magnet_attempt_timeout_minutes, 10, 180, DEFAULTS.magnet_attempt_timeout_minutes)

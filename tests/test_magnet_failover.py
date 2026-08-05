@@ -26,7 +26,7 @@ class MagnetFailoverTest(unittest.TestCase):
         return magnet_failover.build_magnet_queue(
             "movie:1:2025", "subscribe:1:movie:1", [candidate(str(i)) for i in range(count)],
             max_attempts=max_attempts,
-            now=datetime(2026, 8, 5, tzinfo=timezone.utc),
+            now=datetime.now(timezone.utc),
             timeout_hours=12,
         )
 

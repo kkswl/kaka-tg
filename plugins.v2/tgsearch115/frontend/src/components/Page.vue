@@ -19,7 +19,7 @@
         <v-icon icon="mdi-robot-outline" color="primary" class="mr-2" />
         运行状态
         <span class="text-caption text-medium-emphasis ml-3 status-summary">
-          {{ config.enabled ? '运行中' : '已停用' }} · TG {{ channelCount }} · 115 {{ loginOk ? '已登录' : '未登录' }} · PanSou {{ runtime.pansou.enabled ? '已启用' : '未启用' }}
+          {{ statusText }}
         </span>
         <v-spacer />
         <v-icon :icon="statusExpanded ? 'mdi-chevron-up' : 'mdi-chevron-down'" />
@@ -121,6 +121,7 @@
       <v-expand-transition>
       <div v-show="tasksExpanded">
       <v-divider />
+      <div class="text-caption text-medium-emphasis">115 直接磁力状态来自插件脱敏台账；手动取消只对可识别的当前任务可用</div>
       <v-table density="compact">
         <thead>
           <tr><th>资源</th><th>状态</th><th>提交时间</th><th class="text-right">操作</th></tr>
@@ -129,7 +130,7 @@
           <tr v-for="task in runtime.tasks" :key="`${task.btih}-${task.submitted_at}`">
             <td>
               <div class="task-title">{{ task.title }}</div>
-              <div class="text-caption text-medium-emphasis">{{ task.source === '115_direct' ? '115 直接磁力' : 'CMS 回退' }} · task {{ String(task.task_id || '').slice(0, 12) }}...</div>
+              <div class="text-caption text-medium-emphasis">115 直接磁力 · task {{ String(task.task_id || '').slice(0, 12) }}...</div>
               <div class="text-caption text-medium-emphasis">BTIH {{ String(task.btih || '').slice(0, 12) }}...</div>
               <div v-if="task.target_cid" class="text-caption text-medium-emphasis">
                 115 目标 cid {{ task.target_cid }}<span v-if="task.download_name"> · {{ task.download_name }}</span>
@@ -302,16 +303,25 @@ const props = defineProps({
 const PID = computed(() => props.pluginId || 'TgSearch115')
 
 // ---- 配置 / 状态 ----
-const config = reactive({ enabled: false, p115_cookie: '', cms_url: '', cms_token: '', offline_allow_cancel: false, tg_channels: [] })
+const config = reactive({ enabled: false, tg_search_enabled: true, p115_cookie: '', offline_allow_cancel: false, tg_channels: [] })
 const runtime = reactive({
   scheduler: { running: false, last_run: '', next_run: '', scanned_count: 0, queue_size: 0 },
   recognition: { waiting: 0, active: 0, max_active: 0, last_wait_seconds: 0, retries: 0, identity_unavailable: 0, stopping: false },
   sources: {},
+  tg: { enabled: true, configured_channels: 0, enabled_channels: 0, status: 'empty' },
   pansou: { enabled: false, last_request: '', last_success: '', last_error: '', result_count: 0, type_counts: {}, cache_hits: 0, deduplicated: 0, rule_passed: 0, identity_checked: 0, safe_candidates: 0 },
   tasks: [],
 })
 const statusLoading = ref(false)
 const statusExpanded = ref(false)
+const statusText = computed(() => {
+  const tgState = runtime.tg?.status === 'disabled'
+    ? '已关闭'
+    : runtime.tg?.status === 'empty'
+      ? '已启用但无频道'
+      : '已启用'
+  return `${config.enabled ? '运行中' : '已停用'} · TG ${tgState} · 115 ${loginOk.value ? '已登录' : '未登录'} · PanSou ${runtime.pansou.enabled ? '已启用' : '未启用'}`
+})
 const tasksExpanded = ref(false)
 const retryingBtih = ref('')
 const clearingTasks = ref(false)
@@ -548,8 +558,8 @@ async function transfer(r, i) {
     showSnack('未登录 115，无法转存', 'error')
     return
   }
-  if (r.pan_type === 'magnet' && (!config.p115_cookie && (!config.cms_url || !config.cms_token))) {
-    showSnack('请先配置 115 Cookie，或配置 CMS 地址和 API Token', 'error')
+  if (r.pan_type === 'magnet' && !config.p115_cookie) {
+    showSnack('请先配置 115 Cookie', 'error')
     return
   }
   transferringIdx.value = i

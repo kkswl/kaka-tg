@@ -164,7 +164,8 @@ const filtered = computed(() => filterSearchResults(sourceFilteredResults.value,
 const backendCount = computed(() => Object.values(sourceStats.value).reduce((total, stat) => total + Number(stat?.returned_count || 0), 0) || results.value.length)
 const sourceSummary = computed(() => Object.entries(sourceStatus.value).map(([name, state]) => {
   const label = sourceLabel(name)
-  if (state?.status === 'success') return `${label} ${state.count || 0} 条`
+  if (state?.status === 'success' || state?.status === 'partial_success') return `${label} ${state.status === 'partial_success' ? '部分成功，' : ''}${state.count || 0} 条`
+  if (state?.status === 'disabled') return `${label} 已关闭`
   if (state?.status === 'cooldown') return `${label} ${state.message || '冷却中'}`
   return `${label} ${state?.message || '请求失败'}`
 }).join(' · '))
@@ -255,7 +256,16 @@ async function search() {
   message.value = ''
   try {
     const data = unwrap(await props.api.get(`${base.value}/search?keyword=${encodeURIComponent(value)}&source=${source.value}`))
-    results.value = Array.isArray(data?.results) ? data.results : []
+    const sourceItems = Array.isArray(data?.items)
+      ? data.items
+      : Array.isArray(data?.results)
+        ? data.results
+        : Array.isArray(data?.resources)
+          ? data.resources
+          : Array.isArray(data?.data?.items)
+            ? data.data.items
+            : []
+    results.value = sourceItems
     sourceStatus.value = data?.source_status && typeof data.source_status === 'object' ? data.source_status : {}
     sourceStats.value = data?.source_stats && typeof data.source_stats === 'object' ? data.source_stats : {}
     ok.value = !!data?.success

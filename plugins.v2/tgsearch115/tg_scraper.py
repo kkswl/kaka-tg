@@ -21,6 +21,7 @@ v4.0 核心改进：使用 Telegram 网页预览版的 **服务端搜索** ``?q=
 import asyncio
 import random
 import re
+import threading
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import parse_qsl, parse_qs, quote, unquote, urlparse
@@ -131,9 +132,21 @@ class TgChannelScraper:
         self.max_retries = min(3, max(0, int(max_retries)))
         self.last_error_status: Optional[int] = None
         self.last_error = ""
+        self._result_lock = threading.RLock()
+        self._partial_hits: List[TgHit] = []
+        self._completed_channels = 0
+        self._total_channels = 0
 
     def is_ready(self) -> bool:
         return bool(self.channels)
+
+    def partial_result(self) -> Dict[str, object]:
+        with self._result_lock:
+            return {
+                "items": list(self._partial_hits),
+                "completed_channels": self._completed_channels,
+                "total_channels": self._total_channels,
+            }
 
     def search(self, keyword: str) -> List[TgHit]:
         """同步入口：在所有频道搜索关键字，返回含 115 分享链接的命中列表。"""
@@ -221,19 +234,35 @@ class TgChannelScraper:
             logger.warn("【TG115】没有可爬取的公开频道")
             return []
 
+        with self._result_lock:
+            self._partial_hits = []
+            self._completed_channels = 0
+            self._total_channels = len(valid_channels)
+
         async with self._make_client() as client:
             tasks = [
-                self._search_one_channel(client, cid, cname, encoded_term, sem)
+                asyncio.create_task(self._search_one_channel(client, cid, cname, encoded_term, sem))
                 for cid, cname in valid_channels
             ]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            results = []
+            for task in asyncio.as_completed(tasks):
+                try:
+                    channel_hits = await task
+                    results.append(channel_hits)
+                    with self._result_lock:
+                        self._partial_hits.extend(channel_hits)
+                        self._completed_channels += 1
+                except Exception as exc:
+                    results.append(exc)
+                    with self._result_lock:
+                        self._completed_channels += 1
 
         all_hits: List[TgHit] = []
         for r in results:
             if isinstance(r, list):
                 all_hits.extend(r)
             elif isinstance(r, Exception):
-                logger.error(f"【TG115】频道搜索异常: {r}")
+                logger.error(f"【TG115】频道搜索异常: {type(r).__name__}")
 
         logger.info(
             f"【TG115】共搜索 {len(valid_channels)} 个频道（TG 服务端 ?q= 搜全历史），"

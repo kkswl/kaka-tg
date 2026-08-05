@@ -50,6 +50,10 @@ class ManualVerifiedProcessContractTest(unittest.TestCase):
         end = source.index("    def __dir_info_api", start)
         method = source[start:end]
         self.assertIn("ThreadPoolExecutor", method)
+        self.assertIn('"items": results', method)
+        self.assertIn('"status": "partial_success"', method)
+        self.assertIn("partial_result", method)
+        self.assertIn("tg_search_enabled", method)
         self.assertIn("wait(futures, timeout=35.0)", method)
         self.assertIn("executor.shutdown(wait=False, cancel_futures=True)", method)
         self.assertIn("is_manual_relevant_result(", method)

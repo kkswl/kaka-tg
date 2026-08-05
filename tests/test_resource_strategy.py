@@ -55,16 +55,25 @@ class ResourceStrategyTest(unittest.TestCase):
         self.assertEqual(0, magnet.seeders)
         self.assertEqual(0, share.seeders)
 
-    def test_direct_failure_falls_back_to_cms(self):
-        calls = []
-        ok, message, source = resource_strategy.submit_magnet_with_fallback(
-            "direct_then_cms",
-            lambda: (calls.append("direct") or (False, "direct failed")),
-            lambda: (calls.append("cms") or (True, "created")),
+    def test_resource_classification_uses_115_only_actions(self):
+        magnet = _torrent(
+            "magnet:?xt=urn:btih:" + "0" * 40,
+            "magnet",
+            text="藏海传 S01 E01-E40 2160p WEB-DL H.265 简中 HDR10",
         )
-        self.assertTrue(ok)
-        self.assertEqual("cms", source)
-        self.assertEqual(["direct", "cms"], calls)
+        classification = resource_strategy.classify_resource(
+            magnet,
+            media_type="tv",
+            identity_status="confirmed",
+            mp_rule_status="passed",
+        )
+        self.assertEqual("magnet", classification["resource_type"])
+        self.assertEqual("2160p", classification["resolution"])
+        self.assertEqual("WEB-DL", classification["quality"])
+        self.assertEqual("H.265", classification["video_codec"])
+        self.assertEqual("简中", classification["subtitle"])
+        self.assertEqual("submit_115", classification["action"])
+        self.assertNotIn("cms", resource_strategy.format_resource_classification(classification).lower())
 
     def test_orders_direct_sources_then_pansou_then_magnets_then_juying(self):
         magnet = "magnet:?xt=urn:btih:" + "a" * 40

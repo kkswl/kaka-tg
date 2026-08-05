@@ -68,6 +68,128 @@ def _magnet_key(value: str) -> str:
     return (match.group(1) if match else url).lower()
 
 
+def classify_resource(
+    torrent: Any,
+    media_type: str = "unknown",
+    identity_status: str = "unknown",
+    mp_rule_status: str = "unknown",
+    dedupe_status: str = "unknown",
+    action: str = "",
+    reject_reason: str = "",
+) -> dict:
+    title = str(getattr(torrent, "title", "") or getattr(torrent, "name", "") or "")
+    description = str(getattr(torrent, "description", "") or "")
+    text = " ".join((title, description))
+    lower = text.lower()
+    page_url = str(getattr(torrent, "page_url", "") or getattr(torrent, "url", "") or "")
+    btih_match = _BTIH_RE.search(page_url)
+    btih = str(btih_match.group(1) if btih_match else "").lower()
+    valid_btih = bool(re.fullmatch(r"[0-9a-f]{40}|[a-z2-7]{32}", btih, re.IGNORECASE))
+    resolution = next((value for pattern, value in (
+        (r"(?:4320p|\b8k\b)", "4320p"),
+        (r"(?:2160p|\b4k\b|\buhd\b)", "2160p"),
+        (r"1080i", "1080i"),
+        (r"1080p", "1080p"),
+        (r"720p", "720p"),
+        (r"(?:\b576[pi]\b|\b480[pi]\b|\bsd\b)", "SD"),
+    ) if re.search(pattern, lower)), "unknown")
+    quality = next((value for pattern, value in (
+        (r"\bremux\b", "REMUX"),
+        (r"blu[ ._-]?ray|b[dr]rip", "BluRay"),
+        (r"web[ ._-]?dl", "WEB-DL"),
+        (r"web[ ._-]?rip", "WEBRip"),
+        (r"\bhdtv\b", "HDTV"),
+        (r"\bdvdrip\b", "DVDRip"),
+    ) if re.search(pattern, lower)), "unknown")
+    video_codec = next((value for pattern, value in (
+        (r"\bav1\b", "AV1"),
+        (r"h[ .]?265|\bhevc\b|\bx265\b", "H.265"),
+        (r"h[ .]?264|\bavc\b|\bx264\b", "H.264"),
+        (r"mpeg[ ._-]?2", "MPEG-2"),
+    ) if re.search(pattern, lower)), "unknown")
+    audio_codec = next((value for pattern, value in (
+        (r"truehd.*atmos|atmos.*truehd", "TrueHD Atmos"),
+        (r"dts[ ._-]?hd[ ._-]?ma", "DTS-HD MA"),
+        (r"dts[ ._-]?x", "DTS-X"),
+        (r"\bdts\b", "DTS"),
+        (r"\b(?:ddp|eac3|e-ac-3)\b", "DDP"),
+        (r"\b(?:dd|ac3|ac-3)\b", "DD"),
+        (r"\baac\b", "AAC"),
+        (r"\bflac\b", "FLAC"),
+    ) if re.search(pattern, lower)), "unknown")
+    channels_match = re.search(r"\b([257]\.1(?:\.\d)?|[12]\.0)\b", lower)
+    subtitle = next((value for pattern, value in (
+        (r"无中字|无中文", "无中字"),
+        (r"中英|双语字幕", "中英双语"),
+        (r"简繁", "简繁"),
+        (r"繁中|繁体", "繁中"),
+        (r"外挂.{0,4}(?:中字|中文|简中)", "外挂中字"),
+        (r"内(?:嵌|封).{0,4}(?:中字|中文|简中|chs)", "内嵌中字"),
+        (r"简中|中字|中文字幕|中文|\bchs\b", "简中"),
+    ) if re.search(pattern, lower)), "未知")
+    language = next((value for pattern, value in (
+        (r"国语|国粤|mandarin", "国语"),
+        (r"粤语|cantonese", "粤语"),
+        (r"英语|english", "英语"),
+        (r"日语|japanese", "日语"),
+        (r"韩语|korean", "韩语"),
+    ) if re.search(pattern, lower)), "unknown")
+    hdr = next((value for pattern, value in (
+        (r"dolby[ ._-]?vision|\b(?:dovi|dv)\b", "Dolby Vision"),
+        (r"hdr10\+", "HDR10+"),
+        (r"\bhdr10\b|\bhdr\b", "HDR10"),
+        (r"\bhlg\b", "HLG"),
+        (r"\bsdr\b", "SDR"),
+    ) if re.search(pattern, lower)), "unknown")
+    year_match = re.search(r"(?<!\d)((?:19|20)\d{2})(?!\d)", text)
+    season_match = re.search(r"\bS(\d{1,2})\b|第\s*(\d{1,2})\s*季", text, re.IGNORECASE)
+    episode_match = re.search(r"\bE(\d{1,4})(?:\s*[-~]\s*E?(\d{1,4}))?\b", text, re.IGNORECASE)
+    pan_type = str(getattr(torrent, "_tg115_pan_type", "") or "").lower()
+    resource_type = "magnet" if pan_type == "magnet" or is_magnet_url(page_url) else "115_share" if pan_type == "115" or "115.com/" in page_url.lower() else "site_torrent" if pan_type == "torrent" else "cloud_share" if page_url.startswith("http") else "unknown"
+    final_action = action or ("submit_115" if resource_type == "magnet" else "transfer_115_share" if resource_type == "115_share" else "reject")
+    return {
+        "source": str(getattr(torrent, "_tg115_source", "") or "unknown"),
+        "source_name": str(getattr(torrent, "source_name", "") or getattr(torrent, "site_name", "") or "unknown"),
+        "resource_type": resource_type,
+        "media_type": media_type or "unknown",
+        "title": title,
+        "year": int(year_match.group(1)) if year_match else None,
+        "season": int(next((value for value in season_match.groups() if value), 0)) if season_match else None,
+        "episodes": f"E{int(episode_match.group(1)):02d}-E{int(episode_match.group(2)):02d}" if episode_match and episode_match.group(2) else f"E{int(episode_match.group(1)):02d}" if episode_match else "unknown",
+        "resolution": resolution,
+        "quality": quality,
+        "video_codec": video_codec,
+        "audio_codec": audio_codec,
+        "audio_channels": channels_match.group(1) if channels_match else "unknown",
+        "subtitle": subtitle,
+        "language": language,
+        "has_chinese_subtitle": subtitle not in {"无中字", "未知"},
+        "hdr": hdr,
+        "dolby_vision": hdr == "Dolby Vision",
+        "complete_magnet": resource_type == "magnet" and is_magnet_url(page_url) and valid_btih,
+        "valid_btih": valid_btih,
+        "btih_prefix": btih[:12],
+        "tmdb_id": getattr(torrent, "tmdb_id", None),
+        "douban_id": str(getattr(torrent, "douban_id", "") or ""),
+        "identity_status": identity_status or "unknown",
+        "mp_rule_status": mp_rule_status or "unknown",
+        "dedupe_status": dedupe_status or "unknown",
+        "action": final_action,
+        "reject_reason": reject_reason,
+    }
+
+
+def format_resource_classification(classification: dict) -> str:
+    fields = (
+        "source", "source_name", "resource_type", "media_type", "year", "season",
+        "episodes", "resolution", "quality", "video_codec", "audio_codec",
+        "audio_channels", "subtitle", "language", "hdr", "valid_btih",
+        "btih_prefix", "identity_status", "mp_rule_status", "dedupe_status",
+        "action", "reject_reason",
+    )
+    return " ".join(f"{field}={classification.get(field) if classification.get(field) not in (None, '') else 'unknown'}" for field in fields)
+
+
 def select_auto_candidates(
     torrents: Iterable,
     prefer_site_magnet: bool,
@@ -191,7 +313,7 @@ def execute_auto_candidates(
     magnet_failover_enabled: bool = True,
     magnet_queue_timeout_hours: int = 12,
 ) -> CandidateExecutionResult:
-    """Try magnets then shares while preserving the safe CMS failure fallback."""
+    """Try confirmed magnets through built-in 115, then eligible shares."""
     result = CandidateExecutionResult()
     candidate_list = list(candidates or [])
     first_magnet = next(
@@ -271,22 +393,5 @@ def execute_auto_candidates(
             result.message = message
             result.via_magnet = True
             return result
-        result.errors.append(f"CMS 115 磁力离线任务提交失败: {message}")
+        result.errors.append(f"插件内置 115 磁力离线任务提交失败: {message}")
         status = "failed"
-
-
-def submit_magnet_with_fallback(
-    mode: str,
-    submit_direct: Callable[[], Tuple[bool, str]],
-    submit_cms: Callable[[], Tuple[bool, str]],
-) -> Tuple[bool, str, str]:
-    """Apply direct/CMS mode without treating task creation as completion."""
-    normalized = str(mode or "direct_then_cms").lower()
-    if normalized in {"direct_115", "direct_then_cms"}:
-        ok, message = submit_direct()
-        if ok:
-            return True, message, "115_direct"
-        if normalized == "direct_115":
-            return False, message, "115_direct"
-    ok, message = submit_cms()
-    return ok, message, "cms"
