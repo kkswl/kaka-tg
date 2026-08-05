@@ -9,7 +9,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 
 _BTIH_RE = re.compile(r"(?:^|[?&])xt=urn:btih:([a-z0-9]+)", re.IGNORECASE)
-ACTIVE_STATUSES = {"waiting", "submitted", "downloading", "pending_organize"}
+ACTIVE_STATUSES = {"waiting", "submitted", "downloading", "pending_organize", "unknown"}
 
 
 def has_explicit_clear_confirmation(payload: Any) -> bool:
@@ -89,6 +89,8 @@ class CmsTaskLedger:
             now_text = self._now().isoformat(timespec="seconds")
             record = {
                 "source": str(source or "cms"),
+                "position": 0,
+                "candidate_total": 0,
                 "btih": btih,
                 "title": str(title or "未命名资源")[:240],
                 "subscribe_id": getattr(subscribe, "id", None) if subscribe else None,
@@ -131,6 +133,21 @@ class CmsTaskLedger:
         with self._lock:
             for record in reversed(self.records):
                 if record.get("btih") == key:
+                    return record
+        return None
+
+    def attempted_by_subscription(self, subscribe_id: Any) -> set:
+        with self._lock:
+            return {
+                str(record.get("btih") or "").lower()
+                for record in self.records
+                if record.get("subscribe_id") == subscribe_id and record.get("btih")
+            }
+
+    def active_by_subscription(self, subscribe_id: Any) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            for record in reversed(self.records):
+                if record.get("subscribe_id") == subscribe_id and record.get("status") in ACTIVE_STATUSES:
                     return record
         return None
 

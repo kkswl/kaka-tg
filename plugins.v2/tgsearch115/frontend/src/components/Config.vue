@@ -391,6 +391,32 @@
             </v-col>
             <v-col cols="12" class="d-flex align-center">
               <div class="mr-3">
+                <div class="text-subtitle-2">启用磁力候选轮换</div>
+                <div class="text-caption text-medium-emphasis">当前磁力失败、取消或无资源时自动尝试下一条候选</div>
+              </div>
+              <v-spacer />
+              <v-switch v-model="config.magnet_rotation_enabled" color="primary" hide-details density="compact" />
+            </v-col>
+            <v-col cols="6" md="4">
+              <v-text-field v-model="config.magnet_rotation_max_attempts" label="磁力最大尝试数" type="number" min="1" max="10" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="6" md="4">
+              <v-text-field v-model="config.magnet_rotation_timeout_hours" label="轮换队列超时（小时）" type="number" min="1" max="72" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="6" md="4">
+              <v-text-field v-model="config.magnet_no_progress_timeout_minutes" label="单候选无进展超时（分钟）" type="number" min="10" max="180" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="6" md="4">
+              <v-text-field v-model="config.magnet_rotation_unknown_timeout_minutes" label="未知状态对账超时（分钟）" type="number" min="1" max="1440" variant="outlined" density="compact" hide-details />
+            </v-col>
+            <v-col cols="6" md="4">
+              <v-switch v-model="config.magnet_cancel_failover" label="取消后自动切换" color="primary" hide-details density="compact" />
+            </v-col>
+            <v-col cols="6" md="4">
+              <v-switch v-model="config.magnet_fallback_enabled" label="候选耗尽后回退 MP" color="primary" hide-details density="compact" />
+            </v-col>
+            <v-col cols="12" class="d-flex align-center">
+              <div class="mr-3">
                 <div class="text-subtitle-2">等待 MoviePilot 整理完成</div>
                 <div class="text-caption text-medium-emphasis">115 下载完成后仍等待 MP 订阅历史确认，不提前发送完成通知</div>
               </div>
@@ -684,6 +710,13 @@ const DEFAULTS = {
   direct_timeout_hours: 12,
   offline_poll_seconds: 45,
   offline_max_retries: 3,
+  magnet_failover_enabled: true,
+  magnet_max_attempts: 5,
+  magnet_attempt_timeout_minutes: 30,
+  magnet_queue_timeout_hours: 12,
+  magnet_cancel_failover: true,
+  magnet_no_progress_timeout_minutes: 20,
+  magnet_fallback_enabled: true,
   offline_allow_cancel: false,
   wait_for_mp_organize: true,
   site_enabled: false,
@@ -829,6 +862,11 @@ function snack(text, color = 'success') {
   snackText.value = text
   snackColor.value = color
   snackModel.value = true
+}
+
+function clampInteger(value, min, max, fallback) {
+  const number = Number.parseInt(value, 10)
+  return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback
 }
 
 // 115 登录态：客户端按 Cookie 是否含 UID/CID/SEID 判定（与后端 validate_cookie 一致）
@@ -1198,7 +1236,13 @@ function selectCurrent() {
 /* --------------------------- 保存 --------------------------- */
 async function saveAll(showMessage = true) {
   saving.value = true
-  // 提交时只保留后端需要的字段，去掉本地 uid
+  config.magnet_failover_enabled = config.magnet_failover_enabled === true
+  config.magnet_max_attempts = clampInteger(config.magnet_max_attempts, 1, 10, DEFAULTS.magnet_max_attempts)
+  config.magnet_attempt_timeout_minutes = clampInteger(config.magnet_attempt_timeout_minutes, 10, 180, DEFAULTS.magnet_attempt_timeout_minutes)
+  config.magnet_queue_timeout_hours = clampInteger(config.magnet_queue_timeout_hours, 1, 48, DEFAULTS.magnet_queue_timeout_hours)
+  config.magnet_cancel_failover = config.magnet_cancel_failover === true
+  config.magnet_no_progress_timeout_minutes = clampInteger(config.magnet_no_progress_timeout_minutes, 10, 180, DEFAULTS.magnet_no_progress_timeout_minutes)
+  config.magnet_fallback_enabled = config.magnet_fallback_enabled === true
   config.tg_channels = channels.value.map(({ name, id, enabled }) => ({ name, id, enabled }))
   const res = await apiPost('/config/save', { ...config })
   saving.value = false

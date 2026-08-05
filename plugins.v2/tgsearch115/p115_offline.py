@@ -130,10 +130,11 @@ class P115OfflineClient:
                         )
                         self._submitted[btih] = dict(result)
                         return result
-                return self._result(False, "", btih, exc.error_code, str(exc), status="failed")
+                uncertain = exc.error_code in {"invalid_json", "request_failed", "network_error"} or exc.status >= 500
+                return self._result(False, "", btih, exc.error_code, str(exc), status="unknown" if uncertain else "failed")
             except Exception as exc:
                 logger.warning("115 offline request failed status=%s error=%s", self.last_http_status, type(exc).__name__)
-                return self._result(False, "", btih, "network_error", "115 网络请求失败", status="failed")
+                return self._result(False, "", btih, "network_error", "115 网络请求失败", status="unknown")
 
     def list_tasks(self, page: int = 1, page_size: int = 30,
                    stat: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -175,6 +176,11 @@ class P115OfflineClient:
             data = response.get("data") if isinstance(response, dict) else None
             task = data if isinstance(data, dict) else response
         normalized = self._normalize_task(task if isinstance(task, dict) else {})
+        if not normalized.get("task_id") and not normalized.get("btih"):
+            existing = self._find_existing(normalize_btih(key) or key)
+            if existing:
+                return existing
+            return self._result(False, "", normalize_btih(key), "no_resource", "115 中未找到对应 BTIH 任务", status="no_resource")
         # get_user_task can keep reporting a running status after 115 has
         # already moved the files into the cloud drive.  task_lists(stat=11)
         # is the service's authoritative completed bucket.

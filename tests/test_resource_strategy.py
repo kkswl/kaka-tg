@@ -172,10 +172,34 @@ class ResourceStrategyTest(unittest.TestCase):
             ),
         )
 
-        self.assertEqual(1, len(submitted_magnets))
+        self.assertEqual(2, len(submitted_magnets))
         self.assertEqual(["https://115.com/s/fallback"], transferred_shares)
         self.assertEqual("https://115.com/s/fallback", result.candidate.page_url)
         self.assertFalse(result.via_magnet)
+
+    def test_first_magnet_failure_submits_second_candidate(self):
+        first = _torrent("magnet:?xt=urn:btih:" + "1" * 40, "magnet")
+        second = _torrent("magnet:?xt=urn:btih:" + "2" * 40, "magnet")
+        submitted = []
+
+        def submit(candidate):
+            submitted.append(candidate.page_url)
+            return (len(submitted) == 2, "submitted" if len(submitted) == 2 else "cancelled")
+
+        result = resource_strategy.execute_auto_candidates(
+            candidates=[first, second],
+            confirm_identity=lambda _candidate: SimpleNamespace(
+                confirmed=True, recognition_attempted=True
+            ),
+            submit_magnet=submit,
+            transfer_share=lambda _candidate: (False, "unexpected"),
+        )
+
+        self.assertEqual([first.page_url, second.page_url], submitted)
+        self.assertIs(second, result.candidate)
+        self.assertTrue(result.via_magnet)
+        self.assertEqual(2, second._tg115_candidate_position)
+        self.assertEqual(2, second._tg115_candidate_total)
 
     def test_identity_unavailable_does_not_submit_or_transfer(self):
         candidate = _torrent("https://115.com/s/unavailable", "115")

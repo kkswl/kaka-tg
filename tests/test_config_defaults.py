@@ -38,6 +38,13 @@ class ConfigDefaultsTest(unittest.TestCase):
         self.assertEqual("", defaults["pansou_proxy"])
         self.assertEqual(["115", "magnet"], defaults["pansou_cloud_types"])
         self.assertEqual(100, defaults["pansou_max_results"])
+        self.assertTrue(defaults["magnet_failover_enabled"])
+        self.assertEqual(5, defaults["magnet_max_attempts"])
+        self.assertEqual(30, defaults["magnet_attempt_timeout_minutes"])
+        self.assertEqual(12, defaults["magnet_queue_timeout_hours"])
+        self.assertTrue(defaults["magnet_cancel_failover"])
+        self.assertEqual(20, defaults["magnet_no_progress_timeout_minutes"])
+        self.assertTrue(defaults["magnet_fallback_enabled"])
 
     def test_share_transfer_waits_for_mp_before_subscribe_complete(self):
         source = PLUGIN_PATH.read_text(encoding="utf-8")

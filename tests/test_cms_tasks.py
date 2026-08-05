@@ -1,6 +1,8 @@
 import importlib.util
 import sys
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -73,6 +75,23 @@ class CmsTaskLedgerTest(unittest.TestCase):
         self.assertFalse(second_created)
         self.assertIs(first, second)
         self.assertEqual(1, len(ledger.records))
+
+    def test_concurrent_same_subscription_has_one_active_record(self):
+        ledger = cms_tasks.CmsTaskLedger()
+        barrier = threading.Barrier(10)
+
+        subscribe = SimpleNamespace(id=7, tmdbid=1, doubanid=None, type="MOVIE", season=None)
+
+        def create():
+            barrier.wait()
+            return ledger.reserve("magnet:?xt=urn:btih:" + "f" * 40, title="movie", subscribe=subscribe)
+
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(create) for _ in range(10)]
+            records = [future.result() for future in futures]
+
+        self.assertEqual(1, sum(created for _record, created in records))
+        self.assertEqual("f" * 40, ledger.active_by_subscription(7)["btih"])
 
     def test_cms_acceptance_does_not_complete_subscription(self):
         now = datetime(2026, 7, 20, tzinfo=timezone.utc)

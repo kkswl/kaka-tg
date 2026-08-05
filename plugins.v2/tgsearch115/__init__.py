@@ -58,6 +58,7 @@ import threading
 import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, wait
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import Body
@@ -123,6 +124,7 @@ from .site_query_policy import site_query_years
 # get_data / save_data 存储本插件配置使用的 key
 CONFIG_KEY = "config"
 CMS_TASKS_KEY = "cms_tasks"
+MAGNET_QUEUES_KEY = "magnet_queues"
 
 
 # ============================ 115 扫码登录（直连稳定 115 二维码接口） ============================
@@ -236,7 +238,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.38"
+    plugin_version = "4.7.39"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -291,6 +293,13 @@ class TgSearch115(_PluginBase):
     _offline_poll_seconds = 45
     _offline_last_poll = 0.0
     _offline_allow_cancel = False
+    _magnet_failover_enabled = True
+    _magnet_max_attempts = 5
+    _magnet_attempt_timeout_minutes = 30
+    _magnet_queue_timeout_hours = 12
+    _magnet_cancel_failover = True
+    _magnet_no_progress_timeout_minutes = 20
+    _magnet_fallback_enabled = True
     _offline_stop: Optional[threading.Event] = None
     _offline_thread: Optional[threading.Thread] = None
     _reconcile_lock = threading.Lock()
@@ -312,6 +321,8 @@ class TgSearch115(_PluginBase):
         self._apply_config(config)
         stored_tasks = self.get_data(CMS_TASKS_KEY) or []
         self._cms_tasks = CmsTaskLedger(stored_tasks if isinstance(stored_tasks, list) else [])
+        stored_queues = self.get_data(MAGNET_QUEUES_KEY) or {}
+        self._magnet_queues = stored_queues if isinstance(stored_queues, dict) else {}
         self._share_metadata_cache = TtlCache(ttl_seconds=6 * 3600, max_entries=256)
 
         # 持久化（保证 get_data 可读、字段干净）
@@ -363,6 +374,13 @@ class TgSearch115(_PluginBase):
         self._offline_poll_seconds = min(3600, max(15, self._safe_int(config.get("offline_poll_seconds"), 45)))
         self._offline_max_retries = min(6, max(0, self._safe_int(config.get("offline_max_retries"), 3)))
         self._offline_allow_cancel = self._to_bool(config.get("offline_allow_cancel"), False)
+        self._magnet_failover_enabled = self._to_bool(config.get("magnet_failover_enabled"), True)
+        self._magnet_max_attempts = min(10, max(1, self._safe_int(config.get("magnet_max_attempts"), 5)))
+        self._magnet_attempt_timeout_minutes = min(180, max(10, self._safe_int(config.get("magnet_attempt_timeout_minutes"), 30)))
+        self._magnet_queue_timeout_hours = min(48, max(1, self._safe_int(config.get("magnet_queue_timeout_hours"), 12)))
+        self._magnet_cancel_failover = self._to_bool(config.get("magnet_cancel_failover"), True)
+        self._magnet_no_progress_timeout_minutes = min(180, max(10, self._safe_int(config.get("magnet_no_progress_timeout_minutes"), 20)))
+        self._magnet_fallback_enabled = self._to_bool(config.get("magnet_fallback_enabled"), True)
         self._search_cache = TtlCache(ttl_seconds=cache_hours * 3600)
         self._notification_cache = TtlCache(ttl_seconds=600, max_entries=256)
         self._season_year_cache = TtlCache(ttl_seconds=6 * 3600, max_entries=128)
@@ -1171,10 +1189,79 @@ class TgSearch115(_PluginBase):
                 logger.info(f"【TG115】订阅 {subscribe_id} 当前不可认领，本轮跳过")
                 return
 
+            if self._cms_tasks:
+                active = self._cms_tasks.active_by_subscription(subscribe_id)
+                if active:
+                    logger.info(
+                        "【TG115】订阅存在有效在途磁力任务: btih_prefix=%s state=%s decision=hold",
+                        str(active.get("btih") or "")[:12],
+                        active.get("status"),
+                    )
+                    handled = True
+                    return
             evaluation = self._evaluate_subscription_candidates(subscribe)
             source_report = evaluation["source_report"]
             meta, mediainfo = evaluation.get("meta"), evaluation.get("mediainfo")
             candidates = evaluation.get("confirmed") or []
+            attempted = set()
+            if self._cms_tasks:
+                attempted = self._cms_tasks.attempted_by_subscription(subscribe_id)
+            queue_key = str(subscribe_id)
+            magnet_candidates = [
+                candidate for candidate in candidates
+                if is_magnet_url(getattr(candidate, "page_url", "") or "")
+            ]
+            queue_snapshot = self._magnet_queues.get(queue_key) if isinstance(self._magnet_queues, dict) else None
+            if not isinstance(queue_snapshot, dict):
+                ordered_btih = [
+                    btih_from_magnet(getattr(candidate, "page_url", "") or "")
+                    for candidate in magnet_candidates
+                ]
+                queue_snapshot = {
+                    "queue_id": queue_key,
+                    "subscribe_id": subscribe_id,
+                    "state": "ready",
+                    "owner": "tg115",
+                    "ordered_btih": ordered_btih,
+                    "current_index": len(attempted),
+                    "attempted_btih": sorted(attempted),
+                    "max_attempts": self._magnet_max_attempts,
+                    "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                    "expires_at": (datetime.now().astimezone() + timedelta(hours=self._magnet_queue_timeout_hours)).isoformat(timespec="seconds"),
+                }
+                self._magnet_queues[queue_key] = queue_snapshot
+                self._save_magnet_queues()
+            queue_expired = False
+            if queue_snapshot.get("expires_at"):
+                try:
+                    expires_at = datetime.fromisoformat(str(queue_snapshot["expires_at"]).replace("Z", "+00:00"))
+                    expires_at = expires_at if expires_at.tzinfo else expires_at.astimezone()
+                    queue_expired = datetime.now().astimezone() >= expires_at
+                except (TypeError, ValueError):
+                    queue_expired = False
+            if queue_expired:
+                queue_snapshot["state"] = "released" if self._magnet_fallback_enabled else "expired"
+                queue_snapshot["owner"] = "moviepilot" if self._magnet_fallback_enabled else "tg115"
+                self._save_magnet_queues()
+            ordered_btih = list(queue_snapshot.get("ordered_btih") or [])
+            magnet_by_btih = {
+                btih_from_magnet(getattr(candidate, "page_url", "") or ""): candidate
+                for candidate in magnet_candidates
+            }
+            ordered_magnets = [
+                magnet_by_btih[btih] for btih in ordered_btih
+                if btih in magnet_by_btih and btih not in attempted
+            ]
+            if len(attempted) >= self._magnet_max_attempts or queue_expired:
+                ordered_magnets = []
+            first_magnet = next(
+                (index for index, candidate in enumerate(candidates)
+                 if is_magnet_url(getattr(candidate, "page_url", "") or "")),
+                len(candidates),
+            )
+            leading = [candidate for candidate in candidates[:first_magnet] if not is_magnet_url(getattr(candidate, "page_url", "") or "")]
+            trailing = [candidate for candidate in candidates[first_magnet:] if not is_magnet_url(getattr(candidate, "page_url", "") or "")]
+            candidates = leading + ordered_magnets + trailing
             if not candidates:
                 reason = evaluation.get("reason") or "候选未通过 MoviePilot/TMDB 身份确认"
                 logger.info("【TG115】订阅 [%s] 只读候选评估未命中：%s", subscribe.name, reason)
@@ -1198,22 +1285,38 @@ class TgSearch115(_PluginBase):
                 confirm_identity=confirm,
                 submit_magnet=lambda candidate: self._submit_magnet_to_115(candidate, subscribe=subscribe),
                 transfer_share=transfer_share,
+                max_magnet_attempts=max(1, self._magnet_max_attempts - len(attempted)),
+                magnet_failover_enabled=self._magnet_failover_enabled and len(attempted) < self._magnet_max_attempts,
+                magnet_queue_timeout_hours=self._magnet_queue_timeout_hours,
             )
             for error in execution.errors:
                 logger.warning("【TG115】订阅 [%s] 候选处理失败，继续回退: %s", subscribe.name, error)
             best = execution.candidate
             if not best:
+                queue = self._magnet_queues.get(str(subscribe_id)) if isinstance(self._magnet_queues, dict) else None
+                if isinstance(queue, dict):
+                    queue["state"] = "released" if self._magnet_fallback_enabled else "exhausted"
+                    queue["owner"] = "moviepilot" if self._magnet_fallback_enabled else "tg115"
+                    self._save_magnet_queues()
                 self._send_fail_notify(
                     subscribe,
                     execution.errors[-1] if execution.errors else "候选未能安全提交",
                     source_report,
                 )
+                handled = not self._magnet_fallback_enabled
                 return
             handled = self._finish_subscribe(
                 subscribe, meta, mediainfo, best, execution.message,
                 via_offline_magnet=execution.via_magnet,
                 source_summary=source_report.text(),
             )
+            if execution.via_magnet and isinstance(self._magnet_queues, dict):
+                queue = self._magnet_queues.get(str(subscribe_id))
+                if isinstance(queue, dict):
+                    queue["state"] = "monitoring"
+                    queue["owner"] = "tg115"
+                    queue["current_index"] = len(attempted)
+                    self._save_magnet_queues()
             return
 
             source_report = SearchReport({
@@ -1344,6 +1447,9 @@ class TgSearch115(_PluginBase):
                     candidate, subscribe=subscribe
                 ),
                 transfer_share=transfer_share,
+                max_magnet_attempts=self._magnet_max_attempts,
+                magnet_failover_enabled=self._magnet_failover_enabled,
+                magnet_queue_timeout_hours=self._magnet_queue_timeout_hours,
             )
             for error in execution.errors:
                 logger.warn(f"【TG115】订阅 [{subscribe.name}] 候选处理失败，继续回退: {error}")
@@ -1523,6 +1629,12 @@ class TgSearch115(_PluginBase):
         except Exception as exc:
             logger.warn(f"【TG115】保存 CMS 任务账本失败: {exc}")
 
+    def _save_magnet_queues(self):
+        try:
+            self.save_data(MAGNET_QUEUES_KEY, self._magnet_queues)
+        except Exception as exc:
+            logger.warn(f"【TG115】保存磁力候选队列失败: {exc}")
+
     def _reconcile_cms_tasks(self, force_direct_poll: bool = False):
         if not self._reconcile_lock.acquire(blocking=False):
             return
@@ -1566,7 +1678,7 @@ class TgSearch115(_PluginBase):
         if self._offline_client and should_poll_direct:
             self._offline_last_poll = now_monotonic
             for record in self._cms_tasks.dump_records():
-                if record.get("source") != "115_direct" or record.get("status") not in {"submitted", "downloading", "pending_organize"}:
+                if record.get("source") != "115_direct" or record.get("status") not in {"submitted", "downloading", "pending_organize", "unknown"}:
                     continue
                 task_id = record.get("task_id") or record.get("btih")
                 try:
@@ -1579,14 +1691,42 @@ class TgSearch115(_PluginBase):
                             target_cid=state.get("target_cid") or record.get("target_cid", ""),
                             download_name=state.get("name", ""),
                         )
-                    elif status in {"downloading", "submitted", "failed", "cancelled"}:
+                    elif status in {"downloading", "submitted", "failed", "cancelled", "no_resource"}:
                         self._cms_tasks.update(record["btih"], status, progress=state.get("progress"), task_id=task_id, error_code=state.get("error_code", ""), error_message=state.get("message", ""))
-                        if status in {"failed", "cancelled"}:
+                        if status in {"submitted", "downloading"}:
+                            logger.info(
+                                "【TG115】磁力任务有效: position=%s/%s state=%s decision=hold",
+                                record.get("position", 0),
+                                record.get("candidate_total", 0),
+                                status,
+                            )
+                        else:
                             self._offline_client.forget_task(record.get("btih", ""))
-                            restore_subscription(int(record["subscribe_id"])) if record.get("subscribe_id") else None
+                            if record.get("subscribe_id"):
+                                restore_subscription(int(record["subscribe_id"]))
+                                logger.info(
+                                    "【TG115】磁力候选已%s: position=%s/%s btih_prefix=%s decision=switch_next",
+                                    "取消" if status == "cancelled" else ("无资源" if status == "no_resource" else "失败"),
+                                    record.get("position", 0),
+                                    record.get("candidate_total", 0),
+                                    str(record.get("btih") or "")[:12],
+                                )
+                                if self._coordinator and (status != "cancelled" or self._magnet_cancel_failover):
+                                    self._coordinator.enqueue_subscription(int(record["subscribe_id"]), priority=0)
                 except Exception as exc:
                     logger.warning("【TG115】115 任务状态查询失败 btih=%s... reason=%s", str(record.get("btih", ""))[:12], type(exc).__name__)
             self._save_cms_tasks()
+            for record in direct_records:
+                subscribe_id = record.get("subscribe_id")
+                queue = self._magnet_queues.get(str(subscribe_id)) if subscribe_id else None
+                if not isinstance(queue, dict):
+                    continue
+                attempted = self._cms_tasks.attempted_by_subscription(subscribe_id)
+                queue["attempted_btih"] = sorted(attempted)
+                queue["current_index"] = len(attempted)
+                queue["state"] = "monitoring" if record.get("status") in {"waiting", "submitted", "downloading", "pending_organize", "unknown"} else "switch_pending"
+                queue["owner"] = "tg115"
+            self._save_magnet_queues()
         if result["completed"] or result["failed"] or result["timed_out"]:
             self._save_cms_tasks()
             logger.info(
@@ -1838,6 +1978,16 @@ class TgSearch115(_PluginBase):
                 if same_subscription:
                     return True, "相同 BTIH 的 CMS 任务已存在，已跳过重复提交"
                 return False, "相同 BTIH 已由其它任务处理，本订阅继续尝试后续候选"
+            record["position"] = int(getattr(torrent, "_tg115_candidate_position", 0) or 0)
+            record["candidate_total"] = int(getattr(torrent, "_tg115_candidate_total", 0) or 0)
+            self._save_cms_tasks()
+            logger.info(
+                "【TG115】磁力候选选择: position=%s/%s source=%s btih_prefix=%s",
+                record["position"],
+                record["candidate_total"],
+                str(getattr(torrent, "_tg115_source", "") or ""),
+                str(record.get("btih") or "")[:12],
+            )
         direct_result: Dict[str, Any] = {}
         direct_target_cid = ""
         def submit_direct():
@@ -1851,12 +2001,16 @@ class TgSearch115(_PluginBase):
             direct_result = self._offline_client.submit_magnet(magnet, direct_target_cid)
             return bool(direct_result.get("success")), str(direct_result.get("message") or "115 直连提交失败")
         def submit_cms():
+            if str(direct_result.get("status") or "") == "unknown":
+                return False, "115 提交结果未知，正在按 BTIH 对账"
             return self._cms_client.add_magnet(magnet) if self._cms_client else (False, "CMS 未配置")
         ok, message, source = submit_magnet_with_fallback(self._magnet_download_mode, submit_direct, submit_cms)
+        direct_status = str(direct_result.get("status") or "")
+        unknown = direct_status == "unknown"
         if self._cms_tasks and record:
             self._cms_tasks.update(
-                record["btih"], "submitted" if ok else "failed",
-                "" if ok else message, source=source,
+                record["btih"], "unknown" if unknown else ("submitted" if ok else "failed"),
+                "" if ok else message, source="115_direct" if unknown else source,
                 task_id=(direct_result.get("task_id") or btih) if source == "115_direct" else "",
                 target_cid=direct_target_cid if source == "115_direct" else "",
                 error_code=direct_result.get("error_code", "") if not ok else "",
@@ -1864,6 +2018,14 @@ class TgSearch115(_PluginBase):
             self._save_cms_tasks()
         if ok:
             return True, ("115 直接磁力任务已提交，等待下载与 MP 整理" if source == "115_direct" else "CMS 磁力任务已创建，等待下载与 MP 整理")
+        if unknown:
+            logger.warning(
+                "【TG115】磁力结果未知: position=%s/%s btih_prefix=%s decision=reconcile next_candidate_submitted=false",
+                record.get("position", 0) if record else 0,
+                record.get("candidate_total", 0) if record else 0,
+                str(btih or "")[:12],
+            )
+            return True, "115 提交结果未知，正在按 BTIH 对账；不会提交下一个磁力"
         return False, message
 
     def _resolve_offline_target_cid(self) -> str:
@@ -3369,6 +3531,13 @@ class TgSearch115(_PluginBase):
             "offline_poll_seconds": 45,
             "offline_max_retries": 3,
             "offline_allow_cancel": False,
+            "magnet_failover_enabled": True,
+            "magnet_max_attempts": 5,
+            "magnet_attempt_timeout_minutes": 30,
+            "magnet_queue_timeout_hours": 12,
+            "magnet_cancel_failover": True,
+            "magnet_no_progress_timeout_minutes": 20,
+            "magnet_fallback_enabled": True,
             "wait_for_mp_organize": True,
             "site_enabled": False,
             "site_app_auth": "",

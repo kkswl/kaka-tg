@@ -109,6 +109,7 @@ class P115OfflineTest(unittest.TestCase):
 
         self.assertFalse(result["success"])
         self.assertEqual("invalid_json", result["error_code"])
+        self.assertEqual("unknown", result["status"])
 
     def test_retry_after_and_exponential_backoff(self):
         waits, attempts = [], [0]
@@ -128,6 +129,17 @@ class P115OfflineTest(unittest.TestCase):
     def test_status_mapping_and_no_completion_on_running(self):
         self.assertEqual("downloading", module.P115OfflineClient.normalize_status({"code": "0", "status": "1"})["status"])
         self.assertEqual("completed", module.P115OfflineClient.normalize_status({"status": 2, "percent": "100"})["status"])
+
+    def test_get_task_status_returns_no_resource_when_reconciliation_is_empty(self):
+        client = module.P115OfflineClient(
+            "UID=x", request=lambda *args, **kwargs: Response(payload={"state": True, "tasks": []})
+        )
+
+        result = client.get_task_status("a" * 40)
+
+        self.assertFalse(result["success"])
+        self.assertEqual("no_resource", result["status"])
+        self.assertEqual("no_resource", result["error_code"])
 
     def test_completed_bucket_overrides_stale_running_status_and_keeps_path_hint(self):
         calls = []

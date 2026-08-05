@@ -4,6 +4,28 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, List, Optional, Tuple
 
+try:
+    from .magnet_failover import (
+        FALLBACK_TO_MOVIEPILOT,
+        SUBMIT_NEXT,
+        advance_magnet_candidate,
+        build_magnet_queue,
+    )
+except ImportError:
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    _failover_path = Path(__file__).with_name("magnet_failover.py")
+    _failover_spec = importlib.util.spec_from_file_location("tg115_magnet_failover", _failover_path)
+    _failover_module = importlib.util.module_from_spec(_failover_spec)
+    sys.modules[_failover_spec.name] = _failover_module
+    _failover_spec.loader.exec_module(_failover_module)
+    FALLBACK_TO_MOVIEPILOT = _failover_module.FALLBACK_TO_MOVIEPILOT
+    SUBMIT_NEXT = _failover_module.SUBMIT_NEXT
+    advance_magnet_candidate = _failover_module.advance_magnet_candidate
+    build_magnet_queue = _failover_module.build_magnet_queue
+
 
 _BTIH_RE = re.compile(r"(?:^|[?&])xt=urn:btih:([a-z0-9]+)", re.IGNORECASE)
 _CHINESE_SUBTITLE_RE = re.compile(
@@ -165,40 +187,92 @@ def execute_auto_candidates(
     submit_magnet: Callable[[Any], Tuple[bool, str]],
     transfer_share: Callable[[Any], Tuple[bool, str]],
     max_recognition_attempts: int = 3,
+    max_magnet_attempts: int = 5,
+    magnet_failover_enabled: bool = True,
+    magnet_queue_timeout_hours: int = 12,
 ) -> CandidateExecutionResult:
     """Try magnets then shares while preserving the safe CMS failure fallback."""
     result = CandidateExecutionResult()
-    cms_submit_failed = False
-    for candidate in candidates or []:
-        candidate_url = str(getattr(candidate, "page_url", "") or "")
-        candidate_is_magnet = is_magnet_url(candidate_url)
-        if candidate_is_magnet and cms_submit_failed:
-            continue
+    candidate_list = list(candidates or [])
+    first_magnet = next(
+        (index for index, item in enumerate(candidate_list)
+         if is_magnet_url(getattr(item, "page_url", "") or "")),
+        len(candidate_list),
+    )
+    magnet_candidates = [item for item in candidate_list if is_magnet_url(getattr(item, "page_url", "") or "")]
+    magnet_by_btih = {_magnet_key(getattr(item, "page_url", "") or ""): item for item in magnet_candidates}
+    non_magnet_candidates = [item for item in candidate_list[:first_magnet] if not is_magnet_url(getattr(item, "page_url", "") or "")]
+    trailing_non_magnets = [item for item in candidate_list[first_magnet:] if not is_magnet_url(getattr(item, "page_url", "") or "")]
+
+    for candidate in non_magnet_candidates:
         identity = confirm_identity(candidate)
         if bool(getattr(identity, "recognition_attempted", False)):
             result.recognition_attempts += 1
         if not bool(getattr(identity, "confirmed", False)):
             result.rejection_reasons.append(_identity_rejection_category(identity))
             if result.recognition_attempts >= max_recognition_attempts:
-                break
+                return result
             continue
-        if candidate_is_magnet:
-            ok, message = submit_magnet(candidate)
-            action = "CMS 115 磁力离线任务提交"
-        else:
-            ok, message = transfer_share(candidate)
-            action = "115 转存"
+        ok, message = transfer_share(candidate)
         if ok:
             result.candidate = candidate
             result.message = message
-            result.via_magnet = candidate_is_magnet
             return result
-        result.errors.append(f"{action}失败: {message}")
-        if candidate_is_magnet:
-            cms_submit_failed = True
-        if result.recognition_attempts >= max_recognition_attempts:
-            break
-    return result
+        result.errors.append(f"115 转存失败: {message}")
+
+    if not magnet_candidates:
+        return result
+    queue = build_magnet_queue(
+        media_key="execution",
+        queue_key="execution",
+        candidates=magnet_candidates,
+        max_attempts=min(max_magnet_attempts if magnet_failover_enabled else 1, len(magnet_candidates)),
+        timeout_hours=magnet_queue_timeout_hours,
+    )
+    status = "failed"
+    while True:
+        action = advance_magnet_candidate(queue, status)
+        if action == FALLBACK_TO_MOVIEPILOT:
+            for candidate in trailing_non_magnets:
+                identity = confirm_identity(candidate)
+                if bool(getattr(identity, "recognition_attempted", False)):
+                    result.recognition_attempts += 1
+                if not bool(getattr(identity, "confirmed", False)):
+                    result.rejection_reasons.append(_identity_rejection_category(identity))
+                    continue
+                ok, message = transfer_share(candidate)
+                if ok:
+                    result.candidate = candidate
+                    result.message = message
+                    return result
+                result.errors.append(f"115 转存失败: {message}")
+            result.errors.append("磁力候选已耗尽，交由 MoviePilot 原生搜索")
+            return result
+        if action != SUBMIT_NEXT:
+            return result
+        queue_candidate = queue.current
+        candidate = magnet_by_btih.get(queue_candidate.get("btih")) if queue_candidate else None
+        if candidate is None:
+            return result
+        setattr(candidate, "_tg115_candidate_position", int(queue_candidate.get("position") or 0))
+        setattr(candidate, "_tg115_candidate_total", min(queue.max_attempts, len(queue.candidates)))
+        identity = confirm_identity(candidate)
+        if bool(getattr(identity, "recognition_attempted", False)):
+            result.recognition_attempts += 1
+        if not bool(getattr(identity, "confirmed", False)):
+            result.rejection_reasons.append(_identity_rejection_category(identity))
+            status = "failed"
+            if result.recognition_attempts >= max_recognition_attempts:
+                return result
+            continue
+        ok, message = submit_magnet(candidate)
+        if ok:
+            result.candidate = candidate
+            result.message = message
+            result.via_magnet = True
+            return result
+        result.errors.append(f"CMS 115 磁力离线任务提交失败: {message}")
+        status = "failed"
 
 
 def submit_magnet_with_fallback(
