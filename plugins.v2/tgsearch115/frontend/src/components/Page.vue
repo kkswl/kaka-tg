@@ -22,6 +22,10 @@
           {{ statusText }}
         </span>
         <v-spacer />
+        <v-btn icon variant="text" size="small" aria-label="关闭" @click.stop="closePage">
+          <v-icon icon="mdi-close" />
+          <v-tooltip activator="parent" location="top">关闭</v-tooltip>
+        </v-btn>
         <v-icon :icon="statusExpanded ? 'mdi-chevron-up' : 'mdi-chevron-down'" />
       </v-card-title>
       <v-expand-transition>
@@ -291,7 +295,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, getCurrentInstance, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { filterSearchResults, QUALITY_FILTERS, RESOURCE_FILTERS } from '../searchFilters.js'
 import ManualSearch from './ManualSearch.vue'
 
@@ -299,6 +303,24 @@ const props = defineProps({
   pluginId: { type: String, default: 'TgSearch115' },
   api: { type: Object, default: null },
 })
+const emit = defineEmits(['close', 'back'])
+const instance = getCurrentInstance()
+
+function closePage() {
+  try {
+    if (instance?.vnode?.props?.onClose) {
+      emit('close')
+      return
+    }
+    if (instance?.vnode?.props?.onBack) {
+      emit('back')
+      return
+    }
+  } catch {}
+  try {
+    window.history.back()
+  } catch {}
+}
 
 const PID = computed(() => props.pluginId || 'TgSearch115')
 

@@ -238,7 +238,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.41"
+    plugin_version = "4.7.42"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -297,6 +297,7 @@ class TgSearch115(_PluginBase):
     _magnet_queue_timeout_hours = 12
     _magnet_cancel_failover = True
     _magnet_no_progress_timeout_minutes = 20
+    _magnet_rotation_unknown_timeout_minutes = 20
     _magnet_fallback_enabled = True
     _offline_stop: Optional[threading.Event] = None
     _offline_thread: Optional[threading.Thread] = None
@@ -377,6 +378,7 @@ class TgSearch115(_PluginBase):
         self._magnet_queue_timeout_hours = min(48, max(1, self._safe_int(config.get("magnet_queue_timeout_hours"), 12)))
         self._magnet_cancel_failover = self._to_bool(config.get("magnet_cancel_failover"), True)
         self._magnet_no_progress_timeout_minutes = min(180, max(10, self._safe_int(config.get("magnet_no_progress_timeout_minutes"), 20)))
+        self._magnet_rotation_unknown_timeout_minutes = min(1440, max(1, self._safe_int(config.get("magnet_rotation_unknown_timeout_minutes"), 20)))
         self._magnet_fallback_enabled = self._to_bool(config.get("magnet_fallback_enabled"), True)
         self._search_cache = TtlCache(ttl_seconds=cache_hours * 3600)
         self._notification_cache = TtlCache(ttl_seconds=600, max_entries=256)
@@ -882,6 +884,49 @@ class TgSearch115(_PluginBase):
             return
         self._restore_claim(int(subscribe_id))
         logger.warn(f"【TG115】订阅 {subscribe_id} 未能进入搜索队列，将由周期任务重试")
+
+    @eventmanager.register(EventType.TransferComplete)
+    def on_transfer_complete(self, event: Event):
+        if not self._enabled or not self._cms_tasks:
+            return
+        data = getattr(event, "event_data", None) or {}
+        mediainfo = data.get("mediainfo") or {}
+        meta = data.get("meta") or {}
+
+        def value(source, name):
+            return source.get(name) if isinstance(source, dict) else getattr(source, name, None)
+
+        tmdb_id = value(mediainfo, "tmdb_id")
+        douban_id = value(mediainfo, "douban_id")
+        media_type = value(mediainfo, "type") or value(meta, "type")
+        season = value(mediainfo, "season")
+        if season is None:
+            season = value(meta, "begin_season")
+        if not tmdb_id and not douban_id:
+            logger.warning(
+                "【MP整理】状态=事件无法匹配 动作=等待历史补偿 缺少字段=tmdb_id,douban_id"
+            )
+            return
+        record = self._cms_tasks.match_transfer_complete(
+            tmdb_id=tmdb_id,
+            douban_id=douban_id,
+            media_type=media_type,
+            season=season,
+        )
+        if not record:
+            logger.info(
+                "【MP整理】媒体=%s 年份=%s 季=%s 状态=未唯一匹配 动作=等待历史补偿",
+                value(mediainfo, "title") or value(meta, "name") or "未知",
+                value(mediainfo, "year") or value(meta, "year") or "未知",
+                season if season is not None else "无",
+            )
+            return
+        if not self._reconcile_lock.acquire(blocking=False):
+            return
+        try:
+            self._complete_task_record(record, "MoviePilot 整理事件")
+        finally:
+            self._reconcile_lock.release()
 
     # ============================ 核心流程 ============================
     def _new_source_report(self) -> SearchReport:
@@ -1619,6 +1664,70 @@ class TgSearch115(_PluginBase):
         except Exception as exc:
             logger.warn(f"【TG115】保存磁力候选队列失败: {exc}")
 
+    def _complete_task_record(self, record: Dict[str, Any], confirmation_source: str) -> bool:
+        current = self._cms_tasks.latest(record.get("btih")) if self._cms_tasks else None
+        if not current or current.get("status") in {"failed", "timed_out"}:
+            return False
+        if current.get("status") == "completed" and current.get("completion_notified"):
+            return False
+        completed = self._cms_tasks.update(
+            current["btih"],
+            "completed",
+            completion_notified=False,
+            progress=100,
+        )
+        if not completed:
+            return False
+        sid = completed.get("subscribe_id")
+        queue = self._magnet_queues.get(str(sid)) if sid else None
+        if isinstance(queue, dict):
+            queue["state"] = "completed"
+            queue["owner"] = "none"
+            queue["completed_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
+            self._save_magnet_queues()
+        self._save_cms_tasks()
+        subscribe = SubscribeOper().get(int(sid)) if sid else None
+        notification_resolved = not self._notify_success or not subscribe
+        if not subscribe and self._notify_success:
+            logger.warning(
+                "【任务完成】任务=%s 最终状态=completed 通知状态=跳过 原因=订阅记录不存在",
+                completed.get("title") or "未命名资源",
+            )
+        if subscribe and self._notify_success:
+            try:
+                self._post_search_notification_once(
+                    subscribe=subscribe,
+                    outcome="completed",
+                    mtype=NotificationType.Subscribe,
+                    title=subscription_notification_title(subscribe),
+                    text=(
+                        "结果：资源已完成 MoviePilot 整理。\n"
+                        f"资源：{completed.get('title') or getattr(subscribe, 'name', '未命名资源')}\n"
+                        "下载状态：已完成\n"
+                        "整理状态：已完成\n"
+                        "任务状态：已完成\n"
+                        "处理方式：插件内置 115 离线下载\n"
+                        f"确认来源：{confirmation_source}"
+                    ),
+                )
+                notification_resolved = True
+            except Exception as exc:
+                logger.warning(
+                    "【任务完成】任务=%s 最终状态=completed 通知状态=失败 动作=保留待重试 reason=%s",
+                    completed.get("title") or "未命名资源",
+                    type(exc).__name__,
+                )
+        if notification_resolved:
+            self._cms_tasks.update(completed["btih"], "completed", completion_notified=True)
+            self._save_cms_tasks()
+        logger.info(
+            "【任务完成】任务=%s btih_prefix=%s 下载状态=已完成 MP整理状态=已完成 最终状态=completed 确认来源=%s 动作=停止轮询",
+            completed.get("title") or "未命名资源",
+            str(completed.get("btih") or "")[:12],
+            confirmation_source,
+        )
+        return True
+
     def _reconcile_cms_tasks(self, force_direct_poll: bool = False):
         if not self._reconcile_lock.acquire(blocking=False):
             return
@@ -1648,21 +1757,23 @@ class TgSearch115(_PluginBase):
                 oper.update(sid, {"state": "N"})
                 logger.warn(f"【TG115】CMS 任务超时，订阅 {sid} 已恢复为 state=N")
 
+        now_monotonic = time.monotonic()
+        should_poll_direct = force_direct_poll or now_monotonic - self._offline_last_poll >= self._offline_poll_seconds
         result = self._cms_tasks.reconcile(
             timeout_hours=self._cms_timeout_hours,
             subscription_exists=subscription_exists,
             history_exists=history_exists,
             restore_subscription=restore_subscription,
             direct_timeout_hours=self._direct_timeout_hours,
+            unknown_timeout_minutes=(
+                None if self._offline_client and should_poll_direct
+                else self._magnet_rotation_unknown_timeout_minutes
+            ),
         )
-        # Direct 115 exposes task state; a successful download only enters the
-        # pending-organize phase.  MP history remains the completion authority.
-        now_monotonic = time.monotonic()
-        should_poll_direct = force_direct_poll or now_monotonic - self._offline_last_poll >= self._offline_poll_seconds
         if self._offline_client and should_poll_direct:
             self._offline_last_poll = now_monotonic
             for record in self._cms_tasks.dump_records():
-                if record.get("source") != "115_direct" or record.get("status") not in {"submitted", "downloading", "pending_organize", "unknown"}:
+                if record.get("source") != "115_direct" or record.get("status") not in {"submitted", "downloading", "unknown"}:
                     continue
                 task_id = record.get("task_id") or record.get("btih")
                 try:
@@ -1699,6 +1810,16 @@ class TgSearch115(_PluginBase):
                                     self._coordinator.enqueue_subscription(int(record["subscribe_id"]), priority=0)
                 except Exception as exc:
                     logger.warning("【TG115】115 任务状态查询失败 btih=%s... reason=%s", str(record.get("btih", ""))[:12], type(exc).__name__)
+            unknown_result = self._cms_tasks.reconcile(
+                timeout_hours=self._cms_timeout_hours,
+                subscription_exists=subscription_exists,
+                history_exists=history_exists,
+                restore_subscription=restore_subscription,
+                direct_timeout_hours=self._direct_timeout_hours,
+                unknown_timeout_minutes=self._magnet_rotation_unknown_timeout_minutes,
+            )
+            for key in result:
+                result[key] += unknown_result[key]
             self._save_cms_tasks()
             for record in self._cms_tasks.dump_records():
                 subscribe_id = record.get("subscribe_id")
@@ -1708,14 +1829,24 @@ class TgSearch115(_PluginBase):
                 attempted = self._cms_tasks.attempted_by_subscription(subscribe_id)
                 queue["attempted_btih"] = sorted(attempted)
                 queue["current_index"] = len(attempted)
-                queue["state"] = "monitoring" if record.get("status") in {"waiting", "submitted", "downloading", "pending_organize", "unknown"} else "switch_pending"
-                queue["owner"] = "tg115"
+                if record.get("status") == "completed":
+                    queue["state"] = "completed"
+                    queue["owner"] = "none"
+                elif record.get("status") in {"waiting", "submitted", "downloading", "pending_organize", "unknown"}:
+                    queue["state"] = "monitoring"
+                    queue["owner"] = "tg115"
+                else:
+                    queue["state"] = "switch_pending"
+                    queue["owner"] = "tg115"
             self._save_magnet_queues()
+        for record in self._cms_tasks.dump_records():
+            if record.get("status") == "completed" and not record.get("completion_notified"):
+                self._complete_task_record(record, "MoviePilot 整理历史")
         if result["completed"] or result["failed"] or result["timed_out"]:
             self._save_cms_tasks()
             logger.info(
-                f"【TG115】CMS 任务对账：完成 {result['completed']}，"
-                f"异常 {result['failed']}，超时 {result['timed_out']}"
+                "【TG115】任务对账：完成=%s 异常=%s 超时=%s，已完成任务停止轮询",
+                result["completed"], result["failed"], result["timed_out"],
             )
 
     def _recognize(self, subscribe, meta) -> Optional[MediaInfo]:
@@ -3572,6 +3703,7 @@ class TgSearch115(_PluginBase):
             "magnet_queue_timeout_hours": 12,
             "magnet_cancel_failover": True,
             "magnet_no_progress_timeout_minutes": 20,
+            "magnet_rotation_unknown_timeout_minutes": 20,
             "magnet_fallback_enabled": True,
             "wait_for_mp_organize": True,
             "site_enabled": False,

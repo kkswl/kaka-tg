@@ -1,7 +1,7 @@
 import { importShared } from './__federation_fn_import-JrT3xvdd.js';
 import { _ as _export_sfc, f as filterSearchResults, M as ManualSearch } from './ManualSearch-CEXhTjGJ.js';
 
-const {resolveComponent:_resolveComponent,createVNode:_createVNode,toDisplayString:_toDisplayString,createElementVNode:_createElementVNode,createTextVNode:_createTextVNode,withKeys:_withKeys,withCtx:_withCtx,normalizeClass:_normalizeClass,openBlock:_openBlock,createElementBlock:_createElementBlock,createCommentVNode:_createCommentVNode,renderList:_renderList,Fragment:_Fragment,createBlock:_createBlock,vShow:_vShow,withDirectives:_withDirectives,withModifiers:_withModifiers,unref:_unref} = await importShared('vue');
+const {resolveComponent:_resolveComponent,createVNode:_createVNode,toDisplayString:_toDisplayString,createElementVNode:_createElementVNode,createTextVNode:_createTextVNode,withCtx:_withCtx,withModifiers:_withModifiers,withKeys:_withKeys,normalizeClass:_normalizeClass,openBlock:_openBlock,createElementBlock:_createElementBlock,createCommentVNode:_createCommentVNode,renderList:_renderList,Fragment:_Fragment,createBlock:_createBlock,vShow:_vShow,withDirectives:_withDirectives,unref:_unref} = await importShared('vue');
 
 
 const _hoisted_1 = { class: "tg115-page" };
@@ -43,7 +43,7 @@ const _hoisted_23 = {
   class: "text-warning"
 };
 
-const {computed,onMounted,onUnmounted,reactive,ref} = await importShared('vue');
+const {computed,getCurrentInstance,onMounted,onUnmounted,reactive,ref} = await importShared('vue');
 
 const CACHE_KEY = 'tg115_search_cache';
 
@@ -53,9 +53,28 @@ const _sfc_main = {
   pluginId: { type: String, default: 'TgSearch115' },
   api: { type: Object, default: null },
 },
-  setup(__props) {
+  emits: ['close', 'back'],
+  setup(__props, { emit: __emit }) {
 
 const props = __props;
+const emit = __emit;
+const instance = getCurrentInstance();
+
+function closePage() {
+  try {
+    if (instance?.vnode?.props?.onClose) {
+      emit('close');
+      return
+    }
+    if (instance?.vnode?.props?.onBack) {
+      emit('back');
+      return
+    }
+  } catch {}
+  try {
+    window.history.back();
+  } catch {}
+}
 
 const PID = computed(() => props.pluginId || 'TgSearch115');
 
@@ -240,6 +259,8 @@ onUnmounted(() => {
 return (_ctx, _cache) => {
   const _component_v_icon = _resolveComponent("v-icon");
   const _component_v_spacer = _resolveComponent("v-spacer");
+  const _component_v_tooltip = _resolveComponent("v-tooltip");
+  const _component_v_btn = _resolveComponent("v-btn");
   const _component_v_card_title = _resolveComponent("v-card-title");
   const _component_v_divider = _resolveComponent("v-divider");
   const _component_v_col = _resolveComponent("v-col");
@@ -248,8 +269,6 @@ return (_ctx, _cache) => {
   const _component_v_card_text = _resolveComponent("v-card-text");
   const _component_v_expand_transition = _resolveComponent("v-expand-transition");
   const _component_v_card = _resolveComponent("v-card");
-  const _component_v_tooltip = _resolveComponent("v-tooltip");
-  const _component_v_btn = _resolveComponent("v-btn");
   const _component_v_table = _resolveComponent("v-table");
   const _component_v_card_actions = _resolveComponent("v-card-actions");
   const _component_v_dialog = _resolveComponent("v-dialog");
@@ -280,9 +299,30 @@ return (_ctx, _cache) => {
               color: "primary",
               class: "mr-2"
             }),
-            _cache[10] || (_cache[10] = _createTextVNode(" 运行状态 ", -1)),
+            _cache[11] || (_cache[11] = _createTextVNode(" 运行状态 ", -1)),
             _createElementVNode("span", _hoisted_2, _toDisplayString(statusText.value), 1),
             _createVNode(_component_v_spacer),
+            _createVNode(_component_v_btn, {
+              icon: "",
+              variant: "text",
+              size: "small",
+              "aria-label": "关闭",
+              onClick: _withModifiers(closePage, ["stop"])
+            }, {
+              default: _withCtx(() => [
+                _createVNode(_component_v_icon, { icon: "mdi-close" }),
+                _createVNode(_component_v_tooltip, {
+                  activator: "parent",
+                  location: "top"
+                }, {
+                  default: _withCtx(() => [...(_cache[10] || (_cache[10] = [
+                    _createTextVNode("关闭", -1)
+                  ]))]),
+                  _: 1
+                })
+              ]),
+              _: 1
+            }),
             _createVNode(_component_v_icon, {
               icon: statusExpanded.value ? 'mdi-chevron-up' : 'mdi-chevron-down'
             }, null, 8, ["icon"])
@@ -302,7 +342,7 @@ return (_ctx, _cache) => {
                         md: "4"
                       }, {
                         default: _withCtx(() => [
-                          _cache[11] || (_cache[11] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "TG 频道数", -1)),
+                          _cache[12] || (_cache[12] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "TG 频道数", -1)),
                           _createElementVNode("div", _hoisted_3, _toDisplayString(channelCount.value), 1)
                         ]),
                         _: 1
@@ -312,7 +352,7 @@ return (_ctx, _cache) => {
                         md: "4"
                       }, {
                         default: _withCtx(() => [
-                          _cache[12] || (_cache[12] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "115 登录", -1)),
+                          _cache[13] || (_cache[13] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "115 登录", -1)),
                           _createElementVNode("div", {
                             class: _normalizeClass(["text-h6", loginOk.value ? 'text-success' : 'text-medium-emphasis'])
                           }, _toDisplayString(loginOk.value ? '已登录' : '未登录'), 3)
@@ -323,7 +363,7 @@ return (_ctx, _cache) => {
                         cols: "12",
                         md: "4"
                       }, {
-                        default: _withCtx(() => [...(_cache[13] || (_cache[13] = [
+                        default: _withCtx(() => [...(_cache[14] || (_cache[14] = [
                           _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "订阅处理", -1),
                           _createElementVNode("div", { class: "text-h6" }, "插件来源优先", -1)
                         ]))]),
@@ -334,7 +374,7 @@ return (_ctx, _cache) => {
                         md: "4"
                       }, {
                         default: _withCtx(() => [
-                          _cache[14] || (_cache[14] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "上次周期扫描", -1)),
+                          _cache[15] || (_cache[15] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "上次周期扫描", -1)),
                           _createElementVNode("div", _hoisted_4, _toDisplayString(formatTime(runtime.scheduler.last_run)), 1)
                         ]),
                         _: 1
@@ -344,7 +384,7 @@ return (_ctx, _cache) => {
                         md: "4"
                       }, {
                         default: _withCtx(() => [
-                          _cache[15] || (_cache[15] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "下次周期扫描", -1)),
+                          _cache[16] || (_cache[16] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "下次周期扫描", -1)),
                           _createElementVNode("div", _hoisted_5, _toDisplayString(formatTime(runtime.scheduler.next_run)), 1)
                         ]),
                         _: 1
@@ -354,7 +394,7 @@ return (_ctx, _cache) => {
                         md: "4"
                       }, {
                         default: _withCtx(() => [
-                          _cache[16] || (_cache[16] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "队列 / 本轮订阅", -1)),
+                          _cache[17] || (_cache[17] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "队列 / 本轮订阅", -1)),
                           _createElementVNode("div", _hoisted_6, _toDisplayString(runtime.scheduler.queue_size || 0) + " / " + _toDisplayString(runtime.scheduler.scanned_count || 0), 1)
                         ]),
                         _: 1
@@ -364,7 +404,7 @@ return (_ctx, _cache) => {
                         md: "4"
                       }, {
                         default: _withCtx(() => [
-                          _cache[17] || (_cache[17] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "TMDB 识别队列", -1)),
+                          _cache[18] || (_cache[18] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "TMDB 识别队列", -1)),
                           _createElementVNode("div", _hoisted_7, "等待 " + _toDisplayString(runtime.recognition.waiting || 0) + " / 活动 " + _toDisplayString(runtime.recognition.active || 0), 1)
                         ]),
                         _: 1
@@ -374,7 +414,7 @@ return (_ctx, _cache) => {
                         md: "4"
                       }, {
                         default: _withCtx(() => [
-                          _cache[18] || (_cache[18] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "TMDB 最大并发", -1)),
+                          _cache[19] || (_cache[19] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "TMDB 最大并发", -1)),
                           _createElementVNode("div", _hoisted_8, _toDisplayString(runtime.recognition.max_active || 0) + " / 1", 1)
                         ]),
                         _: 1
@@ -384,7 +424,7 @@ return (_ctx, _cache) => {
                         md: "4"
                       }, {
                         default: _withCtx(() => [
-                          _cache[19] || (_cache[19] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "识别恢复", -1)),
+                          _cache[20] || (_cache[20] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "识别恢复", -1)),
                           _createElementVNode("div", _hoisted_9, "重试 " + _toDisplayString(runtime.recognition.retries || 0) + " / 暂不可用 " + _toDisplayString(runtime.recognition.identity_unavailable || 0), 1)
                         ]),
                         _: 1
@@ -394,7 +434,7 @@ return (_ctx, _cache) => {
                         md: "4"
                       }, {
                         default: _withCtx(() => [
-                          _cache[20] || (_cache[20] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "PanSou", -1)),
+                          _cache[21] || (_cache[21] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "PanSou", -1)),
                           _createElementVNode("div", _hoisted_10, _toDisplayString(runtime.pansou.enabled ? '已启用' : '未启用') + " · 最近 " + _toDisplayString(runtime.pansou.result_count || 0) + " 条", 1)
                         ]),
                         _: 1
@@ -404,7 +444,7 @@ return (_ctx, _cache) => {
                         md: "4"
                       }, {
                         default: _withCtx(() => [
-                          _cache[21] || (_cache[21] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "PanSou 处理", -1)),
+                          _cache[22] || (_cache[22] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "PanSou 处理", -1)),
                           _createElementVNode("div", _hoisted_11, "去重 " + _toDisplayString(runtime.pansou.deduplicated || 0) + " / 规则 " + _toDisplayString(runtime.pansou.rule_passed || 0) + " / 安全 " + _toDisplayString(runtime.pansou.safe_candidates || 0), 1)
                         ]),
                         _: 1
@@ -414,7 +454,7 @@ return (_ctx, _cache) => {
                         md: "4"
                       }, {
                         default: _withCtx(() => [
-                          _cache[22] || (_cache[22] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "PanSou 最近状态", -1)),
+                          _cache[23] || (_cache[23] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "PanSou 最近状态", -1)),
                           _createElementVNode("div", _hoisted_12, _toDisplayString(formatTime(runtime.pansou.last_success)) + " · 缓存 " + _toDisplayString(runtime.pansou.cache_hits || 0), 1),
                           (runtime.pansou.last_error)
                             ? (_openBlock(), _createElementBlock("div", _hoisted_13, _toDisplayString(runtime.pansou.last_error), 1))
@@ -472,7 +512,7 @@ return (_ctx, _cache) => {
                   color: "primary",
                   class: "mr-2"
                 }),
-                _cache[26] || (_cache[26] = _createTextVNode(" 磁力下载任务 ", -1)),
+                _cache[27] || (_cache[27] = _createTextVNode(" 磁力下载任务 ", -1)),
                 _createVNode(_component_v_chip, {
                   size: "x-small",
                   variant: "tonal",
@@ -494,12 +534,12 @@ return (_ctx, _cache) => {
                   onClick: _withModifiers(openClearTasksDialog, ["stop"])
                 }, {
                   default: _withCtx(() => [
-                    _cache[24] || (_cache[24] = _createTextVNode("清除记录 ", -1)),
+                    _cache[25] || (_cache[25] = _createTextVNode("清除记录 ", -1)),
                     _createVNode(_component_v_tooltip, {
                       activator: "parent",
                       location: "top"
                     }, {
-                      default: _withCtx(() => [...(_cache[23] || (_cache[23] = [
+                      default: _withCtx(() => [...(_cache[24] || (_cache[24] = [
                         _createTextVNode("清除已结束的本地任务记录", -1)
                       ]))]),
                       _: 1
@@ -520,7 +560,7 @@ return (_ctx, _cache) => {
                       activator: "parent",
                       location: "top"
                     }, {
-                      default: _withCtx(() => [...(_cache[25] || (_cache[25] = [
+                      default: _withCtx(() => [...(_cache[26] || (_cache[26] = [
                         _createTextVNode("刷新任务状态", -1)
                       ]))]),
                       _: 1
@@ -538,10 +578,10 @@ return (_ctx, _cache) => {
               default: _withCtx(() => [
                 _withDirectives(_createElementVNode("div", null, [
                   _createVNode(_component_v_divider),
-                  _cache[30] || (_cache[30] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "115 直接磁力状态来自插件脱敏台账；手动取消只对可识别的当前任务可用", -1)),
+                  _cache[31] || (_cache[31] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "115 直接磁力状态来自插件脱敏台账；手动取消只对可识别的当前任务可用", -1)),
                   _createVNode(_component_v_table, { density: "compact" }, {
                     default: _withCtx(() => [
-                      _cache[29] || (_cache[29] = _createElementVNode("thead", null, [
+                      _cache[30] || (_cache[30] = _createElementVNode("thead", null, [
                         _createElementVNode("tr", null, [
                           _createElementVNode("th", null, "资源"),
                           _createElementVNode("th", null, "状态"),
@@ -600,7 +640,7 @@ return (_ctx, _cache) => {
                                         activator: "parent",
                                         location: "top"
                                       }, {
-                                        default: _withCtx(() => [...(_cache[27] || (_cache[27] = [
+                                        default: _withCtx(() => [...(_cache[28] || (_cache[28] = [
                                           _createTextVNode("重试任务", -1)
                                         ]))]),
                                         _: 1
@@ -624,7 +664,7 @@ return (_ctx, _cache) => {
                                         activator: "parent",
                                         location: "top"
                                       }, {
-                                        default: _withCtx(() => [...(_cache[28] || (_cache[28] = [
+                                        default: _withCtx(() => [...(_cache[29] || (_cache[29] = [
                                           _createTextVNode("取消任务并恢复订阅", -1)
                                         ]))]),
                                         _: 1
@@ -666,7 +706,7 @@ return (_ctx, _cache) => {
                   color: "error",
                   class: "mr-2"
                 }),
-                _cache[31] || (_cache[31] = _createTextVNode("确认清除任务记录 ", -1))
+                _cache[32] || (_cache[32] = _createTextVNode("确认清除任务记录 ", -1))
               ]),
               _: 1
             }),
@@ -676,7 +716,7 @@ return (_ctx, _cache) => {
                 (activeTaskCount.value)
                   ? (_openBlock(), _createElementBlock("p", _hoisted_23, "当前有 " + _toDisplayString(activeTaskCount.value) + " 条任务仍在处理，服务器会拒绝此次清除。", 1))
                   : _createCommentVNode("", true),
-                _cache[32] || (_cache[32] = _createElementVNode("p", { class: "text-medium-emphasis" }, "不会删除 115 文件，不会取消离线下载，也不会修改订阅。", -1))
+                _cache[33] || (_cache[33] = _createElementVNode("p", { class: "text-medium-emphasis" }, "不会删除 115 文件，不会取消离线下载，也不会修改订阅。", -1))
               ]),
               _: 1
             }),
@@ -688,7 +728,7 @@ return (_ctx, _cache) => {
                   disabled: clearingTasks.value,
                   onClick: _cache[3] || (_cache[3] = $event => (clearTasksDialog.value = false))
                 }, {
-                  default: _withCtx(() => [...(_cache[33] || (_cache[33] = [
+                  default: _withCtx(() => [...(_cache[34] || (_cache[34] = [
                     _createTextVNode("取消", -1)
                   ]))]),
                   _: 1
@@ -699,7 +739,7 @@ return (_ctx, _cache) => {
                   loading: clearingTasks.value,
                   onClick: clearTasksConfirmed
                 }, {
-                  default: _withCtx(() => [...(_cache[34] || (_cache[34] = [
+                  default: _withCtx(() => [...(_cache[35] || (_cache[35] = [
                     _createTextVNode("确认清除", -1)
                   ]))]),
                   _: 1
@@ -725,7 +765,7 @@ return (_ctx, _cache) => {
               color: "primary",
               class: "mr-2"
             }),
-            _cache[35] || (_cache[35] = _createTextVNode("手动搜索 ", -1))
+            _cache[36] || (_cache[36] = _createTextVNode("手动搜索 ", -1))
           ]),
           _: 1
         }),
@@ -760,6 +800,6 @@ return (_ctx, _cache) => {
 }
 
 };
-const Page = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-8f117896"]]);
+const Page = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-81853aef"]]);
 
 export { Page as default };

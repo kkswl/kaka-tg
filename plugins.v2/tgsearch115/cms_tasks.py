@@ -44,6 +44,15 @@ def _parse_time(value: Any) -> Optional[datetime]:
         return None
 
 
+def _normalize_media_type(value: Any) -> str:
+    text = str(getattr(value, "value", value) or "").upper()
+    if "MOVIE" in text or "电影" in text:
+        return "MOVIE"
+    if "TV" in text or "电视剧" in text:
+        return "TV"
+    return text
+
+
 class CmsTaskLedger:
     """Store only non-secret CMS task metadata in MoviePilot plugin data."""
 
@@ -122,7 +131,7 @@ class CmsTaskLedger:
                     record["updated_at"] = self._now().isoformat(timespec="seconds")
                     record["error"] = str(error or "")[:300]
                     record["error_message"] = record["error"]
-                    for key in ("task_id", "target_cid", "download_name", "progress", "error_code", "error_message", "retry_count", "source"):
+                    for key in ("task_id", "target_cid", "download_name", "progress", "error_code", "error_message", "retry_count", "source", "completion_notified"):
                         if key in fields:
                             record[key] = fields[key]
                     return record
@@ -151,6 +160,41 @@ class CmsTaskLedger:
                     return record
         return None
 
+    def match_transfer_complete(
+        self,
+        tmdb_id: Any = None,
+        douban_id: Any = None,
+        media_type: str = "",
+        season: Any = None,
+    ) -> Optional[Dict[str, Any]]:
+        tmdb_key = str(tmdb_id or "").strip()
+        douban_key = str(douban_id or "").strip()
+        if not tmdb_key and not douban_key:
+            return None
+        event_type = _normalize_media_type(media_type)
+        event_season = str(season).strip() if season is not None else ""
+        matches = []
+        with self._lock:
+            for record in self.records:
+                if record.get("status") != "pending_organize":
+                    continue
+                record_tmdb = str(record.get("tmdb_id") or "").strip()
+                record_douban = str(record.get("douban_id") or "").strip()
+                if tmdb_key:
+                    if not record_tmdb or record_tmdb != tmdb_key:
+                        continue
+                elif not record_douban or record_douban != douban_key:
+                    continue
+                record_type = _normalize_media_type(record.get("media_type"))
+                if event_type and record_type and event_type != record_type:
+                    continue
+                record_season = record.get("season")
+                if record_season is not None:
+                    if not event_season or str(record_season).strip() != event_season:
+                        continue
+                matches.append(record)
+            return matches[0] if len(matches) == 1 else None
+
     def restart(self, btih: str) -> Optional[Dict[str, Any]]:
         with self._lock:
             record = self.latest(btih)
@@ -172,6 +216,7 @@ class CmsTaskLedger:
         history_exists: Callable[[Dict[str, Any]], bool],
         restore_subscription: Callable[[int], None],
         direct_timeout_hours: Optional[int] = None,
+        unknown_timeout_minutes: Optional[int] = None,
     ) -> Dict[str, int]:
         """Complete records observed by MP, or time out and restore subscriptions."""
         now = self._now()
@@ -185,6 +230,7 @@ class CmsTaskLedger:
                     record["status"] = "completed"
                     record["updated_at"] = now.isoformat(timespec="seconds")
                     record["error"] = ""
+                    record["completion_notified"] = False
                     result["completed"] += 1
                     continue
                 if sid and not subscription_exists(int(sid)):
@@ -194,13 +240,21 @@ class CmsTaskLedger:
                     result["failed"] += 1
                     continue
                 submitted_at = _parse_time(record.get("submitted_at"))
-                hours = direct_timeout_hours if record.get("source") == "115_direct" and direct_timeout_hours is not None else timeout_hours
-                timeout_seconds = max(1, int(hours)) * 3600
+                if record.get("status") == "unknown" and unknown_timeout_minutes is not None:
+                    timeout_seconds = max(1, int(unknown_timeout_minutes)) * 60
+                else:
+                    hours = direct_timeout_hours if record.get("source") == "115_direct" and direct_timeout_hours is not None else timeout_hours
+                    timeout_seconds = max(1, int(hours)) * 3600
                 if not submitted_at or (now - submitted_at).total_seconds() < timeout_seconds:
                     continue
+                was_unknown = record.get("status") == "unknown"
                 record["status"] = "timed_out"
                 record["updated_at"] = now.isoformat(timespec="seconds")
-                record["error"] = "CMS/MP 在超时时间内未确认完成，订阅已恢复"
+                record["error"] = (
+                    "115 未知状态对账超时，订阅已恢复"
+                    if was_unknown
+                    else "MoviePilot 在超时时间内未确认完成，订阅已恢复"
+                )
                 if sid:
                     restore_subscription(int(sid))
                 result["timed_out"] += 1

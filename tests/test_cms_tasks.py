@@ -146,6 +146,92 @@ class CmsTaskLedgerTest(unittest.TestCase):
 
         self.assertEqual(1, result["completed"])
         self.assertEqual("completed", ledger.records[0]["status"])
+        self.assertFalse(ledger.records[0]["completion_notified"])
+
+    def test_completed_record_is_not_reconciled_again(self):
+        now = datetime(2026, 7, 20, tzinfo=timezone.utc)
+        ledger = cms_tasks.CmsTaskLedger(now=lambda: now)
+        record = ledger.add(magnet(), "示例电影", subscribe=SimpleNamespace(
+            id=8, tmdbid=100, doubanid=None, type="MOVIE", season=None
+        ))
+        ledger.update(record["btih"], "completed", completion_notified=True)
+        result = ledger.reconcile(
+            timeout_hours=12,
+            subscription_exists=lambda _sid: self.fail("completed task was reconciled"),
+            history_exists=lambda _record: self.fail("completed task checked history"),
+            restore_subscription=lambda _sid: self.fail("completed task restored"),
+        )
+        self.assertEqual({"completed": 0, "failed": 0, "timed_out": 0}, result)
+        self.assertTrue(ledger.records[0]["completion_notified"])
+
+    def test_transfer_complete_matches_unique_pending_movie(self):
+        ledger = cms_tasks.CmsTaskLedger()
+        record = ledger.add(magnet(), "示例电影", subscribe=SimpleNamespace(
+            id=8, tmdbid=100, doubanid=None, type="MOVIE", season=None
+        ))
+        ledger.update(record["btih"], "pending_organize")
+
+        matched = ledger.match_transfer_complete(tmdb_id=100, media_type="电影")
+
+        self.assertEqual(record["btih"], matched["btih"])
+
+    def test_transfer_complete_requires_matching_tv_season(self):
+        ledger = cms_tasks.CmsTaskLedger()
+        record = ledger.add(magnet(), "示例剧集", subscribe=SimpleNamespace(
+            id=8, tmdbid=100, doubanid=None, type="TV", season=2
+        ))
+        ledger.update(record["btih"], "pending_organize")
+
+        self.assertIsNone(ledger.match_transfer_complete(tmdb_id=100, media_type="电视剧"))
+        self.assertIsNone(ledger.match_transfer_complete(tmdb_id=100, media_type="TV", season=1))
+        self.assertEqual(
+            record["btih"],
+            ledger.match_transfer_complete(tmdb_id=100, media_type="TV", season=2)["btih"],
+        )
+
+    def test_transfer_complete_rejects_ambiguous_records(self):
+        ledger = cms_tasks.CmsTaskLedger()
+        for char in ("a", "b"):
+            record = ledger.add(magnet(char), "示例电影", subscribe=SimpleNamespace(
+                id=8, tmdbid=100, doubanid=None, type="MOVIE", season=None
+            ))
+            ledger.update(record["btih"], "pending_organize")
+
+        self.assertIsNone(ledger.match_transfer_complete(tmdb_id=100, media_type="MOVIE"))
+
+    def test_unknown_uses_minute_timeout(self):
+        now = [datetime(2026, 7, 20, tzinfo=timezone.utc)]
+        ledger = cms_tasks.CmsTaskLedger(now=lambda: now[0])
+        record = ledger.reserve(
+            magnet(),
+            "示例电影",
+            subscribe=SimpleNamespace(id=8, tmdbid=100, doubanid=None, type="MOVIE", season=None),
+            status="unknown",
+            source="115_direct",
+        )[0]
+        now[0] += timedelta(minutes=19)
+        result = ledger.reconcile(
+            timeout_hours=12,
+            direct_timeout_hours=12,
+            unknown_timeout_minutes=20,
+            subscription_exists=lambda _sid: True,
+            history_exists=lambda _record: False,
+            restore_subscription=lambda _sid: None,
+        )
+        self.assertEqual(0, result["timed_out"])
+        now[0] += timedelta(minutes=1)
+        restored = []
+        result = ledger.reconcile(
+            timeout_hours=12,
+            direct_timeout_hours=12,
+            unknown_timeout_minutes=20,
+            subscription_exists=lambda _sid: True,
+            history_exists=lambda _record: False,
+            restore_subscription=restored.append,
+        )
+        self.assertEqual(1, result["timed_out"])
+        self.assertEqual([8], restored)
+        self.assertIn("未知状态", record["error"])
 
     def test_missing_subscription_without_history_is_not_completed(self):
         now = datetime(2026, 7, 20, tzinfo=timezone.utc)

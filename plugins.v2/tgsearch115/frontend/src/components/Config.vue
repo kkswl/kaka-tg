@@ -286,9 +286,10 @@
         <!-- ====== Tab：插件设置 ====== -->
         <v-window-item value="settings" class="pa-4">
           <v-divider class="mb-4" />
-          <v-row>
-            <v-col cols="12" md="6" class="d-flex align-center">
-              <div class="mr-2">
+          <div class="config-section-title">插件基础设置</div>
+          <v-row class="config-grid">
+            <v-col cols="12" md="6" class="config-switch-row">
+              <div class="config-field-copy">
                 <div class="text-subtitle-2">插件直接标记完成</div>
                 <div class="text-caption text-medium-emphasis">开启=转存后插件直接标记订阅完成（不用MP整理115）；关闭=只阻断搜索，让MP整理115资源后自己完成</div>
               </div>
@@ -303,56 +304,44 @@
               <v-spacer />
               <v-switch v-model="config.use_rule_groups" color="primary" hide-details density="compact" />
             </v-col>
-            <v-col cols="12" md="6" class="d-flex align-center">
-              <span class="text-body-2 mr-2">周期搜索 MP 活动订阅</span>
-              <v-spacer />
-              <v-switch v-model="config.periodic_enabled" color="primary" hide-details density="compact" />
-            </v-col>
-            <v-col cols="12" md="4">
-              <v-select v-model="config.period_hours" :items="periodOptions" label="搜索周期" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="12" md="4">
-              <v-text-field v-model="config.jitter_minutes" label="随机抖动（分钟）" type="number" min="0" max="10" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="12" md="4">
-              <v-text-field v-model="config.search_cache_hours" label="搜索缓存（小时）" type="number" min="1" max="6" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="12" md="4">
-              <v-select v-model="config.tg_concurrency" :items="tgConcurrencyOptions" label="TG 并发" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="6" md="4">
-              <v-text-field v-model="config.tg_page_delay_min" label="TG 最小间隔（秒）" type="number" step="0.1" min="0.2" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="6" md="4">
-              <v-text-field v-model="config.tg_page_delay_max" label="TG 最大间隔（秒）" type="number" step="0.1" min="0.2" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="6" md="3">
-              <v-text-field v-model="config.source_item_delay_min" label="订阅最小间隔（秒）" type="number" min="0" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="6" md="3">
-              <v-text-field v-model="config.source_item_delay_max" label="订阅最大间隔（秒）" type="number" min="0" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="6" md="3">
-              <v-text-field v-model="config.source_failure_threshold" label="熔断失败次数" type="number" min="1" max="5" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="6" md="3">
-              <v-select v-model="config.source_cooldown_minutes" :items="cooldownOptions" label="来源冷却" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="12" md="6" class="d-flex align-center">
-              <span class="text-body-2 mr-2">转存成功通知</span>
-              <v-switch v-model="config.notify_success" color="primary" hide-details density="compact" />
-            </v-col>
-            <v-col cols="12" md="6" class="d-flex align-center">
-              <span class="text-body-2 mr-2">未命中通知</span>
-              <v-switch v-model="config.notify_fail" color="primary" hide-details density="compact" />
-            </v-col>
+            <v-col cols="12"><div class="config-section-title">115 基础配置</div></v-col>
+            <v-col cols="6" md="4"><v-text-field v-model="config.direct_timeout_hours" label="115 直连超时（小时）" type="number" min="1" max="72" variant="outlined" density="compact" hide-details /></v-col>
+            <v-col cols="6" md="4"><v-text-field v-model="config.offline_poll_seconds" label="任务状态轮询（秒）" type="number" min="15" max="3600" variant="outlined" density="compact" hide-details /></v-col>
+            <v-col cols="6" md="4"><v-text-field v-model="config.offline_max_retries" label="115 请求最大重试" type="number" min="0" max="6" variant="outlined" density="compact" hide-details /></v-col>
+            <v-col cols="12"><div class="config-section-title">115 磁力离线配置</div></v-col>
+            <v-col cols="12" class="config-switch-row"><div class="config-field-copy"><div class="text-subtitle-2">完整磁力优先离线到 115</div><div class="text-caption text-medium-emphasis">先用 MP 规则与媒体 ID 确认；仅自动处理中字 1080P/4K 磁力，统一使用插件内置 115</div></div><v-switch v-model="config.site_magnet_priority" color="primary" hide-details density="compact" /></v-col>
+            <v-col cols="12" md="4"><v-btn size="small" variant="outlined" prepend-icon="mdi-cloud-check-outline" :loading="offlineChecking" @click="check115Offline">检查 115 离线</v-btn></v-col>
+            <v-col cols="12" class="config-switch-row"><div class="config-field-copy"><div class="text-subtitle-2">等待 MoviePilot 整理完成</div><div class="text-caption text-medium-emphasis">115 下载完成后仍等待 MP 整理历史确认，不提前发送完成通知</div></div><v-switch v-model="config.wait_for_mp_organize" color="primary" hide-details density="compact" /></v-col>
+            <v-col cols="12" class="config-switch-row"><span class="text-body-2">允许详情页手动取消 115 直接任务</span><v-switch v-model="config.offline_allow_cancel" color="warning" hide-details density="compact" /></v-col>
+            <v-col cols="12"><div class="config-section-title">磁力候选轮换配置</div></v-col>
+            <v-col cols="12" class="config-switch-row"><div class="config-field-copy"><div class="text-subtitle-2">启用磁力候选轮换</div><div class="text-caption text-medium-emphasis">当前磁力失败、取消或无资源时自动尝试下一条候选</div></div><v-switch v-model="config.magnet_failover_enabled" color="primary" hide-details density="compact" /></v-col>
+            <v-col cols="6" md="4"><v-text-field v-model="config.magnet_max_attempts" label="磁力最大尝试数" type="number" min="1" max="10" variant="outlined" density="compact" hide-details /></v-col>
+            <v-col cols="6" md="4"><v-text-field v-model="config.magnet_queue_timeout_hours" label="轮换队列超时（小时）" type="number" min="1" max="48" variant="outlined" density="compact" hide-details /></v-col>
+            <v-col cols="6" md="4"><v-text-field v-model="config.magnet_no_progress_timeout_minutes" label="单候选无进展超时（分钟）" type="number" min="10" max="180" variant="outlined" density="compact" hide-details /></v-col>
+            <v-col cols="6" md="4"><v-text-field v-model="config.magnet_rotation_unknown_timeout_minutes" label="未知状态对账超时（分钟）" type="number" min="1" max="1440" variant="outlined" density="compact" hide-details /></v-col>
+            <v-col cols="6" md="4" class="config-switch-row"><span class="text-body-2">取消后自动切换</span><v-switch v-model="config.magnet_cancel_failover" color="primary" hide-details density="compact" /></v-col>
+            <v-col cols="6" md="4" class="config-switch-row"><span class="text-body-2">候选耗尽后回退 MP</span><v-switch v-model="config.magnet_fallback_enabled" color="primary" hide-details density="compact" /></v-col>
+            <v-col cols="12"><div class="config-section-title">搜索与来源设置</div></v-col>
+            <v-col cols="12" md="6" class="config-switch-row"><span class="text-body-2">周期搜索 MP 活动订阅</span><v-switch v-model="config.periodic_enabled" color="primary" hide-details density="compact" /></v-col>
+            <v-col cols="12" md="4"><v-select v-model="config.period_hours" :items="periodOptions" label="搜索周期" variant="outlined" density="compact" hide-details /></v-col>
+            <v-col cols="12" md="4"><v-text-field v-model="config.jitter_minutes" label="随机抖动（分钟）" type="number" min="0" max="10" variant="outlined" density="compact" hide-details /></v-col>
+            <v-col cols="12" md="4"><v-text-field v-model="config.search_cache_hours" label="搜索缓存（小时）" type="number" min="1" max="6" variant="outlined" density="compact" hide-details /></v-col>
+            <v-col cols="12" md="4"><v-select v-model="config.tg_concurrency" :items="tgConcurrencyOptions" label="TG 并发" variant="outlined" density="compact" hide-details /></v-col>
+            <v-col cols="6" md="4"><v-text-field v-model="config.tg_page_delay_min" label="TG 最小间隔（秒）" type="number" step="0.1" min="0.2" variant="outlined" density="compact" hide-details /></v-col>
+            <v-col cols="6" md="4"><v-text-field v-model="config.tg_page_delay_max" label="TG 最大间隔（秒）" type="number" step="0.1" min="0.2" variant="outlined" density="compact" hide-details /></v-col>
+            <v-col cols="6" md="3"><v-text-field v-model="config.source_item_delay_min" label="订阅最小间隔（秒）" type="number" min="0" variant="outlined" density="compact" hide-details /></v-col>
+            <v-col cols="6" md="3"><v-text-field v-model="config.source_item_delay_max" label="订阅最大间隔（秒）" type="number" min="0" variant="outlined" density="compact" hide-details /></v-col>
+            <v-col cols="6" md="3"><v-text-field v-model="config.source_failure_threshold" label="熔断失败次数" type="number" min="1" max="5" variant="outlined" density="compact" hide-details /></v-col>
+            <v-col cols="6" md="3"><v-select v-model="config.source_cooldown_minutes" :items="cooldownOptions" label="来源冷却" variant="outlined" density="compact" hide-details /></v-col>
+            <v-col cols="12" md="6" class="config-switch-row"><span class="text-body-2">转存成功通知</span><v-switch v-model="config.notify_success" color="primary" hide-details density="compact" /></v-col>
+            <v-col cols="12" md="6" class="config-switch-row"><span class="text-body-2">未命中通知</span><v-switch v-model="config.notify_fail" color="primary" hide-details density="compact" /></v-col>
           </v-row>
         </v-window-item>
 
         <!-- ============ Tab：观影 ============ -->
         <v-window-item value="site" class="pa-4">
           <div class="section-label mb-2">观影站点</div>
-          <div class="text-caption text-medium-emphasis mb-3">PoW 验证 + 全网盘资源 + 磁力链接搜索；完整磁力经 MoviePilot 确认后仅使用插件内置 115 离线。</div>
+          <div class="text-caption text-medium-emphasis mb-3">PoW 验证与全网盘资源搜索。</div>
           <v-row>
             <v-col cols="12" md="6" class="d-flex align-center">
               <div class="mr-2">
@@ -365,65 +354,8 @@
             <v-col cols="12" md="6" class="d-flex align-center">
               <v-btn size="small" variant="outlined" prepend-icon="mdi-connection" :loading="siteChecking" @click="checkSite">测试连通</v-btn>
             </v-col>
-            <v-col cols="12" class="d-flex align-center">
-              <div class="mr-3">
-                <div class="text-subtitle-2">完整磁力优先离线到 115</div>
-                <div class="text-caption text-medium-emphasis">先用 MP 规则与媒体 ID 确认；仅自动处理中字 1080P/4K 磁力，统一使用插件内置 115</div>
-              </div>
-              <v-spacer />
-              <v-switch v-model="config.site_magnet_priority" color="primary" hide-details density="compact" />
-            </v-col>
-            <v-col cols="12" md="4" class="d-flex align-center">
-              <v-btn size="small" variant="outlined" prepend-icon="mdi-cloud-check-outline" :loading="offlineChecking" @click="check115Offline">检查 115 离线</v-btn>
-            </v-col>
-            <v-col cols="6" md="4">
-              <v-text-field v-model="config.direct_timeout_hours" label="115 直连超时（小时）" type="number" min="1" max="72" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="6" md="4">
-              <v-text-field v-model="config.offline_poll_seconds" label="任务状态轮询（秒）" type="number" min="15" max="3600" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="6" md="4">
-              <v-text-field v-model="config.offline_max_retries" label="115 请求最大重试" type="number" min="0" max="6" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="12" class="d-flex align-center">
-              <div class="mr-3">
-                <div class="text-subtitle-2">启用磁力候选轮换</div>
-                <div class="text-caption text-medium-emphasis">当前磁力失败、取消或无资源时自动尝试下一条候选</div>
-              </div>
-              <v-spacer />
-              <v-switch v-model="config.magnet_rotation_enabled" color="primary" hide-details density="compact" />
-            </v-col>
-            <v-col cols="6" md="4">
-              <v-text-field v-model="config.magnet_rotation_max_attempts" label="磁力最大尝试数" type="number" min="1" max="10" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="6" md="4">
-              <v-text-field v-model="config.magnet_rotation_timeout_hours" label="轮换队列超时（小时）" type="number" min="1" max="72" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="6" md="4">
-              <v-text-field v-model="config.magnet_no_progress_timeout_minutes" label="单候选无进展超时（分钟）" type="number" min="10" max="180" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="6" md="4">
-              <v-text-field v-model="config.magnet_rotation_unknown_timeout_minutes" label="未知状态对账超时（分钟）" type="number" min="1" max="1440" variant="outlined" density="compact" hide-details />
-            </v-col>
-            <v-col cols="6" md="4">
-              <v-switch v-model="config.magnet_cancel_failover" label="取消后自动切换" color="primary" hide-details density="compact" />
-            </v-col>
-            <v-col cols="6" md="4">
-              <v-switch v-model="config.magnet_fallback_enabled" label="候选耗尽后回退 MP" color="primary" hide-details density="compact" />
-            </v-col>
-            <v-col cols="12" class="d-flex align-center">
-              <div class="mr-3">
-                <div class="text-subtitle-2">等待 MoviePilot 整理完成</div>
-                <div class="text-caption text-medium-emphasis">115 下载完成后仍等待 MP 订阅历史确认，不提前发送完成通知</div>
-              </div>
-              <v-spacer />
-              <v-switch v-model="config.wait_for_mp_organize" color="primary" hide-details density="compact" />
-            </v-col>
-            <v-col cols="12" class="d-flex align-center">
-              <span class="text-body-2 mr-2">允许详情页手动取消 115 直接任务</span>
-              <v-spacer />
-              <v-switch v-model="config.offline_allow_cancel" color="warning" hide-details density="compact" />
-            </v-col>
+
+
             <v-col cols="6" md="4">
               <v-text-field v-model="config.site_detail_delay_min" label="观影最小间隔（秒）" type="number" step="0.1" min="0.5" variant="outlined" density="compact" hide-details />
             </v-col>
@@ -712,6 +644,7 @@ const DEFAULTS = {
   magnet_queue_timeout_hours: 12,
   magnet_cancel_failover: true,
   magnet_no_progress_timeout_minutes: 20,
+  magnet_rotation_unknown_timeout_minutes: 20,
   magnet_fallback_enabled: true,
   offline_allow_cancel: false,
   wait_for_mp_organize: true,
@@ -1218,6 +1151,7 @@ async function saveAll(showMessage = true) {
   config.magnet_queue_timeout_hours = clampInteger(config.magnet_queue_timeout_hours, 1, 48, DEFAULTS.magnet_queue_timeout_hours)
   config.magnet_cancel_failover = config.magnet_cancel_failover === true
   config.magnet_no_progress_timeout_minutes = clampInteger(config.magnet_no_progress_timeout_minutes, 10, 180, DEFAULTS.magnet_no_progress_timeout_minutes)
+  config.magnet_rotation_unknown_timeout_minutes = clampInteger(config.magnet_rotation_unknown_timeout_minutes, 1, 1440, DEFAULTS.magnet_rotation_unknown_timeout_minutes)
   config.magnet_fallback_enabled = config.magnet_fallback_enabled === true
   config.tg_channels = channels.value.map(({ name, id, enabled }) => ({ name, id, enabled }))
   const res = await apiPost('/config/save', { ...config })
@@ -1373,6 +1307,29 @@ function confirmImport() {
   font-size: 0.8125rem;
   font-weight: 600;
   color: rgba(var(--v-theme-on-surface), 0.7);
+}
+.config-section-title {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: rgba(var(--v-theme-on-surface), 0.82);
+  padding-top: 8px;
+}
+.config-grid :deep(.v-field) {
+  min-height: 40px;
+}
+.config-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 56px;
+}
+.config-field-copy {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.config-switch-row :deep(.v-switch) {
+  flex: 0 0 auto;
 }
 .add-card {
   background-color: rgba(var(--v-theme-primary), 0.06);
