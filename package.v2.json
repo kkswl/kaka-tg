@@ -3,10 +3,11 @@
     "name": "拦截mp订阅",
     "description": "聚合 TG、观影、PanSou 与聚影资源，经 MoviePilot 规则和精确媒体身份确认后按来源顺序转存；完整磁力统一使用插件内置 115 离线，115 分享继续使用插件内置 115 转存。",
     "labels": "订阅,Telegram,115网盘",
-    "version": "4.7.46",
+    "version": "4.7.47",
     "author": "MoviePilot User",
     "level": 2,
     "history": {
+      "v4.7.47": "磁力候选轮换超时配置下限从 10 分钟放宽到 1 分钟，用户可自行填写更短的超时时间；前端配置页新增「单次尝试超时（分钟）」输入框（之前只有 DEFAULTS 和 clamp 没有 UI），「单候选无进展超时（分钟）」min 从 10 改为 1。",
       "v4.7.46": "修复 v4.7.45 引入的 NameError：_enrich_share_metadata 中 _safe_share_label 调用漏了 self. 前缀导致订阅处理异常回退到默认搜索；改为直接输出完整 115 分享链接 url=%s（不脱敏），符合日志规范。",
       "v4.7.45": "修复 S00 特别篇搜索不到资源：_SPECIALS 正则新增 \\bSP(?:\\d{1,2})?\\b、\\bbonus\\b 识别，parse_seasons 现在能将 SP/SP01/Bonus 解析为 S00；特别篇候选不再被季号初筛误拒。搜索候选详细日志增强：_build_torrents 为每条候选输出 [候选] source/type/title/url 完整链接（不脱敏）；两处季号初筛对被拒候选输出 本地季号初筛拒绝: title/url/候选季号；磁力候选选择日志从 btih_prefix 改为完整 magnet 链接；[115转存] 所有成功/失败/探测日志添加完整 115 分享链接 url=%s。",
       "v4.7.44": "修复 PanSou 搜索全部回退到磁力下载的问题：回退 v4.7.43 中错误的 request_timeout=25.0/retry=False 硬编码，订阅搜索和手动搜索均改用 self._pansou_timeout 配置值；pansou_timeout 上限从 60 秒提升到 180 秒（可设 2 分钟）；熔断冷却时间默认从 60 分钟降到 5 分钟，熔断失败阈值默认从 3 次提升到 5 次；前端配置页更新超时和熔断默认值，冷却选项新增 5/10/15 分钟档位。",
