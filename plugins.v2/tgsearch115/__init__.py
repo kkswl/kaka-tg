@@ -242,7 +242,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.47"
+    plugin_version = "4.7.48"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -298,10 +298,9 @@ class TgSearch115(_PluginBase):
     _offline_allow_cancel = False
     _magnet_failover_enabled = True
     _magnet_max_attempts = 5
-    _magnet_attempt_timeout_minutes = 30
+    _magnet_download_wait_minutes = 1
     _magnet_queue_timeout_hours = 12
     _magnet_cancel_failover = True
-    _magnet_no_progress_timeout_minutes = 20
     _magnet_rotation_unknown_timeout_minutes = 20
     _magnet_fallback_enabled = True
     _offline_stop: Optional[threading.Event] = None
@@ -380,10 +379,11 @@ class TgSearch115(_PluginBase):
         self._tg_search_enabled = self._to_bool(config.get("tg_search_enabled"), True)
         self._magnet_failover_enabled = self._to_bool(config.get("magnet_failover_enabled"), True)
         self._magnet_max_attempts = min(10, max(1, self._safe_int(config.get("magnet_max_attempts"), 5)))
-        self._magnet_attempt_timeout_minutes = min(180, max(1, self._safe_int(config.get("magnet_attempt_timeout_minutes"), 30)))
+        self._magnet_download_wait_minutes = min(180, max(1, self._safe_int(config.get("magnet_download_wait_minutes"), 1)))
+        self._magnet_attempt_timeout_minutes = self._magnet_download_wait_minutes
+        self._magnet_no_progress_timeout_minutes = self._magnet_download_wait_minutes
         self._magnet_queue_timeout_hours = min(48, max(1, self._safe_int(config.get("magnet_queue_timeout_hours"), 12)))
         self._magnet_cancel_failover = self._to_bool(config.get("magnet_cancel_failover"), True)
-        self._magnet_no_progress_timeout_minutes = min(180, max(1, self._safe_int(config.get("magnet_no_progress_timeout_minutes"), 20)))
         self._magnet_rotation_unknown_timeout_minutes = min(1440, max(1, self._safe_int(config.get("magnet_rotation_unknown_timeout_minutes"), 20)))
         self._magnet_fallback_enabled = self._to_bool(config.get("magnet_fallback_enabled"), True)
         self._search_cache = TtlCache(ttl_seconds=cache_hours * 3600)
@@ -3800,10 +3800,9 @@ class TgSearch115(_PluginBase):
             "offline_allow_cancel": False,
             "magnet_failover_enabled": True,
             "magnet_max_attempts": 5,
-            "magnet_attempt_timeout_minutes": 30,
+            "magnet_download_wait_minutes": 1,
             "magnet_queue_timeout_hours": 12,
             "magnet_cancel_failover": True,
-            "magnet_no_progress_timeout_minutes": 20,
             "magnet_rotation_unknown_timeout_minutes": 20,
             "magnet_fallback_enabled": True,
             "wait_for_mp_organize": True,

@@ -50,7 +50,7 @@ class ManualVerifiedProcessContractTest(unittest.TestCase):
             "magnet_failover_enabled",
             "magnet_max_attempts",
             "magnet_queue_timeout_hours",
-            "magnet_no_progress_timeout_minutes",
+            "magnet_download_wait_minutes",
             "magnet_rotation_unknown_timeout_minutes",
             "magnet_cancel_failover",
             "magnet_fallback_enabled",

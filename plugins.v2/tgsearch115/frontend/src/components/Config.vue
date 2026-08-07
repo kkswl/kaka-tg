@@ -316,9 +316,8 @@
             <v-col cols="12"><div class="config-section-title">磁力候选轮换配置</div></v-col>
             <v-col cols="12" class="config-switch-row"><div class="config-field-copy"><div class="text-subtitle-2">启用磁力候选轮换</div><div class="text-caption text-medium-emphasis">当前磁力失败、取消或无资源时自动尝试下一条候选</div></div><v-switch v-model="config.magnet_failover_enabled" color="primary" hide-details density="compact" /></v-col>
             <v-col cols="6" md="4"><v-text-field v-model="config.magnet_max_attempts" label="磁力最大尝试数" type="number" min="1" max="10" variant="outlined" density="compact" hide-details /></v-col>
+            <v-col cols="6" md="4"><v-text-field v-model="config.magnet_download_wait_minutes" label="磁力下载等待时间（分钟）" type="number" min="1" max="180" variant="outlined" density="compact" hide-details /></v-col>
             <v-col cols="6" md="4"><v-text-field v-model="config.magnet_queue_timeout_hours" label="轮换队列超时（小时）" type="number" min="1" max="48" variant="outlined" density="compact" hide-details /></v-col>
-            <v-col cols="6" md="4"><v-text-field v-model="config.magnet_attempt_timeout_minutes" label="单次尝试超时（分钟）" type="number" min="1" max="180" variant="outlined" density="compact" hide-details /></v-col>
-            <v-col cols="6" md="4"><v-text-field v-model="config.magnet_no_progress_timeout_minutes" label="单候选无进展超时（分钟）" type="number" min="1" max="180" variant="outlined" density="compact" hide-details /></v-col>
             <v-col cols="6" md="4"><v-text-field v-model="config.magnet_rotation_unknown_timeout_minutes" label="未知状态对账超时（分钟）" type="number" min="1" max="1440" variant="outlined" density="compact" hide-details /></v-col>
             <v-col cols="6" md="4" class="config-switch-row"><span class="text-body-2">取消后自动切换</span><v-switch v-model="config.magnet_cancel_failover" color="primary" hide-details density="compact" /></v-col>
             <v-col cols="6" md="4" class="config-switch-row"><span class="text-body-2">候选耗尽后回退 MP</span><v-switch v-model="config.magnet_fallback_enabled" color="primary" hide-details density="compact" /></v-col>
@@ -643,10 +642,9 @@ const DEFAULTS = {
   offline_max_retries: 3,
   magnet_failover_enabled: true,
   magnet_max_attempts: 5,
-  magnet_attempt_timeout_minutes: 30,
+  magnet_download_wait_minutes: 1,
   magnet_queue_timeout_hours: 12,
   magnet_cancel_failover: true,
-  magnet_no_progress_timeout_minutes: 20,
   magnet_rotation_unknown_timeout_minutes: 20,
   magnet_fallback_enabled: true,
   offline_allow_cancel: false,
@@ -1152,10 +1150,9 @@ async function saveAll(showMessage = true) {
   config.tg_search_enabled = config.tg_search_enabled === true
   config.magnet_failover_enabled = config.magnet_failover_enabled === true
   config.magnet_max_attempts = clampInteger(config.magnet_max_attempts, 1, 10, DEFAULTS.magnet_max_attempts)
-  config.magnet_attempt_timeout_minutes = clampInteger(config.magnet_attempt_timeout_minutes, 1, 180, DEFAULTS.magnet_attempt_timeout_minutes)
+  config.magnet_download_wait_minutes = clampInteger(config.magnet_download_wait_minutes, 1, 180, DEFAULTS.magnet_download_wait_minutes)
   config.magnet_queue_timeout_hours = clampInteger(config.magnet_queue_timeout_hours, 1, 48, DEFAULTS.magnet_queue_timeout_hours)
   config.magnet_cancel_failover = config.magnet_cancel_failover === true
-  config.magnet_no_progress_timeout_minutes = clampInteger(config.magnet_no_progress_timeout_minutes, 1, 180, DEFAULTS.magnet_no_progress_timeout_minutes)
   config.magnet_rotation_unknown_timeout_minutes = clampInteger(config.magnet_rotation_unknown_timeout_minutes, 1, 1440, DEFAULTS.magnet_rotation_unknown_timeout_minutes)
   config.magnet_fallback_enabled = config.magnet_fallback_enabled === true
   config.tg_channels = channels.value.map(({ name, id, enabled }) => ({ name, id, enabled }))
