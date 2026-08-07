@@ -108,6 +108,7 @@ from .runtime_control import (
 from .season_support import (
     can_stop_keyword_search,
     cache_covers_season,
+    candidate_seasons,
     deduplicate_search_hits,
     parse_seasons,
     season_distribution,
@@ -241,7 +242,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.44"
+    plugin_version = "4.7.45"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -1011,6 +1012,18 @@ class TgSearch115(_PluginBase):
                         season_kept.append(hit)
                     else:
                         source_relevance_rejected[candidate_source(hit)] += 1
+                        hit_seasons = candidate_seasons(hit)
+                        season_label = ",".join(
+                            f"S{s:02d}" for s in sorted(hit_seasons)
+                        ) or "无明确季号"
+                        logger.info(
+                            f"【TG115】订阅 [{subscribe.name}] S{target_season:02d} "
+                            f"本地季号初筛拒绝: title=%s url=%s 候选季号=%s",
+                            str(getattr(hit, "resource_title", "")
+                                or getattr(hit, "title", "") or "")[:80],
+                            getattr(hit, "share_url", "") or "",
+                            season_label,
+                        )
                 keyword_hits = season_kept
             result["season_after"] += len(keyword_hits)
             hits.extend(keyword_hits)
@@ -1402,10 +1415,23 @@ class TgSearch115(_PluginBase):
                     source_report=source_report,
                 )
                 if target_season is not None:
-                    matched_season = [
-                        hit for hit in keyword_hits
-                        if supports_target_season(hit, target_season)
-                    ]
+                    matched_season = []
+                    for hit in keyword_hits:
+                        if supports_target_season(hit, target_season):
+                            matched_season.append(hit)
+                        else:
+                            hit_seasons = candidate_seasons(hit)
+                            season_label = ",".join(
+                                f"S{s:02d}" for s in sorted(hit_seasons)
+                            ) or "无明确季号"
+                            logger.info(
+                                f"【TG115】订阅 [{subscribe.name}] S{target_season:02d} "
+                                f"本地季号初筛拒绝: title=%s url=%s 候选季号=%s",
+                                str(getattr(hit, "resource_title", "")
+                                    or getattr(hit, "title", "") or "")[:80],
+                                getattr(hit, "share_url", "") or "",
+                                season_label,
+                            )
                     logger.info(
                         f"【TG115】订阅 [{subscribe.name}] S{target_season:02d} "
                         f"本地季号初筛: {len(keyword_hits)} 条 -> {len(matched_season)} 条"
@@ -2101,6 +2127,13 @@ class TgSearch115(_PluginBase):
                 setattr(torrent, "_tg115_unavailable_rule_fields", {
                     "size", "seeders", "downloadvolumefactor", "publish_time",
                 })
+            logger.info(
+                "【TG115】[候选] source=%s type=%s title=%s url=%s",
+                str(getattr(h, "_tg115_source", "") or "unknown"),
+                pan_type or "unknown",
+                display_title,
+                url,
+            )
             torrents.append(torrent)
         return torrents
 
@@ -2132,10 +2165,10 @@ class TgSearch115(_PluginBase):
             self._save_cms_tasks()
             classification = classify_resource(torrent, identity_status="confirmed", mp_rule_status="passed")
             logger.info(
-                "【TG115】磁力候选选择: position=%s/%s btih_prefix=%s %s",
+                "【TG115】磁力候选选择: position=%s/%s magnet=%s %s",
                 record["position"],
                 record["candidate_total"],
-                str(record.get("btih") or "")[:12],
+                magnet,
                 format_resource_classification(classification),
             )
         direct_result: Dict[str, Any] = {}

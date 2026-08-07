@@ -20,7 +20,9 @@ _CN_RANGE = re.compile(
     r"([零〇一二两三四五六七八九十百\d]+)\s*季"
 )
 _ALL_SEASONS = re.compile(r"全\s*([零〇一二两三四五六七八九十百\d]+)\s*季")
-_SPECIALS = re.compile(r"(?i)(?:特别篇|特別篇|特别季|特別季|specials?|ova|oad)")
+_SPECIALS = re.compile(
+    r"(?i)(?:特别篇|特別篇|特别季|特別季|\bspecials?\b|\bSP(?:\d{1,2})?\b|\bova\b|\boad\b|\bbonus\b)"
+)
 
 
 def _cn_number(value: Any) -> Optional[int]:
