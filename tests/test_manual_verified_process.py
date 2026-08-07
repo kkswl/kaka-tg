@@ -92,6 +92,26 @@ class ManualVerifiedProcessContractTest(unittest.TestCase):
         )]
         self.assertEqual(sorted(positions), positions)
 
+    def test_search_detail_notify_exists_in_settings_and_defaults(self):
+        source = CONFIG.read_text(encoding="utf-8")
+        settings = source[source.index('v-window-item value="settings"'):source.index('v-window-item value="site"')]
+        self.assertIn("search_detail_notify", settings)
+        self.assertIn("详细资源搜索通知", settings)
+        defaults = source[source.index("const DEFAULTS"):]
+        self.assertIn("search_detail_notify: false", defaults)
+
+    def test_pansou_auto_search_uses_bounded_timeout(self):
+        source = PLUGIN.read_text(encoding="utf-8")
+        pansou_call = source[source.index('"pansou", lambda: self._pansou_client.search('):source.index(", self._pansou_client, year,")]
+        self.assertIn("request_timeout=25.0", pansou_call)
+        self.assertIn("retry=False", pansou_call)
+
+    def test_select_auto_candidates_has_rejection_collector(self):
+        source = PLUGIN.read_text(encoding="utf-8")
+        self.assertIn("rejection_collector=auto_rejections", source)
+        self.assertIn("summarize_rejections(auto_rejections)", source)
+        self.assertIn("format_rejection_detail(rejections)", source)
+
     def test_manual_transfer_logs_do_not_include_resource_url(self):
         source = PLUGIN.read_text(encoding="utf-8")
         start = source.index("    def __transfer_api")

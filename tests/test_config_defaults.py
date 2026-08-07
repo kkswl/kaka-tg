@@ -49,6 +49,7 @@ class ConfigDefaultsTest(unittest.TestCase):
         self.assertEqual(20, defaults["magnet_no_progress_timeout_minutes"])
         self.assertEqual(20, defaults["magnet_rotation_unknown_timeout_minutes"])
         self.assertTrue(defaults["magnet_fallback_enabled"])
+        self.assertFalse(defaults["search_detail_notify"])
 
     def test_share_transfer_waits_for_mp_before_subscribe_complete(self):
         source = PLUGIN_PATH.read_text(encoding="utf-8")

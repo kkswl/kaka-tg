@@ -5,6 +5,12 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, List, Optional, Tuple
 
 try:
+    from app.log import logger as _logger
+except Exception:
+    import logging
+    _logger = logging.getLogger(__name__)
+
+try:
     from .magnet_failover import (
         FALLBACK_TO_MOVIEPILOT,
         SUBMIT_NEXT,
@@ -33,6 +39,43 @@ _CHINESE_SUBTITLE_RE = re.compile(
     re.IGNORECASE,
 )
 _AUTO_MAGNET_QUALITY_RE = re.compile(r"(?:1080[pi]?|2160p|\b4k\b|\buhd\b)", re.IGNORECASE)
+_EPISODE_RE = re.compile(r"(?i)\bS\d{1,2}E\d{1,3}\b")
+_SEASON_PACK_RE = re.compile(r"(?i)(?:\bS\d{1,2}\b|Season\s*\d{1,2}|第[零〇一二三四五六七八九十百\d]+季)")
+_SUBTITLE_FILE_RE = re.compile(r"(?i)\.(?:srt|ass|ssa|sub|idx|sup|vtt)$")
+_SUBTITLE_CHINESE_NAME_RE = re.compile(
+    r"(?i)(?:chs|cht|chinese|gb|big5|简中|繁中|中字|中文|简体|繁体|简|繁|官中|原盘中字|内嵌)",
+)
+
+
+def has_chinese_subtitle_file(file_names: Iterable[str]) -> bool:
+    """Check whether any file name looks like a Chinese subtitle file.
+
+    Two conditions must be met:
+    1. The file extension is a subtitle format (.srt/.ass/.ssa/.sub/.idx/.sup/.vtt).
+    2. The file name (without extension) contains a Chinese-language marker
+       such as chs/cht/chinese/简中/繁中/中字 etc.
+
+    This covers files like ``xxx.chs.srt``, ``简体中文.ass``, ``Movie.chs&eng.srt``.
+    """
+    for name in file_names or []:
+        text = str(name or "").strip()
+        if not _SUBTITLE_FILE_RE.search(text):
+            continue
+        if _SUBTITLE_CHINESE_NAME_RE.search(text):
+            return True
+    return False
+
+
+def _is_season_pack(description: str) -> bool:
+    """True when text names a season but no single episode."""
+    return bool(_SEASON_PACK_RE.search(description) and not _EPISODE_RE.search(description))
+
+
+def _safe_title(torrent: Any, max_len: int = 80) -> str:
+    title = str(getattr(torrent, "title", "") or getattr(torrent, "name", "") or "")
+    if len(title) > max_len:
+        title = title[:max_len] + "…"
+    return title
 
 
 def is_magnet_url(value: str) -> bool:
@@ -43,7 +86,7 @@ def filter_with_offline_seed_override(
     torrents: Iterable,
     filter_callback: Callable[[List[Any]], List[Any]],
 ) -> List[Any]:
-    """Ignore swarm seed thresholds for 115 server-side magnet offline tasks."""
+    """Ignore swarm seed thresholds for 115 server-side magnet offline tasks and 115 shares."""
     torrent_list = list(torrents or [])
     original_seeders = []
     for torrent in torrent_list:
@@ -52,7 +95,8 @@ def filter_with_offline_seed_override(
             or getattr(torrent, "page_url", "")
             or ""
         )
-        if is_magnet_url(url):
+        # 磁力候选和 115 分享候选的 seeders 都设为安全值，避免被 MP 规则拒绝
+        if is_magnet_url(url) or getattr(torrent, "_tg115_unavailable_rule_fields", None):
             original_seeders.append((torrent, getattr(torrent, "seeders", 0)))
             setattr(torrent, "seeders", 2_147_483_647)
     try:
@@ -195,10 +239,18 @@ def select_auto_candidates(
     prefer_site_magnet: bool,
     is_tv: bool,
     is_115_url: Callable[[str], bool],
+    rejection_collector: Optional[List[dict]] = None,
 ) -> List:
-    """Order safe candidates without allowing aggregate sources to outrank direct sources."""
+    """Order safe candidates without allowing aggregate sources to outrank direct sources.
+
+    When *rejection_collector* is provided, each rejected candidate is appended
+    as ``{"source", "type", "title", "reason"}`` for diagnostics and detail
+    notifications.  Sensitive data (magnet URIs, 115 share codes) is never
+    included — only the truncated title.
+    """
     buckets = {
-        "tg": [], "site_share": [], "pansou_share": [],
+        "tg": [], "site_share": [], "site_share_pending": [],
+        "pansou_share": [], "pansou_share_pending": [],
         "site_magnet": [], "pansou_magnet": [], "juying": [],
     }
     bucket_seen = {name: set() for name in buckets}
@@ -207,6 +259,17 @@ def select_auto_candidates(
         if key and key not in bucket_seen[bucket]:
             bucket_seen[bucket].add(key)
             buckets[bucket].append(torrent)
+
+    def reject(torrent: Any, reason: str) -> None:
+        if rejection_collector is not None:
+            source = str(getattr(torrent, "_tg115_source", "") or "unknown")
+            pan = str(getattr(torrent, "_tg115_pan_type", "") or "").lower()
+            rtype = "磁力" if pan == "magnet" or is_magnet_url(
+                str(getattr(torrent, "page_url", "") or "")) else "115分享"
+            rejection_collector.append({
+                "source": source, "type": rtype,
+                "title": _safe_title(torrent), "reason": reason,
+            })
 
     for torrent in torrents or []:
         url = str(getattr(torrent, "page_url", "") or "").strip()
@@ -217,32 +280,63 @@ def select_auto_candidates(
             str(getattr(torrent, "description", "") or ""),
         ))
         has_chinese_subtitle = bool(_CHINESE_SUBTITLE_RE.search(description))
+        # 115 分享可能通过只读元数据探测发现内部含中文字幕文件
+        has_sub_file = bool(getattr(torrent, "_tg115_has_chinese_sub_file", False))
 
         if source == "tg" and is_115_url(url):
             add("tg", url.lower(), torrent)
             continue
 
-        if source == "site" and is_115_url(url) and has_chinese_subtitle:
-            add("site_share", url.lower(), torrent)
+        if source == "site" and is_115_url(url):
+            if has_chinese_subtitle or has_sub_file:
+                add("site_share", url.lower(), torrent)
+            else:
+                # 延迟中字检测：标题无中字标记且未探测到字幕文件，不立即拒绝
+                setattr(torrent, "_tg115_subtitle_pending", True)
+                add("site_share_pending", url.lower(), torrent)
             continue
 
-        if source == "pansou" and is_115_url(url) and has_chinese_subtitle:
-            add("pansou_share", url.lower(), torrent)
+        if source == "pansou" and is_115_url(url):
+            if has_chinese_subtitle or has_sub_file:
+                add("pansou_share", url.lower(), torrent)
+            else:
+                setattr(torrent, "_tg115_subtitle_pending", True)
+                add("pansou_share_pending", url.lower(), torrent)
             continue
 
         if source == "site" and prefer_site_magnet and pan_type == "magnet" and is_magnet_url(url):
-            if not has_chinese_subtitle or not _AUTO_MAGNET_QUALITY_RE.search(description):
+            if not has_chinese_subtitle:
+                reject(torrent, "未检测到中文字幕标记")
                 continue
-            if is_tv and not bool(getattr(torrent, "_tg115_is_complete", False)):
+            if not _AUTO_MAGNET_QUALITY_RE.search(description):
+                reject(torrent, "未达到 1080P/4K 分辨率要求")
                 continue
+            if is_tv:
+                is_complete = bool(getattr(torrent, "_tg115_is_complete", False))
+                if not is_complete and not _is_season_pack(description):
+                    if _EPISODE_RE.search(description):
+                        reject(torrent, "单集磁力，非整季资源")
+                    else:
+                        reject(torrent, "未标注完整/全集/全季，且非季包格式")
+                    continue
             add("site_magnet", _magnet_key(url), torrent)
             continue
 
         if source == "pansou" and prefer_site_magnet and pan_type == "magnet" and is_magnet_url(url):
-            if not has_chinese_subtitle or not _AUTO_MAGNET_QUALITY_RE.search(description):
+            if not has_chinese_subtitle:
+                reject(torrent, "未检测到中文字幕标记")
                 continue
-            if is_tv and not bool(getattr(torrent, "_tg115_is_complete", False)):
+            if not _AUTO_MAGNET_QUALITY_RE.search(description):
+                reject(torrent, "未达到 1080P/4K 分辨率要求")
                 continue
+            if is_tv:
+                is_complete = bool(getattr(torrent, "_tg115_is_complete", False))
+                if not is_complete and not _is_season_pack(description):
+                    if _EPISODE_RE.search(description):
+                        reject(torrent, "单集磁力，非整季资源")
+                    else:
+                        reject(torrent, "未标注完整/全集/全季，且非季包格式")
+                    continue
             add("pansou_magnet", _magnet_key(url), torrent)
             continue
 
@@ -251,6 +345,7 @@ def select_auto_candidates(
 
     ordered = (
         buckets["tg"] + buckets["site_share"] + buckets["pansou_share"]
+        + buckets["site_share_pending"] + buckets["pansou_share_pending"]
         + buckets["site_magnet"] + buckets["pansou_magnet"] + buckets["juying"]
     )
     result = []
@@ -262,6 +357,45 @@ def select_auto_candidates(
             seen.add(key)
             result.append(torrent)
     return result
+
+
+def summarize_rejections(rejections: List[dict]) -> str:
+    """Produce a concise reason string reflecting the dominant rejection cause."""
+    if not rejections:
+        return "没有符合自动策略的完整中文字幕 1080P/4K 资源"
+    counts: dict = {}
+    for item in rejections:
+        reason = item.get("reason", "")
+        counts[reason] = counts.get(reason, 0) + 1
+    dominant = max(counts, key=counts.get)
+    all_same = len(counts) == 1
+    if all_same:
+        mapping = {
+            "未检测到中文字幕标记": "未找到带中文字幕标记的资源",
+            "未达到 1080P/4K 分辨率要求": "未找到 1080P/4K 分辨率资源",
+            "单集磁力，非整季资源": "未找到整季资源，均为单集磁力",
+        }
+        return mapping.get(dominant, dominant)
+    return "未找到符合自动策略的资源（中字 1080P/4K 整季）"
+
+
+def format_rejection_detail(rejections: List[dict], max_items: int = 10) -> str:
+    """Format rejection details for the detail notification (lines joined by \\n)."""
+    if not rejections:
+        return ""
+    total = len(rejections)
+    shown = rejections[:max_items]
+    source_label = {"tg": "TG", "site": "观影", "pansou": "PanSou", "juying": "聚影"}
+    lines = [f"候选明细（共 {total} 条，前 {len(shown)} 条）："]
+    for index, item in enumerate(shown, 1):
+        src = source_label.get(item.get("source", ""), item.get("source", "unknown"))
+        rtype = item.get("type", "")
+        title = item.get("title", "")
+        reason = item.get("reason", "")
+        lines.append(f"{index}. [{src}][{rtype}] {title} → 拒绝原因：{reason}")
+    if total > max_items:
+        lines.append(f"…及其它 {total - max_items} 条")
+    return "\n".join(lines)
 
 
 @dataclass
@@ -312,6 +446,7 @@ def execute_auto_candidates(
     max_magnet_attempts: int = 5,
     magnet_failover_enabled: bool = True,
     magnet_queue_timeout_hours: int = 12,
+    inspect_share: Optional[Callable[[Any], Tuple[bool, str, list]]] = None,
 ) -> CandidateExecutionResult:
     """Try confirmed magnets through built-in 115, then eligible shares."""
     result = CandidateExecutionResult()
@@ -326,7 +461,18 @@ def execute_auto_candidates(
     non_magnet_candidates = [item for item in candidate_list[:first_magnet] if not is_magnet_url(getattr(item, "page_url", "") or "")]
     trailing_non_magnets = [item for item in candidate_list[first_magnet:] if not is_magnet_url(getattr(item, "page_url", "") or "")]
 
-    for candidate in non_magnet_candidates:
+    # 分离已确认中字和待确认中字的 115 分享候选
+    confirmed_shares = [c for c in non_magnet_candidates if not getattr(c, "_tg115_subtitle_pending", False)]
+    pending_shares = [c for c in non_magnet_candidates if getattr(c, "_tg115_subtitle_pending", False)]
+
+    if non_magnet_candidates:
+        _logger.info(
+            "【TG115】[115转存] 候选=%d 已确认中字=%d 待确认=%d",
+            len(non_magnet_candidates), len(confirmed_shares), len(pending_shares),
+        )
+
+    # 先尝试已确认中字的 115 分享
+    for candidate in confirmed_shares:
         identity = confirm_identity(candidate)
         if bool(getattr(identity, "recognition_attempted", False)):
             result.recognition_attempts += 1
@@ -339,11 +485,53 @@ def execute_auto_candidates(
         if ok:
             result.candidate = candidate
             result.message = message
+            _logger.info("【TG115】[115转存] %s → 成功", _safe_title(candidate))
             return result
         result.errors.append(f"115 转存失败: {message}")
+        _logger.info("【TG115】[115转存] %s → 失败：%s", _safe_title(candidate), message)
+
+    # 已确认中字全部失败后，尝试待确认中字的候选
+    if pending_shares and inspect_share:
+        _logger.info("【TG115】[115转存] 已确认中字候选全部失败，尝试待确认候选")
+        for candidate in pending_shares:
+            identity = confirm_identity(candidate)
+            if bool(getattr(identity, "recognition_attempted", False)):
+                result.recognition_attempts += 1
+            if not bool(getattr(identity, "confirmed", False)):
+                result.rejection_reasons.append(_identity_rejection_category(identity))
+                continue
+            # 先探测分享内文件列表，检测中字
+            ok_inspect, _inspect_msg, names = inspect_share(candidate)
+            if not ok_inspect:
+                _logger.info(
+                    "【TG115】[115转存] %s → 探测失败：%s，跳过",
+                    _safe_title(candidate), _inspect_msg,
+                )
+                continue
+            if not has_chinese_subtitle_file(names):
+                _logger.info(
+                    "【TG115】[115转存] %s → 未检测到中文字幕文件，跳过",
+                    _safe_title(candidate),
+                )
+                continue
+            # 探测到中字文件，执行转存
+            ok, message = transfer_share(candidate)
+            if ok:
+                result.candidate = candidate
+                result.message = message
+                _logger.info("【TG115】[115转存] %s → 成功（延迟确认中字）", _safe_title(candidate))
+                return result
+            result.errors.append(f"115 转存失败: {message}")
+            _logger.info("【TG115】[115转存] %s → 失败：%s", _safe_title(candidate), message)
+    elif pending_shares and not inspect_share:
+        _logger.info("【TG115】[115转存] 待确认候选 %d 个，但未提供 inspect_share 回调，跳过", len(pending_shares))
 
     if not magnet_candidates:
         return result
+    _logger.info(
+        "【TG115】[115转存] 全部 115 分享转存失败，回退到磁力候选，磁力候选=%d",
+        len(magnet_candidates),
+    )
     queue = build_magnet_queue(
         media_key="execution",
         queue_key="execution",

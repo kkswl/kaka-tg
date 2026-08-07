@@ -3,10 +3,11 @@
     "name": "拦截mp订阅",
     "description": "聚合 TG、观影、PanSou 与聚影资源，经 MoviePilot 规则和精确媒体身份确认后按来源顺序转存；完整磁力统一使用插件内置 115 离线，115 分享继续使用插件内置 115 转存。",
     "labels": "订阅,Telegram,115网盘",
-    "version": "4.7.42",
+    "version": "4.7.43",
     "author": "MoviePilot User",
     "level": 2,
     "history": {
+      "v4.7.43": "修复 115 分享不再被转存、全部回退到磁力下载的问题：select_auto_candidates 对标题无中字标记的 115 分享不再直接拒绝，改为标记 _tg115_subtitle_pending 进入 pending 桶，执行阶段用 inspect_share 二次探测文件列表中的中文字幕文件；_enrich_share_metadata 的 max_probes 从 3 提升到 10 并新增 Cookie 就绪检查，115 Cookie 不可用时跳过所有探测只记一次日志；filter_with_offline_seed_override 扩展支持 115 分享，规则快照读取失败时 115 分享不被 native_matched 清空；execute_auto_candidates 新增结构化 [115转存] 诊断日志（候选/已确认/待确认数量、每个候选转存结果、回退原因）；_build_torrents 对缺少提取码的 115 分享记录明确日志。115 分享转存仍优先于磁力下载，已确认中字候选仍优先于待确认候选，不调用 CMS、不修改配置字段名和后端 API 契约。",
       "v4.7.42": "修复 115 下载完成且 MoviePilot 已整理后任务未闭环的问题：监听整理完成事件并以整理历史补偿，下载完成后停止高频 115 查询，completed 同步释放磁力候选队列并保证通知幂等；unknown 使用独立对账超时且到期前执行最终状态查询。磁力配置迁移到设置页并统一布局，补齐默认值和详情页关闭按钮。",
       "v4.7.41": "完整磁力固定使用插件内置 115 离线，不调用或回退 CMS；隐藏 CMS 配置、状态、模式和操作入口，过滤公开配置敏感字段；115 分享转存、内部历史任务账本、unknown 对账、候选轮换和 MoviePilot 最终回退保持不变。新增详细资源分类日志与通知，BTIH 仅记录前缀；插件主页改为 MoviePilot 官方插件库。",
       "v4.7.40": "新增 TG 频道搜索总开关，统一控制自动和手动搜索；修复 TG 已命中资源但来源总超时导致详情页显示 0 条的问题，保留已完成频道的部分结果并返回 partial_success；手动搜索兼容 items/results/resources 字段，PanSou 超时不再清空 TG 结果；修复 115 状态轮询 direct_records 未定义导致的 NameError。",

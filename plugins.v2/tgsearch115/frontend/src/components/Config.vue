@@ -335,6 +335,7 @@
             <v-col cols="6" md="3"><v-select v-model="config.source_cooldown_minutes" :items="cooldownOptions" label="来源冷却" variant="outlined" density="compact" hide-details /></v-col>
             <v-col cols="12" md="6" class="config-switch-row"><span class="text-body-2">转存成功通知</span><v-switch v-model="config.notify_success" color="primary" hide-details density="compact" /></v-col>
             <v-col cols="12" md="6" class="config-switch-row"><span class="text-body-2">未命中通知</span><v-switch v-model="config.notify_fail" color="primary" hide-details density="compact" /></v-col>
+            <v-col cols="12" md="6" class="config-switch-row"><span class="text-body-2">详细资源搜索通知</span><v-switch v-model="config.search_detail_notify" color="primary" hide-details density="compact" /></v-col>
           </v-row>
         </v-window-item>
 
@@ -619,6 +620,7 @@ const DEFAULTS = {
   use_rule_groups: true,
   notify_success: true,
   notify_fail: false,
+  search_detail_notify: false,
   auto_finish: false,
   periodic_enabled: true,
   period_hours: 2,

@@ -88,8 +88,11 @@ from .candidate_identity import clean_identity_title, order_identity_candidates
 from .resource_strategy import (
     execute_auto_candidates,
     filter_with_offline_seed_override,
+    format_rejection_detail,
+    has_chinese_subtitle_file,
     is_magnet_url,
     select_auto_candidates,
+    summarize_rejections,
     classify_resource,
     format_resource_classification,
 )
@@ -238,7 +241,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.42"
+    plugin_version = "4.7.43"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -276,6 +279,7 @@ class TgSearch115(_PluginBase):
     _use_rule_groups = True
     _notify_success = True
     _notify_fail = False
+    _search_detail_notify = False
     _auto_finish = True  # True=插件直接标记完成(不用MP整理); False=只阻断搜索让MP自己整理
     _site_enabled = False
     _site_app_auth = ""
@@ -345,6 +349,7 @@ class TgSearch115(_PluginBase):
         self._use_rule_groups = self._to_bool(config.get("use_rule_groups"), True)
         self._notify_success = self._to_bool(config.get("notify_success"), True)
         self._notify_fail = self._to_bool(config.get("notify_fail"), False)
+        self._search_detail_notify = self._to_bool(config.get("search_detail_notify"), False)
         self._wait_for_mp_organize = self._to_bool(
             config.get("wait_for_mp_organize"), True
         )
@@ -1062,6 +1067,7 @@ class TgSearch115(_PluginBase):
             return result
 
         bounded_matched = order_identity_candidates(matched, mediainfo, subscribe)[:20]
+        auto_rejections: list = []
         auto_candidates = select_auto_candidates(
             torrents=bounded_matched,
             prefer_site_magnet=(self._site_magnet_priority and bool(
@@ -1069,14 +1075,16 @@ class TgSearch115(_PluginBase):
             )),
             is_tv=is_tv_media(getattr(subscribe, "type", None)),
             is_115_url=P115Transfer._is_115_share_url,
+            rejection_collector=auto_rejections,
         )
         # ``select_auto_candidates`` already applies the contractual source
         # order and de-duplicates within/cross buckets. Rebuilding the result as
         # ``magnets + shares`` silently reversed Guanying 115 and magnet priority.
         candidates = list(auto_candidates)
         result["candidates"] = candidates
+        result["rejections"] = auto_rejections
         if not candidates:
-            result["reason"] = "没有符合自动策略的完整中文字幕 1080P/4K 资源"
+            result["reason"] = summarize_rejections(auto_rejections)
             return result
 
         identity_candidates = order_identity_candidates(candidates, mediainfo, subscribe)
@@ -1292,7 +1300,10 @@ class TgSearch115(_PluginBase):
             if not candidates:
                 reason = evaluation.get("reason") or "候选未通过 MoviePilot/TMDB 身份确认"
                 logger.info("【TG115】订阅 [%s] 只读候选评估未命中：%s", subscribe.name, reason)
-                self._send_fail_notify(subscribe, reason, source_report)
+                self._send_fail_notify(
+                    subscribe, reason, source_report,
+                    rejections=evaluation.get("rejections"),
+                )
                 return
 
             identities = evaluation.get("identities") or {}
@@ -1307,6 +1318,11 @@ class TgSearch115(_PluginBase):
                 )
                 return ok, message
 
+            def inspect_share_cb(candidate):
+                if not self._transfer:
+                    return False, "转存模块未初始化", []
+                return self._transfer.inspect_share(candidate.page_url or "", limit=32)
+
             execution = execute_auto_candidates(
                 candidates=candidates,
                 confirm_identity=confirm,
@@ -1315,6 +1331,7 @@ class TgSearch115(_PluginBase):
                 max_magnet_attempts=max(1, self._magnet_max_attempts - len(attempted)),
                 magnet_failover_enabled=self._magnet_failover_enabled and len(attempted) < self._magnet_max_attempts,
                 magnet_queue_timeout_hours=self._magnet_queue_timeout_hours,
+                inspect_share=inspect_share_cb,
             )
             for error in execution.errors:
                 logger.warning("【TG115】订阅 [%s] 候选处理失败，继续尝试下一候选: %s", subscribe.name, error)
@@ -1423,6 +1440,7 @@ class TgSearch115(_PluginBase):
                 return
 
             is_tv = is_tv_media(getattr(subscribe, "type", None))
+            auto_rejections: list = []
             auto_candidates = select_auto_candidates(
                 torrents=matched,
                 prefer_site_magnet=(
@@ -1431,18 +1449,21 @@ class TgSearch115(_PluginBase):
                 ),
                 is_tv=is_tv,
                 is_115_url=P115Transfer._is_115_share_url,
+                rejection_collector=auto_rejections,
             )
             # Preserve TG 115 -> Guanying 115 -> Guanying magnet -> Juying.
             auto_candidates = list(auto_candidates)
             if not auto_candidates:
+                reason = summarize_rejections(auto_rejections)
                 logger.info(
                     f"【TG115】订阅 [{subscribe.name}] 命中 {len(matched)} 条资源，"
-                    "但没有可安全自动处理的完整观影磁力或 115 分享，回退到默认搜索"
+                    f"但没有可安全自动处理的资源：{reason}"
                 )
                 self._send_fail_notify(
                     subscribe,
-                    f"命中 {len(matched)} 条，但没有符合中字 1080P/4K 或安全转存条件的资源",
+                    reason,
                     source_report,
+                    rejections=auto_rejections,
                 )
                 return
             def confirm(candidate):
@@ -1467,6 +1488,11 @@ class TgSearch115(_PluginBase):
                 )
                 return ok, message
 
+            def inspect_share_cb(candidate):
+                if not self._transfer:
+                    return False, "转存模块未初始化", []
+                return self._transfer.inspect_share(candidate.page_url or "", limit=32)
+
             execution = execute_auto_candidates(
                 candidates=auto_candidates,
                 confirm_identity=confirm,
@@ -1477,6 +1503,7 @@ class TgSearch115(_PluginBase):
                 max_magnet_attempts=self._magnet_max_attempts,
                 magnet_failover_enabled=self._magnet_failover_enabled,
                 magnet_queue_timeout_hours=self._magnet_queue_timeout_hours,
+                inspect_share=inspect_share_cb,
             )
             for error in execution.errors:
                 logger.warn(f"【TG115】订阅 [{subscribe.name}] 候选处理失败，继续回退: {error}")
@@ -1540,6 +1567,7 @@ class TgSearch115(_PluginBase):
                 "pansou", lambda: self._pansou_client.search(
                     keyword, year=year, media_type=media_type, season=target_season,
                     refresh=self._pansou_refresh, cloud_types=self._pansou_cloud_types,
+                    request_timeout=25.0, retry=False,
                 ), self._pansou_client, year,
             ))
         if self._juying_api:
@@ -2028,6 +2056,12 @@ class TgSearch115(_PluginBase):
             if url and P115Transfer._is_115_share_url(url) and rc \
                     and "password=" not in url and "receive_code=" not in url and "pwd=" not in url:
                 url = url + ("&" if "?" in url else "?") + f"password={rc}"
+            elif url and P115Transfer._is_115_share_url(url) and not rc \
+                    and "password=" not in url and "receive_code=" not in url and "pwd=" not in url:
+                logger.info(
+                    "【TG115】115 分享缺少提取码：%s",
+                    (h.resource_title or "")[:60],
+                )
             resource_title = h.resource_title or ""
             source_title = str(getattr(h, "source_title", "") or "").strip()
             source_year = getattr(h, "year", None)
@@ -2186,7 +2220,9 @@ class TgSearch115(_PluginBase):
                                     "【TG115】%s" % diagnostics.summary()
                                 )
                         else:
-                            logger.warn("【TG115】无法读取 MoviePilot 规则定义，115 分享保持原始规则结果")
+                            # 规则定义读取失败时，115 分享不应被 native_matched 清空
+                            logger.warn("【TG115】无法读取 MoviePilot 规则定义，115 分享跳过规则组过滤")
+                            compat_matched = list(share_candidates)
                     allowed = {id(item) for item in native_matched}
                     allowed.update(id(item) for item in compat_matched)
                     torrents = [item for item in torrents if id(item) in allowed]
@@ -2197,10 +2233,14 @@ class TgSearch115(_PluginBase):
             torrents = [t for t in torrents if TorrentHelper.filter_torrent(t, filter_params)]
         return torrents, diagnostics
 
-    def _enrich_share_metadata(self, torrents: List[TorrentInfo], max_probes: int = 3,
+    def _enrich_share_metadata(self, torrents: List[TorrentInfo], max_probes: int = 10,
                                subscribe=None, mediainfo=None) -> None:
         """Append read-only 115 share names before MP rule/identity filtering."""
         if not self._transfer:
+            return
+        ok_ready, _ready_msg = self._transfer.is_ready()
+        if not ok_ready:
+            logger.info("【TG115】115 Cookie 不可用，跳过分享元数据探测")
             return
         probed = 0
         probe_candidates = order_identity_candidates(torrents, mediainfo, subscribe)
@@ -2213,12 +2253,19 @@ class TgSearch115(_PluginBase):
             cached = self._share_metadata_cache.get(code) if self._share_metadata_cache else None
             if cached is None:
                 if probed:
-                    time.sleep(random.uniform(0.4, 0.8))
+                    time.sleep(random.uniform(0.3, 0.6))
                 ok, _message, names = self._transfer.inspect_share(
                     torrent.page_url or "", limit=32
                 )
                 probed += 1
-                cached = names if ok else []
+                if ok:
+                    cached = names
+                else:
+                    cached = []
+                    logger.info(
+                        "【TG115】115 分享元数据探测失败：%s，分享=%s",
+                        _message, _safe_share_label(torrent),
+                    )
                 if self._share_metadata_cache:
                     self._share_metadata_cache.set(code, cached)
             if not cached:
@@ -2238,7 +2285,13 @@ class TgSearch115(_PluginBase):
                 torrent.description or "",
             ))
             setattr(torrent, "_tg115_metadata_verified", True)
-            logger.info("【TG115】115 分享只读文件名已补充候选元数据")
+            # 检测 115 分享内是否包含中文字幕文件
+            has_sub_file = has_chinese_subtitle_file(cached)
+            setattr(torrent, "_tg115_has_chinese_sub_file", has_sub_file)
+            logger.info(
+                "【TG115】115 分享只读文件名已补充候选元数据，中文字幕文件=%s",
+                "是" if has_sub_file else "未检测到",
+            )
 
     @staticmethod
     def _get_rule_engine_snapshot(rule_groups: List[str], mediainfo) -> Optional[Tuple[List[Any], Dict[str, Any]]]:
@@ -2530,6 +2583,14 @@ class TgSearch115(_PluginBase):
         return "本季合集"
 
     @staticmethod
+    def _safe_share_label(torrent) -> str:
+        """脱敏的 115 分享标签，用于日志。"""
+        title = str(getattr(torrent, "title", "") or "未命名资源")
+        if len(title) > 60:
+            title = title[:60] + "…"
+        return title
+
+    @staticmethod
     def _parse_resource_meta(text: str) -> dict:
         """从资源标题解析展示元数据，供详情页卡片展示与排序。
 
@@ -2678,21 +2739,27 @@ class TgSearch115(_PluginBase):
 
     def _send_fail_notify(
             self, subscribe, reason: str,
-            source_report: Optional[SearchReport] = None) -> None:
+            source_report: Optional[SearchReport] = None,
+            rejections: Optional[list] = None) -> None:
         if not self._notify_fail:
             return
+        text_parts = [
+            f"结果：未找到可安全自动处理的资源。\n",
+            f"搜索命中：{source_report.text() if source_report else '已完成全部已启用来源'}\n",
+            f"原因：{reason}。\n",
+        ]
+        if self._search_detail_notify and rejections:
+            detail = format_rejection_detail(rejections)
+            if detail:
+                text_parts.append(f"{detail}\n")
+        text_parts.append("后续：订阅已恢复，MoviePilot 可在后续订阅搜索中继续处理。")
         try:
             self._post_search_notification_once(
                 subscribe=subscribe,
                 outcome="missed",
                 mtype=NotificationType.Subscribe,
                 title=subscription_notification_title(subscribe),
-                text=(
-                    f"结果：未找到可安全自动处理的资源。\n"
-                    f"搜索命中：{source_report.text() if source_report else '已完成全部已启用来源'}\n"
-                    f"原因：{reason}。\n"
-                    "后续：订阅已恢复，MoviePilot 可在后续订阅搜索中继续处理。"
-                ),
+                text="".join(text_parts),
             )
         except Exception:
             pass
@@ -3678,6 +3745,7 @@ class TgSearch115(_PluginBase):
             "use_rule_groups": True,
             "notify_success": True,
             "notify_fail": False,
+            "search_detail_notify": False,
             "auto_finish": False,
             "periodic_enabled": True,
             "period_hours": 2,
