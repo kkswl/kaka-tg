@@ -331,7 +331,7 @@
             <v-col cols="6" md="4"><v-text-field v-model="config.tg_page_delay_max" label="TG 最大间隔（秒）" type="number" step="0.1" min="0.2" variant="outlined" density="compact" hide-details /></v-col>
             <v-col cols="6" md="3"><v-text-field v-model="config.source_item_delay_min" label="订阅最小间隔（秒）" type="number" min="0" variant="outlined" density="compact" hide-details /></v-col>
             <v-col cols="6" md="3"><v-text-field v-model="config.source_item_delay_max" label="订阅最大间隔（秒）" type="number" min="0" variant="outlined" density="compact" hide-details /></v-col>
-            <v-col cols="6" md="3"><v-text-field v-model="config.source_failure_threshold" label="熔断失败次数" type="number" min="1" max="5" variant="outlined" density="compact" hide-details /></v-col>
+            <v-col cols="6" md="3"><v-text-field v-model="config.source_failure_threshold" label="熔断失败次数" type="number" min="1" max="10" variant="outlined" density="compact" hide-details /></v-col>
             <v-col cols="6" md="3"><v-select v-model="config.source_cooldown_minutes" :items="cooldownOptions" label="来源冷却" variant="outlined" density="compact" hide-details /></v-col>
             <v-col cols="12" md="6" class="config-switch-row"><span class="text-body-2">转存成功通知</span><v-switch v-model="config.notify_success" color="primary" hide-details density="compact" /></v-col>
             <v-col cols="12" md="6" class="config-switch-row"><span class="text-body-2">未命中通知</span><v-switch v-model="config.notify_fail" color="primary" hide-details density="compact" /></v-col>
@@ -395,7 +395,7 @@
               <v-text-field v-model="config.pansou_url" label="PanSou 服务地址" placeholder="http://192.168.1.15:8888" variant="outlined" density="compact" hide-details />
             </v-col>
             <v-col cols="12" md="4">
-              <v-text-field v-model="config.pansou_timeout" label="请求超时（秒）" type="number" min="3" max="60" variant="outlined" density="compact" hide-details />
+              <v-text-field v-model="config.pansou_timeout" label="请求超时（秒）" type="number" min="3" max="180" variant="outlined" density="compact" hide-details />
             </v-col>
             <v-col cols="12" md="4">
               <v-text-field v-model="config.pansou_proxy" label="PanSou 专用代理（可选）" placeholder="留空直连；填 mp 使用全局代理" variant="outlined" density="compact" hide-details />
@@ -628,8 +628,8 @@ const DEFAULTS = {
   source_item_delay_min: 5,
   source_item_delay_max: 10,
   search_cache_hours: 2,
-  source_failure_threshold: 3,
-  source_cooldown_minutes: 60,
+  source_failure_threshold: 5,
+  source_cooldown_minutes: 5,
   tg_search_enabled: true,
   tg_concurrency: 2,
   tg_page_delay_min: 0.8,
@@ -686,8 +686,10 @@ const tgConcurrencyOptions = [
   { title: '3', value: 3 },
 ]
 const cooldownOptions = [
+  { title: '5 分钟', value: 5 },
+  { title: '10 分钟', value: 10 },
+  { title: '15 分钟', value: 15 },
   { title: '30 分钟', value: 30 },
-  { title: '45 分钟', value: 45 },
   { title: '60 分钟', value: 60 },
 ]
 const pansouCloudOptions = [

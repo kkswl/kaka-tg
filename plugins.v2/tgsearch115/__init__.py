@@ -241,7 +241,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.43"
+    plugin_version = "4.7.44"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -368,8 +368,8 @@ class TgSearch115(_PluginBase):
             self._safe_float(config.get("source_item_delay_max"), 10.0),
         )
         cache_hours = min(6, max(1, self._safe_int(config.get("search_cache_hours"), 2)))
-        failure_threshold = min(5, max(1, self._safe_int(config.get("source_failure_threshold"), 3)))
-        cooldown_minutes = min(60, max(30, self._safe_int(config.get("source_cooldown_minutes"), 60)))
+        failure_threshold = min(10, max(1, self._safe_int(config.get("source_failure_threshold"), 5)))
+        cooldown_minutes = min(60, max(1, self._safe_int(config.get("source_cooldown_minutes"), 5)))
         self._cms_timeout_hours = min(72, max(1, self._safe_int(config.get("cms_timeout_hours"), 12)))
         self._magnet_download_mode = "direct_115"
         self._direct_timeout_hours = min(72, max(1, self._safe_int(config.get("direct_timeout_hours"), 12)))
@@ -412,7 +412,7 @@ class TgSearch115(_PluginBase):
         self._pansou_enabled = self._to_bool(config.get("pansou_enabled"), True)
         self._pansou_url = str(config.get("pansou_url") or "http://192.168.1.15:8888").strip().rstrip("/")
         self._pansou_token = str(config.get("pansou_token") or "").strip()
-        self._pansou_timeout = min(60.0, max(3.0, self._safe_float(config.get("pansou_timeout"), 20.0)))
+        self._pansou_timeout = min(180.0, max(3.0, self._safe_float(config.get("pansou_timeout"), 20.0)))
         self._pansou_refresh = self._to_bool(config.get("pansou_refresh"), False)
         self._pansou_max_results = min(100, max(1, self._safe_int(config.get("pansou_max_results"), 100)))
         self._pansou_cloud_types = self._parse_string_list(config.get("pansou_cloud_types"), ["115", "magnet"])
@@ -1567,7 +1567,7 @@ class TgSearch115(_PluginBase):
                 "pansou", lambda: self._pansou_client.search(
                     keyword, year=year, media_type=media_type, season=target_season,
                     refresh=self._pansou_refresh, cloud_types=self._pansou_cloud_types,
-                    request_timeout=25.0, retry=False,
+                    request_timeout=self._pansou_timeout,
                 ), self._pansou_client, year,
             ))
         if self._juying_api:
@@ -3417,7 +3417,7 @@ class TgSearch115(_PluginBase):
                 jobs["pansou"] = lambda: (
                     self._pansou_client.search(
                         search_kw, year=manual_year, refresh=self._pansou_refresh,
-                        cloud_types=(), retry=False, request_timeout=30.0,
+                        cloud_types=(), request_timeout=self._pansou_timeout,
                     ) or [], False,
                 )
                 clients["pansou"] = self._pansou_client

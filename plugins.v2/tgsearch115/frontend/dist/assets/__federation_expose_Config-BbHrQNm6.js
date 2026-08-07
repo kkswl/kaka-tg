@@ -76,8 +76,8 @@ const DEFAULTS = {
   source_item_delay_min: 5,
   source_item_delay_max: 10,
   search_cache_hours: 2,
-  source_failure_threshold: 3,
-  source_cooldown_minutes: 60,
+  source_failure_threshold: 5,
+  source_cooldown_minutes: 5,
   tg_search_enabled: true,
   tg_concurrency: 2,
   tg_page_delay_min: 0.8,
@@ -134,8 +134,10 @@ const tgConcurrencyOptions = [
   { title: '3', value: 3 },
 ];
 const cooldownOptions = [
+  { title: '5 分钟', value: 5 },
+  { title: '10 分钟', value: 10 },
+  { title: '15 分钟', value: 15 },
   { title: '30 分钟', value: 30 },
-  { title: '45 分钟', value: 45 },
   { title: '60 分钟', value: 60 },
 ];
 const pansouCloudOptions = [
@@ -1826,7 +1828,7 @@ return (_ctx, _cache) => {
                           label: "熔断失败次数",
                           type: "number",
                           min: "1",
-                          max: "5",
+                          max: "10",
                           variant: "outlined",
                           density: "compact",
                           "hide-details": ""
@@ -2128,7 +2130,7 @@ return (_ctx, _cache) => {
                           label: "请求超时（秒）",
                           type: "number",
                           min: "3",
-                          max: "60",
+                          max: "180",
                           variant: "outlined",
                           density: "compact",
                           "hide-details": ""
@@ -2815,6 +2817,6 @@ return (_ctx, _cache) => {
 }
 
 };
-const Config = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-606968ac"]]);
+const Config = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-d78892df"]]);
 
 export { Config as default };

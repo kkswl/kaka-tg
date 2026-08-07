@@ -103,8 +103,9 @@ class ManualVerifiedProcessContractTest(unittest.TestCase):
     def test_pansou_auto_search_uses_bounded_timeout(self):
         source = PLUGIN.read_text(encoding="utf-8")
         pansou_call = source[source.index('"pansou", lambda: self._pansou_client.search('):source.index(", self._pansou_client, year,")]
-        self.assertIn("request_timeout=25.0", pansou_call)
-        self.assertIn("retry=False", pansou_call)
+        self.assertIn("request_timeout=self._pansou_timeout", pansou_call)
+        self.assertNotIn("request_timeout=25.0", pansou_call)
+        self.assertNotIn("retry=False", pansou_call)
 
     def test_select_auto_candidates_has_rejection_collector(self):
         source = PLUGIN.read_text(encoding="utf-8")

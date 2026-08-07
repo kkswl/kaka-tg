@@ -1,75 +1,75 @@
 
-.tg115-config[data-v-606968ac] {
+.tg115-config[data-v-d78892df] {
   max-width: 960px;
   margin: 0 auto;
 }
-.tg115-card[data-v-606968ac] {
+.tg115-card[data-v-d78892df] {
   background-color: rgb(var(--v-theme-surface));
   border-color: rgba(var(--v-theme-on-surface), 0.12);
 }
-.section-label[data-v-606968ac] {
+.section-label[data-v-d78892df] {
   font-size: 0.8125rem;
   font-weight: 600;
   color: rgba(var(--v-theme-on-surface), 0.7);
 }
-.config-section-title[data-v-606968ac] {
+.config-section-title[data-v-d78892df] {
   font-size: 0.875rem;
   font-weight: 700;
   color: rgba(var(--v-theme-on-surface), 0.82);
   padding-top: 8px;
 }
-.config-switch-row[data-v-606968ac] {
+.config-switch-row[data-v-d78892df] {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   min-height: 56px;
 }
-.config-field-copy[data-v-606968ac] {
+.config-field-copy[data-v-d78892df] {
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.add-card[data-v-606968ac] {
+.add-card[data-v-d78892df] {
   background-color: rgba(var(--v-theme-primary), 0.06);
 }
-.channel-list[data-v-606968ac] {
+.channel-list[data-v-d78892df] {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-.channel-item[data-v-606968ac] {
+.channel-item[data-v-d78892df] {
   background-color: rgb(var(--v-theme-surface));
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
-.channel-selected[data-v-606968ac] {
+.channel-selected[data-v-d78892df] {
   border-color: rgb(var(--v-theme-error)) !important;
   background-color: rgba(var(--v-theme-error), 0.05);
 }
-.channel-item[data-v-606968ac]:hover {
+.channel-item[data-v-d78892df]:hover {
   border-color: rgb(var(--v-theme-primary));
   box-shadow: 0 2px 10px rgba(var(--v-theme-on-surface), 0.08);
 }
-.channel-meta[data-v-606968ac] {
+.channel-meta[data-v-d78892df] {
   min-width: 0;
   flex: 1 1 auto;
 }
-.empty-state[data-v-606968ac] {
+.empty-state[data-v-d78892df] {
   text-align: center;
   padding: 36px 16px;
   color: rgba(var(--v-theme-on-surface), 0.45);
 }
-.filter-row[data-v-606968ac] {
+.filter-row[data-v-d78892df] {
   display: flex;
   align-items: center;
   gap: 8px;
   min-width: 0;
 }
-.filter-label[data-v-606968ac] {
+.filter-label[data-v-d78892df] {
   flex: 0 0 32px;
   font-size: 0.75rem;
   color: rgba(var(--v-theme-on-surface), 0.62);
 }
-.filter-toggle[data-v-606968ac] {
+.filter-toggle[data-v-d78892df] {
   max-width: calc(100% - 40px);
   overflow-x: auto;
 }
