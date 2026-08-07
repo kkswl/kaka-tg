@@ -242,7 +242,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.45"
+    plugin_version = "4.7.46"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -2296,8 +2296,8 @@ class TgSearch115(_PluginBase):
                 else:
                     cached = []
                     logger.info(
-                        "【TG115】115 分享元数据探测失败：%s，分享=%s",
-                        _message, _safe_share_label(torrent),
+                        "【TG115】115 分享元数据探测失败：%s，url=%s",
+                        _message, getattr(torrent, "page_url", "") or "",
                     )
                 if self._share_metadata_cache:
                     self._share_metadata_cache.set(code, cached)
