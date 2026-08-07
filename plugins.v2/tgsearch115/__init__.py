@@ -242,7 +242,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.48"
+    plugin_version = "4.7.49"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -1016,12 +1016,13 @@ class TgSearch115(_PluginBase):
                         season_label = ",".join(
                             f"S{s:02d}" for s in sorted(hit_seasons)
                         ) or "无明确季号"
+                        _reject_url = str(getattr(hit, "share_url", "") or "")
                         logger.info(
                             f"【TG115】订阅 [{subscribe.name}] S{target_season:02d} "
                             f"本地季号初筛拒绝: title=%s url=%s 候选季号=%s",
                             str(getattr(hit, "resource_title", "")
                                 or getattr(hit, "title", "") or "")[:80],
-                            getattr(hit, "share_url", "") or "",
+                            _reject_url if not is_magnet_url(_reject_url) else "(magnet)",
                             season_label,
                         )
                 keyword_hits = season_kept
@@ -1424,12 +1425,13 @@ class TgSearch115(_PluginBase):
                             season_label = ",".join(
                                 f"S{s:02d}" for s in sorted(hit_seasons)
                             ) or "无明确季号"
+                            _reject_url = str(getattr(hit, "share_url", "") or "")
                             logger.info(
                                 f"【TG115】订阅 [{subscribe.name}] S{target_season:02d} "
                                 f"本地季号初筛拒绝: title=%s url=%s 候选季号=%s",
                                 str(getattr(hit, "resource_title", "")
                                     or getattr(hit, "title", "") or "")[:80],
-                                getattr(hit, "share_url", "") or "",
+                                _reject_url if not is_magnet_url(_reject_url) else "(magnet)",
                                 season_label,
                             )
                     logger.info(
@@ -2127,12 +2129,14 @@ class TgSearch115(_PluginBase):
                 setattr(torrent, "_tg115_unavailable_rule_fields", {
                     "size", "seeders", "downloadvolumefactor", "publish_time",
                 })
+            # 磁力候选只记录名称，115 分享候选记录完整链接
+            log_url = "" if is_magnet_url(url) else url
             logger.info(
                 "【TG115】[候选] source=%s type=%s title=%s url=%s",
                 str(getattr(h, "_tg115_source", "") or "unknown"),
                 pan_type or "unknown",
                 display_title,
-                url,
+                log_url or "(magnet)",
             )
             torrents.append(torrent)
         return torrents
