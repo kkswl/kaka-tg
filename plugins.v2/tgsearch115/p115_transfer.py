@@ -78,7 +78,7 @@ class P115Transfer:
         if not share_code or not receive_code:
             return False, "解析 115 分享链接失败，缺少分享码或提取码", result
 
-        logger.info("【TG115】115 分享转存请求已接收")
+        logger.info("【TG115】115 分享转存请求已接收 url=%s", share_url)
         # 目标目录：纯数字视为 cid 直接用；否则按路径查找/创建
         try:
             if effective.isdigit():
@@ -96,8 +96,11 @@ class P115Transfer:
                 user_id = _part[4:].split("_")[0].strip()
                 break
 
-        # 1. share_snap 获取分享文件列表（含真实 file_id；file_id=0 会导致参数错误）
+        # 1. share_snap 获取分享文件列表
+        #    - 文件分享（list[0] 有 sha1/fid）：用 fid 转存该文件
+        #    - 目录分享（list[0] 无 sha1 且无 fid）：用 file_id=0 转存整个分享
         file_id = 0
+        is_dir_share = False
         try:
             snap = self._api_get("/share/snap", {
                 "share_code": share_code, "receive_code": receive_code,
@@ -107,8 +110,8 @@ class P115Transfer:
             snap_items = (snap_data.get("list") or snap_data.get("filelist") or []) \
                 if isinstance(snap_data, dict) else []
             logger.info(
-                "【TG115】share_snap 完成 state=%s items=%s",
-                bool(self._response_ok(snap)), len(snap_items),
+                "【TG115】share_snap 完成 state=%s items=%s url=%s",
+                bool(self._response_ok(snap)), len(snap_items), share_url,
             )
             if isinstance(snap, dict) and snap.get("state") not in (True, 1, "1"):
                 snap_err = snap.get("error") or snap.get("message") or "分享不可用"
@@ -116,8 +119,17 @@ class P115Transfer:
             if isinstance(snap_data, dict):
                 fl = snap_data.get("list") or snap_data.get("filelist") or []
                 if fl and isinstance(fl[0], dict):
-                    file_id = fl[0].get("fid") or fl[0].get("cid") or 0
-            logger.info("【TG115】分享文件定位完成 has_file_id=%s", bool(file_id))
+                    first = fl[0]
+                    if first.get("sha1") or first.get("fid"):
+                        # 文件分享：用 fid 定位具体文件
+                        file_id = first.get("fid") or first.get("cid") or 0
+                    else:
+                        # 目录分享：保持 file_id=0 转存整个分享
+                        is_dir_share = True
+            logger.info(
+                "【TG115】分享文件定位完成 has_file_id=%s is_dir_share=%s url=%s",
+                bool(file_id), is_dir_share, share_url,
+            )
         except Exception as e:
             logger.warn(f"【TG115】share_snap 异常（继续用 file_id=0）: {e}")
 
@@ -133,8 +145,8 @@ class P115Transfer:
         try:
             resp = self._api_post("/share/receive", payload)
             logger.info(
-                "【TG115】share_receive 完成 state=%s",
-                bool(self._response_ok(resp)),
+                "【TG115】share_receive 完成 state=%s url=%s",
+                bool(self._response_ok(resp)), share_url,
             )
         except Exception as e:
             logger.error(f"【TG115】share_receive 异常: {e}")
@@ -154,32 +166,81 @@ class P115Transfer:
         })
         return True, "115 转存成功", result
 
+    def _snap_names(self, share_code: str, receive_code: str, cid: Any = 0,
+                    limit: int = 32) -> Tuple[bool, list]:
+        """请求 share/snap 返回 (ok, items)。items 为 list[dict]，不含敏感信息。"""
+        try:
+            response = self._api_get("/share/snap", {
+                "share_code": share_code, "receive_code": receive_code,
+                "cid": cid, "limit": max(1, min(int(limit), 32)), "offset": 0,
+            })
+        except Exception:
+            return False, []
+        if not self._response_ok(response):
+            return False, []
+        data = response.get("data") if isinstance(response, dict) else None
+        items = (data.get("list") or data.get("filelist") or []) \
+            if isinstance(data, dict) else []
+        return True, items if isinstance(items, list) else []
+
     def inspect_share(self, share_url: str, limit: int = 12) -> Tuple[bool, str, list[str]]:
-        """Read share names only. This never calls share_receive or modifies 115."""
+        """Read share names only. This never calls share_receive or modifies 115.
+
+        对目录分享会递归向下查最多 2 层，收集真实文件名用于中字检测。
+        例如 ``根目录 → 季目录 → 剧集文件/字幕文件`` 这种结构，递归后能拿到
+        ``.ass``/``.srt`` 字幕文件名，使 ``has_chinese_subtitle_file`` 能正确识别。
+        """
         share_code, receive_code = self._extract_payload(share_url)
         if not share_code or not receive_code:
             return False, "分享缺少提取码，无法只读识别", []
         ok, message = self.is_ready()
         if not ok:
             return False, message, []
-        try:
-            response = self._api_get("/share/snap", {
-                "share_code": share_code, "receive_code": receive_code,
-                "cid": 0, "limit": max(1, min(int(limit), 32)), "offset": 0,
-            })
-        except Exception as exc:
-            return False, f"115 分享读取失败: {type(exc).__name__}", []
-        if not self._response_ok(response):
+
+        root_limit = max(1, min(int(limit), 32))
+        max_names = 60          # 收集名称上限，足够中字检测
+        max_subdirs = 8         # 每层最多递归的子目录数
+
+        names: list[str] = []
+
+        def collect(items: list) -> list:
+            """从 items 收集文件名，返回其中的目录 cid 列表（sha1 为空=目录）。"""
+            sub_dirs: list[str] = []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("n") or item.get("name") or item.get("file_name") or "").strip()
+                if name and name not in names:
+                    names.append(name[:300])
+                if not item.get("sha1"):
+                    cid_val = item.get("cid")
+                    if cid_val:
+                        sub_dirs.append(str(cid_val))
+            return sub_dirs
+
+        # 第 0 层：分享根（cid=0）
+        ok0, items0 = self._snap_names(share_code, receive_code, cid=0, limit=root_limit)
+        if not ok0:
             return False, "115 分享不可读取", []
-        data = response.get("data") if isinstance(response, dict) else None
-        items = data.get("list") or data.get("filelist") or [] if isinstance(data, dict) else []
-        names = []
-        for item in items:
-            if not isinstance(item, dict):
+        root_dirs = collect(items0)
+
+        # 第 1 层：递归根目录
+        for cid in root_dirs[:max_subdirs]:
+            if len(names) >= max_names:
+                break
+            ok1, items1 = self._snap_names(share_code, receive_code, cid=cid, limit=32)
+            if not ok1:
                 continue
-            name = str(item.get("n") or item.get("name") or item.get("file_name") or "").strip()
-            if name and name not in names:
-                names.append(name[:300])
+            sub_dirs = collect(items1)
+            # 第 2 层：再递归一层（针对 季→剧集目录→文件 这种结构）
+            for sub_cid in sub_dirs[:max_subdirs]:
+                if len(names) >= max_names:
+                    break
+                ok2, items2 = self._snap_names(share_code, receive_code, cid=sub_cid, limit=32)
+                if not ok2:
+                    continue
+                collect(items2)
+
         return (True, "115 分享文件名已读取", names) if names else (False, "115 分享没有可识别文件名", [])
 
     # ============================ 目录操作（供 __init__ 的浏览/验证 API 用）============================

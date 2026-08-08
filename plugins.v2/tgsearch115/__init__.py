@@ -2326,8 +2326,9 @@ class TgSearch115(_PluginBase):
             has_sub_file = has_chinese_subtitle_file(cached)
             setattr(torrent, "_tg115_has_chinese_sub_file", has_sub_file)
             logger.info(
-                "【TG115】115 分享只读文件名已补充候选元数据，中文字幕文件=%s",
+                "【TG115】115 分享只读文件名已补充候选元数据，中文字幕文件=%s url=%s",
                 "是" if has_sub_file else "未检测到",
+                getattr(torrent, "page_url", "") or "",
             )
 
     @staticmethod

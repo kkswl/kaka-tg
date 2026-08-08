@@ -3,11 +3,11 @@
     "name": "拦截mp订阅",
     "description": "聚合 TG、观影、PanSou 与聚影资源，经 MoviePilot 规则和精确媒体身份确认后按来源顺序转存；完整磁力统一使用插件内置 115 离线，115 分享继续使用插件内置 115 转存。",
     "labels": "订阅,Telegram,115网盘",
-    "version": "4.7.49",
+    "version": "4.7.50",
     "author": "MoviePilot User",
     "level": 2,
     "history": {
-      "v4.7.49": "精简候选日志：[候选] 和「本地季号初筛拒绝」日志中磁力候选不再输出完整 magnet 链接（含大量 tracker），只显示 (magnet) 占位和标题；115 分享候选仍保留完整链接。",
+      "v4.7.50": "修复目录分享转存失败和中字检测失效：transfer 对目录分享（list[0] 无 sha1 且无 fid）改用 file_id=0 转存整个分享，不再误用根目录 cid；inspect_share 增加递归探测（最多 3 层、每层最多 8 个子目录、最多收集 60 个名称），目录分享能拿到深层 .ass/.srt 字幕文件名供 has_chinese_subtitle_file 识别；transfer 的 share_snap/分享文件定位/share_receive 等日志补充真实分享链接 url=%s，_enrich_share_metadata 成功日志同样补充 url。",
       "v4.7.48": "合并「单次尝试超时」和「单候选无进展超时」为单一配置项「磁力下载等待时间（分钟）」，默认 1 分钟，前端只显示一个输入框；后端 _magnet_attempt_timeout_minutes 和 _magnet_no_progress_timeout_minutes 均等于 _magnet_download_wait_minutes，保持引用不变。",
       "v4.7.47": "磁力候选轮换超时配置下限从 10 分钟放宽到 1 分钟，用户可自行填写更短的超时时间；前端配置页新增「单次尝试超时（分钟）」输入框（之前只有 DEFAULTS 和 clamp 没有 UI），「单候选无进展超时（分钟）」min 从 10 改为 1。",
       "v4.7.46": "修复 v4.7.45 引入的 NameError：_enrich_share_metadata 中 _safe_share_label 调用漏了 self. 前缀导致订阅处理异常回退到默认搜索；改为直接输出完整 115 分享链接 url=%s（不脱敏），符合日志规范。",
