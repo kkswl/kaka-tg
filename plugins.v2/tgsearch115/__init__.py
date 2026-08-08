@@ -242,7 +242,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.49"
+    plugin_version = "4.7.50"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
