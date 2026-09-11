@@ -21,7 +21,7 @@ class SubscriptionDryRunContractTest(unittest.TestCase):
         end = self.source.index("def __retry_cms_task_api", start)
         body = self.source[start:end]
         self.assertIn('payload.get("confirm") is not True', body)
-        self.assertIn("enqueue_subscription(subscribe_id, priority=-5)", body)
+        self.assertIn('enqueue_subscription(subscribe_id, priority=-5, trigger="manual")', body)
         self.assertIn("_forced_process_states", body)
         self.assertIn('original_state not in {"N", "R"}', body)
         self.assertNotIn("SubscribeOper().update", body)

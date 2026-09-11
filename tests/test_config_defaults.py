@@ -28,6 +28,8 @@ class ConfigDefaultsTest(unittest.TestCase):
         self.assertTrue(defaults["periodic_enabled"])
         self.assertEqual(2, defaults["period_hours"])
         self.assertEqual(10, defaults["jitter_minutes"])
+        self.assertEqual(20, defaults["source_request_timeout_seconds"])
+        self.assertEqual(60, defaults["auto_search_budget_seconds"])
         self.assertEqual(2, defaults["tg_concurrency"])
         self.assertNotIn("cms_url", defaults)
         self.assertNotIn("cms_token", defaults)

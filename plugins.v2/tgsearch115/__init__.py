@@ -100,6 +100,7 @@ from .offline_rule_compat import RuleCompatibilityDiagnostics, filter_offline_sh
 from .cms_tasks import CmsTaskLedger, btih_from_magnet, has_explicit_clear_confirmation
 from .p115_offline import P115OfflineClient
 from .runtime_control import (
+    BoundedSourceRunner,
     SearchCoordinator,
     SourceCircuitBreaker,
     TtlCache,
@@ -247,7 +248,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.8.0"
+    plugin_version = "4.8.1"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -277,6 +278,7 @@ class TgSearch115(_PluginBase):
     _target_tmdb_cache: Optional[TtlCache] = None
     _timeline: Optional[SubscriptionTimeline] = None
     _source_health: Optional[SourceHealth] = None
+    _source_runner: Optional[BoundedSourceRunner] = None
 
     # 配置项（运行态缓存）
     _tg_search_enabled = True
@@ -297,6 +299,8 @@ class TgSearch115(_PluginBase):
     _jitter_minutes = 10
     _source_item_delay_min = 5.0
     _source_item_delay_max = 10.0
+    _source_request_timeout_seconds = 20.0
+    _auto_search_budget_seconds = 60.0
     _cms_timeout_hours = 12
     _magnet_download_mode = "direct_115"
     _direct_timeout_hours = 12
@@ -385,6 +389,12 @@ class TgSearch115(_PluginBase):
             self._source_item_delay_min,
             self._safe_float(config.get("source_item_delay_max"), 10.0),
         )
+        self._source_request_timeout_seconds = min(
+            60.0, max(5.0, self._safe_float(config.get("source_request_timeout_seconds"), 20.0))
+        )
+        self._auto_search_budget_seconds = min(
+            180.0, max(15.0, self._safe_float(config.get("auto_search_budget_seconds"), 60.0))
+        )
         cache_hours = min(6, max(1, self._safe_int(config.get("search_cache_hours"), 2)))
         failure_threshold = min(10, max(1, self._safe_int(config.get("source_failure_threshold"), 5)))
         cooldown_minutes = min(60, max(1, self._safe_int(config.get("source_cooldown_minutes"), 5)))
@@ -412,6 +422,7 @@ class TgSearch115(_PluginBase):
             failure_threshold=failure_threshold,
             cooldown_seconds=cooldown_minutes * 60,
         )
+        self._source_runner = BoundedSourceRunner()
         self._recognition_gate = RecognitionGate()
         # TG 频道列表：自定义前端直接以数组/JSON 字符串形式提交 tg_channels
         self._tg_channels = self._parse_channels(config.get("tg_channels"))
@@ -778,6 +789,7 @@ class TgSearch115(_PluginBase):
             between_items=(self._source_item_delay_min, self._source_item_delay_max),
             queue_size=100,
             periodic_enabled=self._periodic_enabled,
+            on_subscription_queued=self._record_queued_subscription,
         )
         self._coordinator.start()
         self._start_offline_poller()
@@ -890,6 +902,18 @@ class TgSearch115(_PluginBase):
             self._forced_process_states.pop(subscribe_id, None)
 
     # ============================ 事件入口 ============================
+    def _record_queued_subscription(self, subscribe_id: int, trigger: str) -> None:
+        """Expose queued work immediately; worker startup may be delayed by a source timeout."""
+        if not self._timeline:
+            return
+        try:
+            subscribe = SubscribeOper().get(int(subscribe_id))
+            if subscribe:
+                self._timeline.start(subscribe, trigger)
+                self._save_diagnostics()
+        except Exception as exc:
+            logger.warning("【TG115】写入排队诊断失败 type=%s", type(exc).__name__)
+
     @eventmanager.register(EventType.SubscribeAdded)
     def on_subscribe_added(self, event: Event):
         """订阅新增事件：异步触发 TG+115 优先处理。
@@ -907,7 +931,7 @@ class TgSearch115(_PluginBase):
             logger.warning(f"【TG115】订阅 {subscribe_id} 未能进入插件优先处理状态")
             return
         if self._coordinator and self._coordinator.enqueue_subscription(
-                int(subscribe_id), priority=0):
+                int(subscribe_id), priority=0, trigger="event"):
             return
         self._restore_claim(int(subscribe_id))
         logger.warn(f"【TG115】订阅 {subscribe_id} 未能进入搜索队列，将由周期任务重试")
@@ -1000,11 +1024,19 @@ class TgSearch115(_PluginBase):
         source_raw = Counter()
         source_relevance_rejected = Counter()
         keywords = self._build_keywords(subscribe, mediainfo, target_season)
+        search_deadline = time.monotonic() + self._auto_search_budget_seconds
+        result["search_budget_seconds"] = self._auto_search_budget_seconds
+        result["search_timed_out"] = False
         pending_base_keywords = {
             keyword.casefold() for keyword in keywords
             if target_season is not None and site_title_keyword(keyword) == keyword
         }
         for keyword in keywords:
+            if time.monotonic() >= search_deadline:
+                result["search_timed_out"] = True
+                result["reason"] = "来源搜索超过本轮总时限，已释放队列等待下次重试"
+                logger.warning("【TG115】订阅 [%s] 来源搜索达到总时限，停止本轮", subscribe.name)
+                break
             logger.info(
                 "【TG115】订阅 [%s] %s开始搜索，关键字: %s",
                 subscribe.name,
@@ -1016,6 +1048,7 @@ class TgSearch115(_PluginBase):
                 media_type=getattr(subscribe, "type", ""), target_season=target_season,
                 source_report=report, site_years=site_years,
                 search_diagnostics=result["site_query_hits"],
+                deadline=search_deadline,
             )
             result["season_before"] += len(keyword_hits)
             for hit in keyword_hits:
@@ -1070,7 +1103,7 @@ class TgSearch115(_PluginBase):
         logger.info("【TG115】搜索渠道统计: %s", result["source_stats"])
         result["hits"] = hits
         if not hits:
-            result["reason"] = "未找到符合目标季与标题的候选"
+            result["reason"] = result.get("reason") or "未找到符合目标季与标题的候选"
             return result
 
         torrents = self._build_torrents(hits)
@@ -1609,7 +1642,8 @@ class TgSearch115(_PluginBase):
             target_season: Optional[int] = None,
             source_report: Optional[SearchReport] = None,
             site_years: Optional[List[Optional[int]]] = None,
-            search_diagnostics: Optional[Dict[str, int]] = None) -> List[Any]:
+            search_diagnostics: Optional[Dict[str, int]] = None,
+            deadline: Optional[float] = None) -> List[Any]:
         """Search enabled sources with per-source TTL caching and circuit breaking."""
         hits: List[Any] = []
         source_calls = []
@@ -1652,6 +1686,12 @@ class TgSearch115(_PluginBase):
         ]
 
         for source, callback, client, source_year in source_calls:
+            deadline_remaining = None if deadline is None else deadline - time.monotonic()
+            if deadline_remaining is not None and deadline_remaining <= 0:
+                if source_report:
+                    source_report.mark(source, "timeout")
+                logger.warning("【TG115】%s 来源未开始：本轮搜索总时限已到", source)
+                break
             cache_keyword = site_keyword if source == "site" else keyword
             cache_key = source_cache_key(
                 source, cache_keyword, source_year, media_type, target_season,
@@ -1686,17 +1726,54 @@ class TgSearch115(_PluginBase):
                     else f"【TG115】{source} 命中周期搜索缓存 {len(cached)} 条"
                 )
                 continue
-            allowed, remaining = self._source_breaker.allow(source) \
+            allowed, cooldown_remaining = self._source_breaker.allow(source) \
                 if self._source_breaker else (True, 0)
             if not allowed:
                 if source_report:
                     source_report.mark(source, "cooldown")
-                logger.warn(f"【TG115】{source} 来源熔断中，剩余 {remaining} 秒，本轮跳过")
+                logger.warn(f"【TG115】{source} 来源熔断中，剩余 {cooldown_remaining} 秒，本轮跳过")
                 continue
             try:
-                source_started = time.monotonic()
-                source_hits = callback() or []
-                elapsed = time.monotonic() - source_started
+                runner = self._source_runner or BoundedSourceRunner()
+                call_timeout = self._source_request_timeout_seconds
+                if deadline_remaining is not None:
+                    call_timeout = min(call_timeout, max(0.1, deadline_remaining))
+                call_status, source_hits, elapsed, call_error = runner.run(
+                    source, callback, call_timeout,
+                )
+                if call_status == "busy":
+                    if source_report:
+                        source_report.mark(source, "busy")
+                    logger.warning("【TG115】%s 上一请求仍在结束中，本轮跳过避免并发", source)
+                    continue
+                if call_status == "timeout":
+                    # TG can return completed-channel results even while a few
+                    # channels are still blocked. Keep that bounded partial data.
+                    source_hits = []
+                    if source == "tg" and hasattr(client, "partial_result"):
+                        snapshot = client.partial_result() or {}
+                        source_hits = list(snapshot.get("items") or [])
+                    if source_report:
+                        source_report.mark(source, "timeout")
+                    if self._source_health:
+                        self._source_health.record(source, "timeout", elapsed, len(source_hits))
+                    if self._source_breaker:
+                        self._source_breaker.failure(source, "request timeout")
+                    logger.warning(
+                        "【TG115】%s 请求超过 %.0f 秒，已释放订阅队列%s",
+                        source, call_timeout,
+                        "并保留已完成频道结果" if source_hits else "",
+                    )
+                    for hit in source_hits:
+                        try:
+                            setattr(hit, "_tg115_source", source)
+                        except Exception:
+                            pass
+                    hits.extend(source_hits)
+                    continue
+                if call_status == "failed":
+                    raise call_error or RuntimeError("source callback failed")
+                source_hits = source_hits or []
                 for hit in source_hits:
                     # Preserve source identity through the common TorrentInfo
                     # conversion so automatic ordering is deterministic.
@@ -3355,7 +3432,7 @@ class TgSearch115(_PluginBase):
             return JSONResponse({"success": False, "message": "订阅当前状态不允许正式处理"}, status_code=409)
         with self._lock:
             self._forced_process_states[subscribe_id] = original_state
-        if not self._coordinator.enqueue_subscription(subscribe_id, priority=-5):
+        if not self._coordinator.enqueue_subscription(subscribe_id, priority=-5, trigger="manual"):
             with self._lock:
                 self._forced_process_states.pop(subscribe_id, None)
             return JSONResponse({"success": False, "message": "订阅已在队列中或队列不可用"}, status_code=409)
@@ -3879,6 +3956,8 @@ class TgSearch115(_PluginBase):
             "jitter_minutes": 10,
             "source_item_delay_min": 5,
             "source_item_delay_max": 10,
+            "source_request_timeout_seconds": 20,
+            "auto_search_budget_seconds": 60,
             "search_cache_hours": 2,
             "source_failure_threshold": 3,
             "source_cooldown_minutes": 60,

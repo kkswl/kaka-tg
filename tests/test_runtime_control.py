@@ -90,6 +90,27 @@ class RuntimeControlTest(unittest.TestCase):
         now[0] += 61
         self.assertEqual((True, 0), breaker.allow("site"))
 
+    def test_bounded_source_runner_times_out_without_running_a_second_same_source_call(self):
+        runner = runtime_control.BoundedSourceRunner()
+        release = threading.Event()
+        started = threading.Event()
+
+        def blocked():
+            started.set()
+            release.wait(1)
+            return "late"
+
+        status, _value, _elapsed, error = runner.run("tg", blocked, timeout=0.02)
+        self.assertEqual("timeout", status)
+        self.assertIsNone(error)
+        self.assertTrue(started.is_set())
+        busy, _value, _elapsed, _error = runner.run("tg", lambda: "second", timeout=0.02)
+        self.assertEqual("busy", busy)
+        release.set()
+        time.sleep(0.03)
+        status, value, _elapsed, error = runner.run("tg", lambda: "next", timeout=0.2)
+        self.assertEqual(("success", "next", None), (status, value, error))
+
     def test_manual_job_has_priority_and_stop_joins_threads(self):
         order = []
         coordinator = runtime_control.SearchCoordinator(
@@ -125,6 +146,18 @@ class RuntimeControlTest(unittest.TestCase):
         active_names = {thread.name for thread in threading.enumerate()}
         self.assertNotIn("tg115-search-worker", active_names)
         self.assertNotIn("tg115-search-scheduler", active_names)
+
+    def test_queued_callback_records_periodic_trigger_before_worker_starts(self):
+        queued = []
+        coordinator = runtime_control.SearchCoordinator(
+            process_subscription=lambda _sid: None,
+            list_subscriptions=lambda: [],
+            periodic_enabled=False,
+            on_subscription_queued=lambda sid, trigger: queued.append((sid, trigger)),
+        )
+        self.assertTrue(coordinator.enqueue_subscription(22, trigger="periodic"))
+        self.assertEqual([(22, "periodic")], queued)
+        coordinator.stop()
 
     def test_stop_cancels_queued_manual_request(self):
         coordinator = runtime_control.SearchCoordinator(

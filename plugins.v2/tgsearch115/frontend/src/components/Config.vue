@@ -331,6 +331,8 @@
             <v-col cols="6" md="4"><v-text-field v-model="config.tg_page_delay_max" label="TG 最大间隔（秒）" type="number" step="0.1" min="0.2" variant="outlined" density="compact" hide-details /></v-col>
             <v-col cols="6" md="3"><v-text-field v-model="config.source_item_delay_min" label="订阅最小间隔（秒）" type="number" min="0" variant="outlined" density="compact" hide-details /></v-col>
             <v-col cols="6" md="3"><v-text-field v-model="config.source_item_delay_max" label="订阅最大间隔（秒）" type="number" min="0" variant="outlined" density="compact" hide-details /></v-col>
+            <v-col cols="6" md="3"><v-text-field v-model="config.source_request_timeout_seconds" label="单来源超时（秒）" type="number" min="5" max="60" variant="outlined" density="compact" hide-details /></v-col>
+            <v-col cols="6" md="3"><v-text-field v-model="config.auto_search_budget_seconds" label="单订阅搜索预算（秒）" type="number" min="15" max="180" variant="outlined" density="compact" hide-details /></v-col>
             <v-col cols="6" md="3"><v-text-field v-model="config.source_failure_threshold" label="熔断失败次数" type="number" min="1" max="10" variant="outlined" density="compact" hide-details /></v-col>
             <v-col cols="6" md="3"><v-select v-model="config.source_cooldown_minutes" :items="cooldownOptions" label="来源冷却" variant="outlined" density="compact" hide-details /></v-col>
             <v-col cols="12" md="6" class="config-switch-row"><span class="text-body-2">转存成功通知</span><v-switch v-model="config.notify_success" color="primary" hide-details density="compact" /></v-col>
@@ -627,6 +629,8 @@ const DEFAULTS = {
   jitter_minutes: 10,
   source_item_delay_min: 5,
   source_item_delay_max: 10,
+  source_request_timeout_seconds: 20,
+  auto_search_budget_seconds: 60,
   search_cache_hours: 2,
   source_failure_threshold: 5,
   source_cooldown_minutes: 5,

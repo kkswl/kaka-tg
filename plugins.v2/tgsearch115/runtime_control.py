@@ -152,6 +152,50 @@ class SourceCircuitBreaker:
             }
 
 
+class BoundedSourceRunner:
+    """Run one request per source without allowing a stuck call to block the queue.
+
+    Python cannot safely kill a blocked network thread.  A timed-out call is
+    therefore left as a daemon, while its per-source lock prevents the next
+    subscription from issuing another concurrent request to the same upstream.
+    """
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic):
+        self._clock = clock
+        self._guard = threading.Lock()
+        self._locks: Dict[str, threading.Lock] = {}
+
+    def run(self, source: str, callback: Callable[[], Any], timeout: float) -> Tuple[str, Any, float, Optional[Exception]]:
+        with self._guard:
+            lock = self._locks.setdefault(str(source), threading.Lock())
+        if not lock.acquire(blocking=False):
+            return "busy", None, 0.0, None
+
+        completed = threading.Event()
+        box: Dict[str, Any] = {"result": None, "error": None}
+        started = self._clock()
+
+        def invoke() -> None:
+            try:
+                box["result"] = callback()
+            except Exception as exc:  # surfaced to the bounded caller
+                box["error"] = exc
+            finally:
+                completed.set()
+                lock.release()
+
+        threading.Thread(
+            target=invoke, name=f"tg115-source-{str(source)[:20]}", daemon=True,
+        ).start()
+        finished = completed.wait(max(0.1, float(timeout)))
+        elapsed = max(0.0, self._clock() - started)
+        if not finished:
+            return "timeout", None, elapsed, None
+        if box["error"] is not None:
+            return "failed", None, elapsed, box["error"]
+        return "success", box["result"], elapsed, None
+
+
 class SearchCoordinator:
     """Single bounded priority queue plus a stoppable periodic producer."""
 
@@ -164,6 +208,7 @@ class SearchCoordinator:
         between_items: Tuple[float, float] = (5.0, 10.0),
         queue_size: int = 100,
         periodic_enabled: bool = True,
+        on_subscription_queued: Optional[Callable[[int, str], None]] = None,
         random_uniform: Callable[[float, float], float] = random.uniform,
     ):
         self.process_subscription = process_subscription
@@ -175,6 +220,7 @@ class SearchCoordinator:
         self.between_items = (normalized_low, max(normalized_low, float(high)))
         self.queue_size = max(10, int(queue_size))
         self.periodic_enabled = bool(periodic_enabled)
+        self.on_subscription_queued = on_subscription_queued
         self._random_uniform = random_uniform
         self._condition = threading.Condition()
         self._heap: List[Tuple[int, int, Dict[str, Any]]] = []
@@ -219,16 +265,22 @@ class SearchCoordinator:
             self._heap.clear()
             self._pending_ids.clear()
 
-    def enqueue_subscription(self, subscribe_id: int, priority: int = 10) -> bool:
+    def enqueue_subscription(self, subscribe_id: int, priority: int = 10,
+                             trigger: str = "automatic") -> bool:
         sid = int(subscribe_id)
         with self._condition:
             if self._stop.is_set() or sid in self._pending_ids or len(self._heap) >= self.queue_size:
                 return False
-            job = {"kind": "subscription", "subscribe_id": sid}
+            job = {"kind": "subscription", "subscribe_id": sid, "trigger": str(trigger or "automatic")}
             heapq.heappush(self._heap, (int(priority), next(self._sequence), job))
             self._pending_ids.add(sid)
             self._condition.notify()
-            return True
+        if self.on_subscription_queued:
+            try:
+                self.on_subscription_queued(sid, str(trigger or "automatic"))
+            except Exception:
+                pass
+        return True
 
     def submit_manual(self, callback: Callable[[], Any], timeout: float = 300.0) -> Any:
         done = threading.Event()
@@ -249,7 +301,7 @@ class SearchCoordinator:
         subscriptions = active_unique_subscriptions(self.list_subscriptions() or [])
         enqueued = 0
         for subscribe in subscriptions:
-            if self.enqueue_subscription(int(subscribe.id), priority=10):
+            if self.enqueue_subscription(int(subscribe.id), priority=10, trigger="periodic"):
                 enqueued += 1
         with self._stats_lock:
             self._last_run = datetime.now().astimezone().isoformat(timespec="seconds")
