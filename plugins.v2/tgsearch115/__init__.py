@@ -248,7 +248,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.8.5"
+    plugin_version = "4.8.6"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -3551,12 +3551,29 @@ class TgSearch115(_PluginBase):
         返回 has_more 标记是否还有更多观影作品可翻页；warning 携带 app_auth 失效等提示。
         """
         from starlette.responses import JSONResponse
+        from uuid import uuid4
+        request_id = uuid4().hex[:12]
+
+        def _response(success: bool, message: str, status_code: int = 200, **extra):
+            """Keep the manual-search response safe and structurally stable."""
+            payload = {
+                "success": success,
+                "message": message,
+                "items": [],
+                "results": [],
+                "source_stats": {},
+                "source_status": {},
+                "request_id": request_id,
+            }
+            payload.update(extra)
+            return JSONResponse(payload, status_code=status_code)
+
         keyword = (keyword or "").strip()
         if not keyword:
-            return JSONResponse({"success": False, "message": "请输入搜索关键字"}, status_code=400)
+            return _response(False, "请输入搜索关键字", status_code=400)
         if ((not self._scraper or not self._tg_channels)
                 and not self._site_scraper and not self._pansou_client and not self._juying_api):
-            return JSONResponse({"success": False, "message": "未配置任何搜索源（TG、观影、PanSou 或聚影）"}, status_code=400)
+            return _response(False, "未配置任何搜索源（TG、观影、PanSou 或聚影）", status_code=400)
         try:
             offset = int(offset or 0)
         except Exception:
@@ -3569,7 +3586,7 @@ class TgSearch115(_PluginBase):
 
         src = (source or "all").lower()
         if src not in {"all", "tg", "site", "pansou", "juying"}:
-            return JSONResponse({"success": False, "message": "不支持的搜索来源"}, status_code=400)
+            return _response(False, "不支持的搜索来源", status_code=400)
         cooled_sources = []
         source_status = {}
 
@@ -3782,9 +3799,10 @@ class TgSearch115(_PluginBase):
                 else "error" if source_states & {"error", "timeout"}
                 else "empty"
             )
-            return JSONResponse({
-                "success": True,
-                "message": f"找到 {len(results)} 条资源",
+            return _response(
+                True,
+                f"找到 {len(results)} 条资源",
+                **{
                 "items": results,
                 "results": results,
                 "total": len(results),
@@ -3801,12 +3819,13 @@ class TgSearch115(_PluginBase):
                     }
                     for name in set(raw_counts) | set(source_status)
                 },
-            })
+                },
+            )
         except TimeoutError:
-            return JSONResponse({"success": False, "message": "搜索超时（连接或检索过久）"}, status_code=504)
+            return _response(False, "搜索超时（连接或检索过久）", status_code=504)
         except Exception as e:
-            logger.error(f"【TG115】手动搜索异常: {e}")
-            return JSONResponse({"success": False, "message": f"搜索失败: {e}"}, status_code=500)
+            logger.error("【TG115】手动搜索异常 type=%s request_id=%s", type(e).__name__, request_id)
+            return _response(False, "搜索服务暂时不可用，请稍后重试", status_code=500)
 
     # ---------------------------- 115 目录查询 / 浏览 API ----------------------------
     def __dir_info_api(self, cid: str = ""):

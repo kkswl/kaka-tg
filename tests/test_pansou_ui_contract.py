@@ -51,6 +51,22 @@ class PanSouUiContractTest(unittest.TestCase):
         self.assertNotIn("selectedResult", persisted)
         self.assertNotIn("transferring", persisted)
 
+    def test_manual_search_keeps_visible_recovery_actions_when_api_or_request_fails(self):
+        manual = (ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "ManualSearch.vue").read_text(encoding="utf-8")
+        self.assertIn("apiReady", manual)
+        self.assertIn("手动搜索服务尚未就绪", manual)
+        self.assertIn("重新加载插件页面", manual)
+        self.assertIn('@click="search">重试', manual)
+
+    def test_manual_search_backend_has_stable_safe_error_shape(self):
+        backend = (ROOT / "plugins.v2" / "tgsearch115" / "__init__.py").read_text(encoding="utf-8")
+        start = backend.index("    def __search_api")
+        end = backend.index("    # ---------------------------- 115 目录查询", start)
+        body = backend[start:end]
+        for field in ('"success"', '"message"', '"items"', '"source_stats"', '"request_id"'):
+            self.assertIn(field, body)
+        self.assertNotIn('f"搜索失败: {e}"', body)
+
 
 if __name__ == "__main__":
     unittest.main()

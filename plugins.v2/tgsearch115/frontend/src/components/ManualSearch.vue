@@ -1,5 +1,9 @@
 <template>
   <div class="manual-search">
+    <v-alert v-if="!apiReady" type="warning" variant="tonal" class="mb-3" role="alert">
+      手动搜索服务尚未就绪。页面没有被隐藏；请重新加载插件页面后重试。
+      <template #append><v-btn size="small" variant="text" @click="reloadPluginPage">重新加载插件页面</v-btn></template>
+    </v-alert>
     <div class="filter-row mb-2">
       <span class="filter-label">搜索范围</span>
       <v-btn-toggle v-model="source" mandatory color="primary" density="compact" divided class="filter-toggle">
@@ -54,7 +58,11 @@
 
     <div v-if="sourceSummary" class="source-summary mb-2">{{ sourceSummary }}</div>
     <div v-if="searched" class="text-caption text-medium-emphasis mb-3">后端返回：{{ backendCount }} 条 · 来源筛选：{{ sourceFilteredResults.length }} 条 · 资源筛选：{{ resourceFilteredCount }} 条 · 详细筛选：{{ filtered.length }} 条</div>
-    <div v-if="message" class="text-caption mb-3" :class="ok ? 'text-success' : 'text-error'">{{ message }}</div>
+    <div v-if="message" class="d-flex align-center flex-wrap ga-2 text-caption mb-3" :class="ok ? 'text-success' : 'text-error'">
+      <span>{{ message }}</span>
+      <v-btn v-if="searched && !ok && !searching" size="x-small" variant="text" @click="search">重试</v-btn>
+      <v-btn v-if="searched && !ok && !searching" size="x-small" variant="text" @click="reloadPluginPage">重新加载插件页面</v-btn>
+    </div>
     <div v-if="searching" class="empty-state"><v-progress-circular indeterminate size="40" color="primary" /></div>
     <v-row v-else-if="filtered.length" dense>
       <v-col v-for="(r, i) in filtered" :key="r.share_url || i" cols="12" sm="6" lg="4">
@@ -150,6 +158,7 @@ const ok = ref(false)
 const snack = ref(false)
 const snackColor = ref('')
 const snackText = ref('')
+const apiReady = computed(() => Boolean(props.api?.get))
 const filtered = computed(() => filterSearchResults(results.value, resourceType.value, detailFilter.value))
 const resourceFilteredCount = computed(() => resourceType.value === 'all' ? results.value.length : filterSearchResults(results.value, resourceType.value, 'all').length)
 const backendCount = computed(() => Object.values(sourceStats.value).reduce((total, stat) => total + Number(stat?.returned_count || 0), 0) || results.value.length)
@@ -228,6 +237,11 @@ function unwrap(res) {
   return value
 }
 function notify(text, color = 'success') { snackText.value = text; snackColor.value = color; snack.value = true }
+function reloadPluginPage() {
+  // A federation asset can be cached by the host after a plugin upgrade.
+  // Reloading is local-only and never submits a search or a transfer.
+  window.location.reload()
+}
 function fullUrl(r) {
   let url = String(r?.share_url || '')
   if (r?.pan_type === '115' && r?.receive_code && !/[?&](password|receive_code|pwd)=/.test(url)) {

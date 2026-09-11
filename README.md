@@ -1,5 +1,11 @@
 # 拦截 MP 订阅（tgsearch115）
 
+## v4.8.6 手动搜索交付与故障恢复
+
+- 手动搜索的 Vue 联邦工程位于 `plugins.v2/tgsearch115/frontend`，由 MoviePilot 通过 `frontend/dist/assets/remoteEntry.js` 加载；构建命令为在该目录执行 `npm run build`。
+- API 未注入、来源异常或超时不会再让手动搜索区域静默消失：页面显示安全错误、重试和“重新加载插件页面”入口。
+- 手动搜索 API 的成功和错误响应统一包含 `success`、`message`、`items`、`source_stats` 与脱敏 `request_id`；不向前端透传原始异常。
+
 ## v4.8.5 豆瓣订阅身份确认与候选标题修复
 
 - 修复新版 MoviePilot/PostgreSQL 中仅保存豆瓣 ID 的订阅：当候选已通过 MoviePilot 本地标题、年份、媒体类型核验，且候选媒体已识别到 TMDB ID 时，不再因候选缺少豆瓣交叉映射而误拒绝。
