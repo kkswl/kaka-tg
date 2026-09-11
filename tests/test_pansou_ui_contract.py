@@ -32,8 +32,9 @@ class PanSouUiContractTest(unittest.TestCase):
 
     def test_manual_search_separates_request_and_result_sources(self):
         manual = (ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "ManualSearch.vue").read_text(encoding="utf-8")
-        self.assertIn("搜索来源", manual)
+        self.assertIn("搜索范围", manual)
         self.assertIn("结果来源", manual)
+        self.assertLess(manual.index("搜索范围"), manual.index("search-toolbar"))
         self.assertIn("v-model=\"resultSource\"", manual)
         self.assertIn("item?.source", manual)
         self.assertIn("upstream_source", manual)
