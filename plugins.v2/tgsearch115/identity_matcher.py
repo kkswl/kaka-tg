@@ -215,6 +215,25 @@ def confirm_candidate_identity(
                 identity_path=("share_metadata_tmdb_fallback" if not local_match else "local_match"),
                 **diagnostic,
             )
+        # Newer MoviePilot/PostgreSQL subscription rows can be created from a
+        # Douban record without persisting its linked TMDB id.  Candidate
+        # recognition, on the other hand, commonly returns only TMDB data.
+        # Do not reject an otherwise fully verified candidate merely because
+        # the recognizer did not hydrate its Douban cross-reference.  This is
+        # intentionally narrow: TorrentHelper must already have confirmed the
+        # subscribed title/year/type and the candidate must expose a TMDB id.
+        # An explicit target TMDB id still takes precedence above and remains
+        # an exact, non-bypassable comparison.
+        if local_match and candidate_tmdb:
+            return IdentityResult(
+                True,
+                "douban_target_tmdb_candidate",
+                candidate_tmdb,
+                "豆瓣订阅已通过本地标题核验，候选 TMDB 已识别",
+                recognition_attempted=True,
+                identity_path="douban_target_local_match",
+                **diagnostic,
+            )
         return IdentityResult(
             False,
             candidate_media_id=candidate_douban,

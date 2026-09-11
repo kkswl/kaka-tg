@@ -298,6 +298,35 @@ class IdentityMatcherTest(unittest.TestCase):
         self.assertFalse(result.confirmed)
         self.assertIn("TMDB ID 不匹配", result.reason)
 
+    def test_douban_only_subscription_accepts_locally_verified_tmdb_candidate(self):
+        """PostgreSQL rows may retain Douban while recognition returns TMDB."""
+        target = SimpleNamespace(type="电影", tmdb_id=None, douban_id=34882958, season=None)
+        subscribe = SimpleNamespace(tmdbid=None, doubanid=34882958, season=None, episode_group=None)
+        _FakeMediaChain.candidate_media = SimpleNamespace(
+            type="电影", tmdb_id=615656, douban_id=None
+        )
+
+        result = identity_matcher.confirm_candidate_identity(
+            subscribe, target, _torrent("巨齿鲨2：深渊.2023.2160p.中文字幕")
+        )
+
+        self.assertTrue(result.confirmed)
+        self.assertEqual("douban_target_tmdb_candidate", result.match_source)
+
+    def test_douban_only_subscription_still_rejects_without_local_title_match(self):
+        target = SimpleNamespace(type="电影", tmdb_id=None, douban_id=34882958, season=None)
+        subscribe = SimpleNamespace(tmdbid=None, doubanid=34882958, season=None, episode_group=None)
+        _FakeMediaChain.candidate_media = SimpleNamespace(
+            type="电影", tmdb_id=615656, douban_id=None
+        )
+
+        result = identity_matcher.confirm_candidate_identity(
+            subscribe, target, _torrent("无关电影.2023.2160p", local_match=False)
+        )
+
+        self.assertFalse(result.confirmed)
+        self.assertIn("标题、别名、年份或媒体类型不匹配", result.reason)
+
     def test_rejects_explicit_wrong_tmdb_before_recognition(self):
         target = SimpleNamespace(type="电影", tmdb_id=100, douban_id=None, season=None)
         subscribe = SimpleNamespace(tmdbid=100, doubanid=None, season=None, episode_group=None)

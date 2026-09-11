@@ -25,6 +25,14 @@ class CandidateIdentityTest(unittest.TestCase):
         self.assertEqual(1, title.count("2025"))
         self.assertIn("Obsession", title)
 
+    def test_identity_title_drops_technical_brackets_before_moviepilot_parse(self):
+        title = clean_identity_title(
+            "巨齿鲨2：深渊 [HDR+杜比视界][重混DTS.HDMA-7.1+特效SUP]2023.V2.BluRay.2160p",
+        )
+        self.assertIn("巨齿鲨2：深渊", title)
+        self.assertNotIn("HDMA", title)
+        self.assertNotIn("特效SUP", title)
+
     def test_correct_site_candidate_is_not_displaced_by_tg_noise(self):
         noise = [SimpleNamespace(
             title=f"无关 TG 资源 {index}", _tg115_source="tg",

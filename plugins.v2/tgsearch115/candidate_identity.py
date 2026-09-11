@@ -14,6 +14,14 @@ _NOISE_RE = re.compile(
     re.I,
 )
 _BRACKET_RE = re.compile(r"[\[【(（].{0,80}[\]】)）]")
+_TECHNICAL_BRACKET_RE = re.compile(
+    r"[\[【(（]"
+    r"(?=[^\]】)）]{1,90}[\]】)）])"
+    r"(?=[^\]】)）]*(?:hdr|dovi|dolby|truehd|dts|atmos|x26[45]|h\.?(?:26[45])|"
+    r"hevc|avc|bluray|web[ ._-]?(?:dl|rip)|remux|10bit|\d(?:\.\d)?audio|sup)[^\]】)）]*)"
+    r"[^\]】)）]+[\]】)）]",
+    re.I,
+)
 
 
 def extract_candidate_tmdb(value: Any) -> str:
@@ -41,6 +49,12 @@ def clean_identity_title(resource_title: Any, source_title: Any = "", year: Any 
         title = source
     # Avoid the common "Title (2025) Title ..." construction. Keep one year;
     # year policy still parses it and validates it later.
+    # Codec/audio/HDR bracket groups are not part of a media title. Leaving
+    # them in front of the year can make MetaInfo identify "HDMA 7" rather
+    # than the actual film.  Keep subtitle words outside these groups for the
+    # rule engine; this string is used only for identity recognition.
+    title = _TECHNICAL_BRACKET_RE.sub(" ", title)
+    title = re.sub(r"\s+", " ", title).strip(" -|:.")
     years = _YEAR_RE.findall(title)
     if len(years) > 1:
         first = years[0]

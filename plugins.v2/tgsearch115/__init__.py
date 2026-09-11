@@ -248,7 +248,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.8.4"
+    plugin_version = "4.8.5"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -1160,11 +1160,16 @@ class TgSearch115(_PluginBase):
             return result
 
         identity_candidates = order_identity_candidates(candidates, mediainfo, subscribe)
+        # A technical title parsing failure must not consume the entire
+        # identity budget when other candidates have already passed the same
+        # strict MoviePilot rule/subtitle/quality filters. Five is still a
+        # bounded read-only recognition budget and keeps source pressure low.
+        identity_limit = min(len(identity_candidates), 5)
         logger.info(
             "【TG115】候选身份确认排序完成: 总数=%d，进入有界确认=%d",
-            len(candidates), min(len(identity_candidates), 3),
+            len(candidates), identity_limit,
         )
-        for candidate in identity_candidates[:3]:
+        for candidate in identity_candidates[:identity_limit]:
             identity = confirm_candidate_identity(
                 subscribe=subscribe, target_media=mediainfo, torrent=candidate,
                 recognize_candidate=self._recognize_candidate,
@@ -1174,7 +1179,7 @@ class TgSearch115(_PluginBase):
                 result["confirmed"].append(candidate)
         self._pansou_identity_checked = sum(
             str(getattr(item, "_tg115_source", "") or "").lower() == "pansou"
-            for item in identity_candidates[:3]
+            for item in identity_candidates[:identity_limit]
         )
         # Identity probing is relevance-ranked, but all side effects must retain
         # the contractual TG -> Guanying share -> magnet -> Juying order.
