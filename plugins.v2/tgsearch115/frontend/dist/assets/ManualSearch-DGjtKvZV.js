@@ -85,35 +85,35 @@ const _export_sfc = (sfc, props) => {
   return target;
 };
 
-const {createTextVNode:_createTextVNode,resolveComponent:_resolveComponent,withCtx:_withCtx,createVNode:_createVNode,openBlock:_openBlock,createBlock:_createBlock,createCommentVNode:_createCommentVNode,createElementVNode:_createElementVNode,withKeys:_withKeys,createElementBlock:_createElementBlock,toDisplayString:_toDisplayString,unref:_unref,renderList:_renderList,Fragment:_Fragment,normalizeClass:_normalizeClass} = await importShared('vue');
+const {createElementVNode:_createElementVNode,createTextVNode:_createTextVNode,resolveComponent:_resolveComponent,withCtx:_withCtx,createVNode:_createVNode,withKeys:_withKeys,openBlock:_openBlock,createElementBlock:_createElementBlock,createCommentVNode:_createCommentVNode,toDisplayString:_toDisplayString,createBlock:_createBlock,unref:_unref,renderList:_renderList,Fragment:_Fragment,normalizeClass:_normalizeClass} = await importShared('vue');
 
 
 const _hoisted_1 = { class: "manual-search" };
 const _hoisted_2 = { class: "filter-row mb-2" };
 const _hoisted_3 = { class: "search-toolbar mb-3" };
 const _hoisted_4 = {
-  key: 1,
+  key: 0,
   class: "filter-row mb-2"
 };
 const _hoisted_5 = { class: "filter-row mb-2" };
 const _hoisted_6 = {
-  key: 2,
+  key: 1,
   class: "filter-row mb-3"
 };
 const _hoisted_7 = {
-  key: 3,
+  key: 2,
   class: "filter-row mb-3"
 };
 const _hoisted_8 = {
-  key: 4,
+  key: 3,
   class: "source-summary mb-2"
 };
 const _hoisted_9 = {
-  key: 5,
+  key: 4,
   class: "text-caption text-medium-emphasis mb-3"
 };
 const _hoisted_10 = {
-  key: 7,
+  key: 6,
   class: "empty-state"
 };
 const _hoisted_11 = { class: "d-flex align-center ga-1 mb-2" };
@@ -125,7 +125,7 @@ const _hoisted_13 = {
 const _hoisted_14 = { class: "text-caption text-medium-emphasis line-clamp-3 mt-1" };
 const _hoisted_15 = { class: "text-caption text-medium-emphasis mt-1" };
 const _hoisted_16 = {
-  key: 9,
+  key: 8,
   class: "empty-state"
 };
 
@@ -161,7 +161,6 @@ const ok = ref(false);
 const snack = ref(false);
 const snackColor = ref('');
 const snackText = ref('');
-const apiReady = computed(() => Boolean(props.api?.get));
 const filtered = computed(() => filterSearchResults(results.value, resourceType.value, detailFilter.value));
 const resourceFilteredCount = computed(() => resourceType.value === 'all' ? results.value.length : filterSearchResults(results.value, resourceType.value, 'all').length);
 const backendCount = computed(() => Object.values(sourceStats.value).reduce((total, stat) => total + Number(stat?.returned_count || 0), 0) || results.value.length);
@@ -240,11 +239,6 @@ function unwrap(res) {
   return value
 }
 function notify(text, color = 'success') { snackText.value = text; snackColor.value = color; snack.value = true; }
-function reloadPluginPage() {
-  // A federation asset can be cached by the host after a plugin upgrade.
-  // Reloading is local-only and never submits a search or a transfer.
-  window.location.reload();
-}
 function fullUrl(r) {
   let url = String(r?.share_url || '');
   if (r?.pan_type === '115' && r?.receive_code && !/[?&](password|receive_code|pwd)=/.test(url)) {
@@ -341,7 +335,6 @@ function qualityLabel(r) { return ({ '4k': '4K', '1080p': '1080P', '720p': '720P
 
 return (_ctx, _cache) => {
   const _component_v_btn = _resolveComponent("v-btn");
-  const _component_v_alert = _resolveComponent("v-alert");
   const _component_v_btn_toggle = _resolveComponent("v-btn-toggle");
   const _component_v_text_field = _resolveComponent("v-text-field");
   const _component_v_chip = _resolveComponent("v-chip");
@@ -360,34 +353,8 @@ return (_ctx, _cache) => {
   const _component_v_snackbar = _resolveComponent("v-snackbar");
 
   return (_openBlock(), _createElementBlock("div", _hoisted_1, [
-    (!apiReady.value)
-      ? (_openBlock(), _createBlock(_component_v_alert, {
-          key: 0,
-          type: "warning",
-          variant: "tonal",
-          class: "mb-3",
-          role: "alert"
-        }, {
-          append: _withCtx(() => [
-            _createVNode(_component_v_btn, {
-              size: "small",
-              variant: "text",
-              onClick: reloadPluginPage
-            }, {
-              default: _withCtx(() => [...(_cache[8] || (_cache[8] = [
-                _createTextVNode("重新加载插件页面", -1)
-              ]))]),
-              _: 1
-            })
-          ]),
-          default: _withCtx(() => [
-            _cache[9] || (_cache[9] = _createTextVNode(" 手动搜索服务尚未就绪。页面没有被隐藏；请重新加载插件页面后重试。 ", -1))
-          ]),
-          _: 1
-        }))
-      : _createCommentVNode("", true),
     _createElementVNode("div", _hoisted_2, [
-      _cache[15] || (_cache[15] = _createElementVNode("span", { class: "filter-label" }, "搜索范围", -1)),
+      _cache[13] || (_cache[13] = _createElementVNode("span", { class: "filter-label" }, "搜索范围", -1)),
       _createVNode(_component_v_btn_toggle, {
         modelValue: source.value,
         "onUpdate:modelValue": _cache[0] || (_cache[0] = $event => ((source).value = $event)),
@@ -402,7 +369,7 @@ return (_ctx, _cache) => {
             value: "all",
             size: "small"
           }, {
-            default: _withCtx(() => [...(_cache[10] || (_cache[10] = [
+            default: _withCtx(() => [...(_cache[8] || (_cache[8] = [
               _createTextVNode("全部", -1)
             ]))]),
             _: 1
@@ -411,7 +378,7 @@ return (_ctx, _cache) => {
             value: "tg",
             size: "small"
           }, {
-            default: _withCtx(() => [...(_cache[11] || (_cache[11] = [
+            default: _withCtx(() => [...(_cache[9] || (_cache[9] = [
               _createTextVNode("TG", -1)
             ]))]),
             _: 1
@@ -420,7 +387,7 @@ return (_ctx, _cache) => {
             value: "site",
             size: "small"
           }, {
-            default: _withCtx(() => [...(_cache[12] || (_cache[12] = [
+            default: _withCtx(() => [...(_cache[10] || (_cache[10] = [
               _createTextVNode("观影", -1)
             ]))]),
             _: 1
@@ -429,7 +396,7 @@ return (_ctx, _cache) => {
             value: "pansou",
             size: "small"
           }, {
-            default: _withCtx(() => [...(_cache[13] || (_cache[13] = [
+            default: _withCtx(() => [...(_cache[11] || (_cache[11] = [
               _createTextVNode("PanSou", -1)
             ]))]),
             _: 1
@@ -438,7 +405,7 @@ return (_ctx, _cache) => {
             value: "juying",
             size: "small"
           }, {
-            default: _withCtx(() => [...(_cache[14] || (_cache[14] = [
+            default: _withCtx(() => [...(_cache[12] || (_cache[12] = [
               _createTextVNode("聚影", -1)
             ]))]),
             _: 1
@@ -446,7 +413,7 @@ return (_ctx, _cache) => {
         ]),
         _: 1
       }, 8, ["modelValue"]),
-      _cache[16] || (_cache[16] = _createElementVNode("span", { class: "text-caption text-medium-emphasis" }, "选择后点击搜索生效", -1))
+      _cache[14] || (_cache[14] = _createElementVNode("span", { class: "text-caption text-medium-emphasis" }, "选择后点击搜索生效", -1))
     ]),
     _createElementVNode("div", _hoisted_3, [
       _createVNode(_component_v_text_field, {
@@ -466,7 +433,7 @@ return (_ctx, _cache) => {
         "prepend-icon": "mdi-magnify",
         onClick: search
       }, {
-        default: _withCtx(() => [...(_cache[17] || (_cache[17] = [
+        default: _withCtx(() => [...(_cache[15] || (_cache[15] = [
           _createTextVNode("搜索", -1)
         ]))]),
         _: 1
@@ -480,7 +447,7 @@ return (_ctx, _cache) => {
             "prepend-icon": "mdi-delete-outline",
             onClick: clearResults
           }, {
-            default: _withCtx(() => [...(_cache[18] || (_cache[18] = [
+            default: _withCtx(() => [...(_cache[16] || (_cache[16] = [
               _createTextVNode("清空结果", -1)
             ]))]),
             _: 1
@@ -488,7 +455,7 @@ return (_ctx, _cache) => {
         ]))
       : _createCommentVNode("", true),
     _createElementVNode("div", _hoisted_5, [
-      _cache[23] || (_cache[23] = _createElementVNode("span", { class: "filter-label" }, "资源", -1)),
+      _cache[21] || (_cache[21] = _createElementVNode("span", { class: "filter-label" }, "资源", -1)),
       _createVNode(_component_v_btn_toggle, {
         modelValue: resourceType.value,
         "onUpdate:modelValue": _cache[2] || (_cache[2] = $event => ((resourceType).value = $event)),
@@ -503,7 +470,7 @@ return (_ctx, _cache) => {
             value: "all",
             size: "small"
           }, {
-            default: _withCtx(() => [...(_cache[19] || (_cache[19] = [
+            default: _withCtx(() => [...(_cache[17] || (_cache[17] = [
               _createTextVNode("全部", -1)
             ]))]),
             _: 1
@@ -512,7 +479,7 @@ return (_ctx, _cache) => {
             value: "magnet",
             size: "small"
           }, {
-            default: _withCtx(() => [...(_cache[20] || (_cache[20] = [
+            default: _withCtx(() => [...(_cache[18] || (_cache[18] = [
               _createTextVNode("磁力", -1)
             ]))]),
             _: 1
@@ -521,7 +488,7 @@ return (_ctx, _cache) => {
             value: "pan",
             size: "small"
           }, {
-            default: _withCtx(() => [...(_cache[21] || (_cache[21] = [
+            default: _withCtx(() => [...(_cache[19] || (_cache[19] = [
               _createTextVNode("网盘", -1)
             ]))]),
             _: 1
@@ -549,7 +516,7 @@ return (_ctx, _cache) => {
             variant: "text",
             onClick: resetFilters
           }, {
-            default: _withCtx(() => [...(_cache[22] || (_cache[22] = [
+            default: _withCtx(() => [...(_cache[20] || (_cache[20] = [
               _createTextVNode("重置筛选", -1)
             ]))]),
             _: 1
@@ -558,7 +525,7 @@ return (_ctx, _cache) => {
     ]),
     (resourceType.value === 'magnet')
       ? (_openBlock(), _createElementBlock("div", _hoisted_6, [
-          _cache[24] || (_cache[24] = _createElementVNode("span", { class: "filter-label" }, "画质", -1)),
+          _cache[22] || (_cache[22] = _createElementVNode("span", { class: "filter-label" }, "画质", -1)),
           _createVNode(_component_v_btn_toggle, {
             modelValue: detailFilter.value,
             "onUpdate:modelValue": _cache[3] || (_cache[3] = $event => ((detailFilter).value = $event)),
@@ -587,7 +554,7 @@ return (_ctx, _cache) => {
         ]))
       : (resourceType.value === 'pan')
         ? (_openBlock(), _createElementBlock("div", _hoisted_7, [
-            _cache[25] || (_cache[25] = _createElementVNode("span", { class: "filter-label" }, "网盘", -1)),
+            _cache[23] || (_cache[23] = _createElementVNode("span", { class: "filter-label" }, "网盘", -1)),
             _createVNode(_component_v_btn_toggle, {
               modelValue: detailFilter.value,
               "onUpdate:modelValue": _cache[4] || (_cache[4] = $event => ((detailFilter).value = $event)),
@@ -623,37 +590,9 @@ return (_ctx, _cache) => {
       : _createCommentVNode("", true),
     (message.value)
       ? (_openBlock(), _createElementBlock("div", {
-          key: 6,
-          class: _normalizeClass(["d-flex align-center flex-wrap ga-2 text-caption mb-3", ok.value ? 'text-success' : 'text-error'])
-        }, [
-          _createElementVNode("span", null, _toDisplayString(message.value), 1),
-          (searched.value && !ok.value && !searching.value)
-            ? (_openBlock(), _createBlock(_component_v_btn, {
-                key: 0,
-                size: "x-small",
-                variant: "text",
-                onClick: search
-              }, {
-                default: _withCtx(() => [...(_cache[26] || (_cache[26] = [
-                  _createTextVNode("重试", -1)
-                ]))]),
-                _: 1
-              }))
-            : _createCommentVNode("", true),
-          (searched.value && !ok.value && !searching.value)
-            ? (_openBlock(), _createBlock(_component_v_btn, {
-                key: 1,
-                size: "x-small",
-                variant: "text",
-                onClick: reloadPluginPage
-              }, {
-                default: _withCtx(() => [...(_cache[27] || (_cache[27] = [
-                  _createTextVNode("重新加载插件页面", -1)
-                ]))]),
-                _: 1
-              }))
-            : _createCommentVNode("", true)
-        ], 2))
+          key: 5,
+          class: _normalizeClass(["text-caption mb-3", ok.value ? 'text-success' : 'text-error'])
+        }, _toDisplayString(message.value), 3))
       : _createCommentVNode("", true),
     (searching.value)
       ? (_openBlock(), _createElementBlock("div", _hoisted_10, [
@@ -665,7 +604,7 @@ return (_ctx, _cache) => {
         ]))
       : (filtered.value.length)
         ? (_openBlock(), _createBlock(_component_v_row, {
-            key: 8,
+            key: 7,
             dense: ""
           }, {
             default: _withCtx(() => [
@@ -738,7 +677,7 @@ return (_ctx, _cache) => {
                                     color: "success",
                                     variant: "outlined"
                                   }, {
-                                    default: _withCtx(() => [...(_cache[28] || (_cache[28] = [
+                                    default: _withCtx(() => [...(_cache[24] || (_cache[24] = [
                                       _createTextVNode("中文字幕", -1)
                                     ]))]),
                                     _: 1
@@ -751,7 +690,7 @@ return (_ctx, _cache) => {
                                     size: "x-small",
                                     variant: "tonal"
                                   }, {
-                                    default: _withCtx(() => [...(_cache[29] || (_cache[29] = [
+                                    default: _withCtx(() => [...(_cache[25] || (_cache[25] = [
                                       _createTextVNode("完结", -1)
                                     ]))]),
                                     _: 1
@@ -776,7 +715,7 @@ return (_ctx, _cache) => {
                               "prepend-icon": "mdi-content-copy",
                               onClick: $event => (copy(r))
                             }, {
-                              default: _withCtx(() => [...(_cache[30] || (_cache[30] = [
+                              default: _withCtx(() => [...(_cache[26] || (_cache[26] = [
                                 _createTextVNode("复制链接", -1)
                               ]))]),
                               _: 1
@@ -830,13 +769,13 @@ return (_ctx, _cache) => {
                   color: "primary",
                   class: "mr-2"
                 }),
-                _cache[31] || (_cache[31] = _createTextVNode("确认正式操作 ", -1))
+                _cache[27] || (_cache[27] = _createTextVNode("确认正式操作 ", -1))
               ]),
               _: 1
             }),
             _createVNode(_component_v_card_text, null, {
               default: _withCtx(() => [
-                _cache[32] || (_cache[32] = _createElementVNode("div", { class: "text-body-2 mb-3" }, "请选择对应的 MoviePilot 订阅。系统将在提交前重新执行规则和媒体身份确认。", -1)),
+                _cache[28] || (_cache[28] = _createElementVNode("div", { class: "text-body-2 mb-3" }, "请选择对应的 MoviePilot 订阅。系统将在提交前重新执行规则和媒体身份确认。", -1)),
                 _createVNode(_component_v_select, {
                   modelValue: subscribeId.value,
                   "onUpdate:modelValue": _cache[5] || (_cache[5] = $event => ((subscribeId).value = $event)),
@@ -859,7 +798,7 @@ return (_ctx, _cache) => {
                   disabled: !!transferring.value,
                   onClick: closeProcessDialog
                 }, {
-                  default: _withCtx(() => [...(_cache[33] || (_cache[33] = [
+                  default: _withCtx(() => [...(_cache[29] || (_cache[29] = [
                     _createTextVNode("取消", -1)
                   ]))]),
                   _: 1
@@ -871,7 +810,7 @@ return (_ctx, _cache) => {
                   loading: !!transferring.value,
                   onClick: transfer
                 }, {
-                  default: _withCtx(() => [...(_cache[34] || (_cache[34] = [
+                  default: _withCtx(() => [...(_cache[30] || (_cache[30] = [
                     _createTextVNode("确认提交", -1)
                   ]))]),
                   _: 1
@@ -902,6 +841,6 @@ return (_ctx, _cache) => {
 }
 
 };
-const ManualSearch = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-c6c4efd8"]]);
+const ManualSearch = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-b4e126a0"]]);
 
 export { ManualSearch as M, _export_sfc as _, filterSearchResults as f };
