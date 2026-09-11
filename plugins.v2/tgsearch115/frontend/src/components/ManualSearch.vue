@@ -1,5 +1,16 @@
 <template>
   <div class="manual-search">
+    <div class="filter-row mb-2">
+      <span class="filter-label">搜索范围</span>
+      <v-btn-toggle v-model="source" mandatory color="primary" density="compact" divided class="filter-toggle">
+        <v-btn value="all" size="small">全部</v-btn>
+        <v-btn value="tg" size="small">TG</v-btn>
+        <v-btn value="site" size="small">观影</v-btn>
+        <v-btn value="pansou" size="small">PanSou</v-btn>
+        <v-btn value="juying" size="small">聚影</v-btn>
+      </v-btn-toggle>
+      <span class="text-caption text-medium-emphasis">选择后点击搜索生效</span>
+    </div>
     <div class="search-toolbar mb-3">
       <v-text-field
         v-model="keyword"
@@ -11,17 +22,6 @@
         @keyup.enter="search"
       />
       <v-btn color="primary" variant="flat" :loading="searching" prepend-icon="mdi-magnify" @click="search">搜索</v-btn>
-    </div>
-
-    <div class="filter-row mb-2">
-      <span class="filter-label">搜索来源</span>
-      <v-btn-toggle v-model="source" mandatory color="primary" density="compact" divided class="filter-toggle">
-        <v-btn value="all" size="small">全部</v-btn>
-        <v-btn value="tg" size="small">TG</v-btn>
-        <v-btn value="site" size="small">观影</v-btn>
-        <v-btn value="pansou" size="small">PanSou</v-btn>
-        <v-btn value="juying" size="small">聚影</v-btn>
-      </v-btn-toggle>
     </div>
 
     <div v-if="results.length" class="filter-row mb-2">
