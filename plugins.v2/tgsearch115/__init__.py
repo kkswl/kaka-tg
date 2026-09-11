@@ -248,7 +248,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.8.1"
+    plugin_version = "4.8.2"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -331,6 +331,12 @@ class TgSearch115(_PluginBase):
             config = self.get_data(CONFIG_KEY) or {}
         if not isinstance(config, dict):
             config = {}
+        # Persist a complete migrated shape, not merely runtime fallbacks.  This
+        # lets a host/API read the same timeout controls that are active after
+        # upgrades, while preserving all existing user-provided values.
+        migrated_config = self._default_config()
+        migrated_config.update(config)
+        config = migrated_config
 
         self._apply_config(config)
         stored_tasks = self.get_data(CMS_TASKS_KEY) or []

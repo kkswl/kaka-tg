@@ -52,6 +52,13 @@ class ConfigDefaultsTest(unittest.TestCase):
         self.assertTrue(defaults["magnet_fallback_enabled"])
         self.assertFalse(defaults["search_detail_notify"])
 
+    def test_startup_persists_a_merged_config_for_legacy_users(self):
+        source = PLUGIN_PATH.read_text(encoding="utf-8")
+        init = source[source.index("def init_plugin"):source.index("def _save_diagnostics")]
+        self.assertIn("migrated_config = self._default_config()", init)
+        self.assertIn("migrated_config.update(config)", init)
+        self.assertIn("config = migrated_config", init)
+
     def test_share_transfer_waits_for_mp_before_subscribe_complete(self):
         source = PLUGIN_PATH.read_text(encoding="utf-8")
         finish = source[source.index("    def _finish_subscribe("):source.index("    @staticmethod\n    def _parse_episode_info")]
