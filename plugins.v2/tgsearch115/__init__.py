@@ -248,7 +248,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.8.3"
+    plugin_version = "4.8.4"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -1742,6 +1742,11 @@ class TgSearch115(_PluginBase):
             try:
                 runner = self._source_runner or BoundedSourceRunner()
                 call_timeout = self._source_request_timeout_seconds
+                # PanSou has its own short 429/5xx retry.  Give the LAN
+                # aggregator one bounded retry window instead of ending it at
+                # its base HTTP timeout.
+                if source == "pansou":
+                    call_timeout = max(call_timeout, min(45.0, self._pansou_timeout + 25.0))
                 if deadline_remaining is not None:
                     call_timeout = min(call_timeout, max(0.1, deadline_remaining))
                 call_status, source_hits, elapsed, call_error = runner.run(
@@ -2230,6 +2235,7 @@ class TgSearch115(_PluginBase):
                 resource_title, source_title, source_year, h.text or ""
             )
             display_title = resource_title or identity_title or "未命名资源"
+            parsed_meta = TgSearch115._parse_resource_meta(h.text or resource_title)
             normalized = normalize_resource_metadata({
                 "share_url": url, "pan_type": getattr(h, "pan_type", "") or "",
                 "resource_title": resource_title, "text": h.text or "",
@@ -2238,7 +2244,6 @@ class TgSearch115(_PluginBase):
                 "upstream_source": getattr(h, "upstream_source", ""),
             })
             pan_type = normalized["pan_type"]
-            parsed_meta = TgSearch115._parse_resource_meta(h.text or resource_title)
             torrent = TorrentInfo(
                 title=display_title,
                 description=h.text,

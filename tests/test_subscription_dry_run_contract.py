@@ -102,6 +102,15 @@ class SubscriptionDryRunContractTest(unittest.TestCase):
         self.assertNotIn("渠道：", finish_body)
         self.assertNotIn("渠道：", self.source)
 
+    def test_torrent_metadata_is_parsed_before_normalization(self):
+        build_start = self.source.index("def _build_torrents")
+        build_end = self.source.index("def _submit_magnet_to_115", build_start)
+        build_body = self.source[build_start:build_end]
+        self.assertLess(
+            build_body.index("parsed_meta = TgSearch115._parse_resource_meta"),
+            build_body.index("normalize_resource_metadata({"),
+        )
+
     def test_evaluator_exposes_source_stage_statistics(self):
         start = self.source.index("def _evaluate_subscription_candidates")
         end = self.source.index("def _dry_run_summary", start)
