@@ -99,6 +99,22 @@
       </v-expand-transition>
     </v-card>
 
+    <v-card variant="outlined" rounded="lg" class="mb-3">
+      <v-card-title class="d-flex align-center px-4 py-3 task-toggle" @click="diagnosticsExpanded = !diagnosticsExpanded">
+        <v-icon icon="mdi-chart-timeline-variant" color="primary" class="mr-2" />订阅处理诊断
+        <v-chip size="x-small" variant="tonal" class="ml-2">{{ timeline.total || 0 }}</v-chip><v-spacer />
+        <v-btn size="x-small" variant="text" color="error" :disabled="timeline.items?.some(item => ['running', 'waiting_organize'].includes(item.status))" @click.stop="clearTimeline">清除终态记录</v-btn>
+        <v-icon :icon="diagnosticsExpanded ? 'mdi-chevron-up' : 'mdi-chevron-down'" />
+      </v-card-title>
+      <v-expand-transition><div v-show="diagnosticsExpanded"><v-divider /><v-card-text class="px-4 py-3">
+        <div v-if="healthLabels" class="text-caption text-medium-emphasis mb-3">{{ healthLabels }}</div>
+        <div v-for="run in timeline.items" :key="run.run_id" class="mb-3">
+          <div class="d-flex align-center ga-2 flex-wrap"><v-chip size="x-small" :color="timelineColor(run.status)">{{ timelineStatus(run.status) }}</v-chip><strong>{{ run.title }}<template v-if="run.year">（{{ run.year }}）</template><template v-if="run.season !== null && run.season !== undefined"> S{{ String(run.season).padStart(2, '0') }}</template></strong><span class="text-caption">{{ run.stage }}</span></div>
+          <div class="text-caption text-medium-emphasis mt-1">{{ run.events?.map(e => e.summary).filter(Boolean).join(' → ') || run.reason || '等待诊断事件' }}</div>
+        </div><div v-if="!timeline.items?.length" class="text-caption text-medium-emphasis">尚无订阅处理诊断记录</div>
+      </v-card-text></div></v-expand-transition>
+    </v-card>
+
     <v-card v-if="runtime.tasks.length" variant="outlined" rounded="lg" class="mb-4">
       <v-card-title class="d-flex align-center px-4 py-3 task-toggle" @click="tasksExpanded = !tasksExpanded">
         <v-icon icon="mdi-cloud-sync-outline" color="primary" class="mr-2" />
@@ -334,6 +350,10 @@ const runtime = reactive({
   pansou: { enabled: false, last_request: '', last_success: '', last_error: '', result_count: 0, type_counts: {}, cache_hits: 0, deduplicated: 0, rule_passed: 0, identity_checked: 0, safe_candidates: 0 },
   tasks: [],
 })
+const diagnosticsExpanded = ref(false)
+const timeline = reactive({ total: 0, items: [] })
+const sourceHealth = ref({})
+const healthLabels = computed(() => Object.entries(sourceHealth.value || {}).map(([source, item]) => `${({ tg: 'TG', site: '观影', pansou: 'PanSou', juying: '聚影' })[source] || source} ${item.score}分`).join(' · '))
 const statusLoading = ref(false)
 const statusExpanded = ref(false)
 const statusText = computed(() => {
@@ -429,6 +449,17 @@ function taskStatusColor(status) {
     completed: 'success', failed: 'error', timed_out: 'warning', cancelled: 'grey',
   }[status] || 'grey'
 }
+function timelineStatus(status) { return ({ running: '处理中', waiting_organize: '等待整理', completed: '已完成', recovered: '已恢复', failed: '失败', skipped: '已跳过' })[status] || status || '未知' }
+function timelineColor(status) { return ({ running: 'primary', waiting_organize: 'warning', completed: 'success', recovered: 'info', failed: 'error', skipped: 'grey' })[status] || 'grey' }
+async function clearTimeline() {
+  if (!props.api?.post || !window.confirm('仅删除本地已结束的诊断记录，不删除 115 文件、不取消下载、不修改订阅。是否继续？')) return
+  try {
+    const res = await props.api.post(`plugin/${PID.value}/runtime/timeline/clear`, { confirm: true })
+    const data = res?.data || res
+    showSnack(data?.message || '清除失败', data?.success ? 'success' : 'error')
+    if (data?.success) await loadRuntimeStatus()
+  } catch { showSnack('清除诊断记录失败', 'error') }
+}
 
 async function loadRuntimeStatus() {
   if (!props.api?.get) return
@@ -442,6 +473,8 @@ async function loadRuntimeStatus() {
       runtime.sources = data.sources || {}
       Object.assign(runtime.pansou, data.pansou || {})
       runtime.tasks = Array.isArray(data.tasks) ? data.tasks : []
+      Object.assign(timeline, data.timeline || { total: 0, items: [] })
+      sourceHealth.value = data.source_health || {}
     }
   } catch {
     // Status refresh is non-blocking; search actions continue to work.

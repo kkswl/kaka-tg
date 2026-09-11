@@ -124,12 +124,16 @@ from .search_reporting import SearchReport, candidate_source, candidate_upstream
 from .tmdb_support import season_year_map
 from .site_query_policy import site_query_years
 from .resource_metadata import normalize_resource_metadata
+from .subscription_timeline import SubscriptionTimeline
+from .source_health import SourceHealth
 
 
 # get_data / save_data 存储本插件配置使用的 key
 CONFIG_KEY = "config"
 CMS_TASKS_KEY = "cms_tasks"
 MAGNET_QUEUES_KEY = "magnet_queues"
+TIMELINE_KEY = "subscription_timeline"
+SOURCE_HEALTH_KEY = "source_health"
 
 
 # ============================ 115 扫码登录（直连稳定 115 二维码接口） ============================
@@ -243,7 +247,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.53"
+    plugin_version = "4.8.0"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -271,6 +275,8 @@ class TgSearch115(_PluginBase):
     _share_metadata_cache: Optional[TtlCache] = None
     _season_year_cache: Optional[TtlCache] = None
     _target_tmdb_cache: Optional[TtlCache] = None
+    _timeline: Optional[SubscriptionTimeline] = None
+    _source_health: Optional[SourceHealth] = None
 
     # 配置项（运行态缓存）
     _tg_search_enabled = True
@@ -328,17 +334,28 @@ class TgSearch115(_PluginBase):
         stored_queues = self.get_data(MAGNET_QUEUES_KEY) or {}
         self._magnet_queues = stored_queues if isinstance(stored_queues, dict) else {}
         self._share_metadata_cache = TtlCache(ttl_seconds=6 * 3600, max_entries=256)
+        self._timeline = SubscriptionTimeline(self.get_data(TIMELINE_KEY) or [])
+        self._source_health = SourceHealth(self.get_data(SOURCE_HEALTH_KEY) or {})
 
         # 持久化（保证 get_data 可读、字段干净）
         try:
             self.save_data(CONFIG_KEY, config)
         except Exception as e:
             logger.warn(f"【TG115】保存配置失败: {e}")
-
         if self._enabled:
             logger.info("【TG115】插件已启用")
             self._check_deps()
             self._start_coordinator()
+
+    def _save_diagnostics(self) -> None:
+        """Persist bounded sanitized diagnostic state; failure never stops search."""
+        try:
+            if self._timeline:
+                self.save_data(TIMELINE_KEY, self._timeline.dump())
+            if self._source_health:
+                self.save_data(SOURCE_HEALTH_KEY, self._source_health.dump())
+        except Exception as exc:
+            logger.warning("【TG115】诊断状态保存失败 reason=%s", type(exc).__name__)
 
     def _apply_config(self, config: dict):
         """把配置字典解析到运行态字段，并重建搜索器 / 转存器。"""
@@ -602,6 +619,9 @@ class TgSearch115(_PluginBase):
                 "auth": "bear",
                 "summary": "获取周期搜索、来源冷却和 115 磁力任务状态",
             },
+            {"path": "/runtime/timeline", "endpoint": self.__timeline_api, "methods": ["GET"], "auth": "bear", "summary": "获取订阅处理诊断"},
+            {"path": "/runtime/source-health", "endpoint": self.__source_health_api, "methods": ["GET"], "auth": "bear", "summary": "获取来源健康评分"},
+            {"path": "/runtime/timeline/clear", "endpoint": self.__clear_timeline_api, "methods": ["POST"], "auth": "bear", "summary": "清除终态订阅诊断"},
             {
                 "path": "/tasks/retry",
                 "endpoint": self.__retry_cms_task_api,
@@ -1224,6 +1244,7 @@ class TgSearch115(_PluginBase):
     def _handle_subscribe(self, subscribe_id: int):
         """单订阅的 TG 搜索 -> 匹配 -> 转存 -> 完成流程；任何失败均平滑回退。"""
         handled = False
+        run_id = ""
         try:
             with self._lock:
                 if subscribe_id in self._running_ids:
@@ -1233,6 +1254,9 @@ class TgSearch115(_PluginBase):
             subscribe = SubscribeOper().get(subscribe_id)
             if not subscribe:
                 return
+            if self._timeline:
+                run_id = self._timeline.start(subscribe, "automatic")
+                self._timeline.event(run_id, "loading_subscription", "running", "已读取订阅")
             if not self._claim_subscription(subscribe_id):
                 logger.info(f"【TG115】订阅 {subscribe_id} 当前不可认领，本轮跳过")
                 return
@@ -1246,11 +1270,18 @@ class TgSearch115(_PluginBase):
                         active.get("status"),
                     )
                     handled = True
+                    if self._timeline:
+                        self._timeline.event(run_id, "pending_organize", "waiting_organize", "存在在途 115 任务", waiting_organize=True)
                     return
+            if self._timeline:
+                self._timeline.event(run_id, "searching_sources", "running", "开始搜索来源")
             evaluation = self._evaluate_subscription_candidates(subscribe)
             source_report = evaluation["source_report"]
             meta, mediainfo = evaluation.get("meta"), evaluation.get("mediainfo")
             candidates = evaluation.get("confirmed") or []
+            if self._timeline:
+                self._timeline.event(run_id, "source_results", "running", "来源召回完成", counts=dict(evaluation.get("source_stats") or {}))
+                self._timeline.event(run_id, "identity_confirmation", "running", "规则与身份确认完成", counts={"confirmed": len(candidates)})
             attempted = set()
             if self._cms_tasks:
                 attempted = self._cms_tasks.attempted_by_subscription(subscribe_id)
@@ -1317,6 +1348,8 @@ class TgSearch115(_PluginBase):
                     subscribe, reason, source_report,
                     rejections=evaluation.get("rejections"),
                 )
+                if self._timeline:
+                    self._timeline.event(run_id, "skipped", "skipped", reason)
                 return
 
             identities = evaluation.get("identities") or {}
@@ -1361,7 +1394,11 @@ class TgSearch115(_PluginBase):
                     source_report,
                 )
                 handled = not self._magnet_fallback_enabled
+                if self._timeline:
+                    self._timeline.event(run_id, "recovered", "recovered", execution.errors[-1] if execution.errors else "候选未能安全提交")
                 return
+            if self._timeline:
+                self._timeline.event(run_id, "submitting_magnet" if execution.via_magnet else "transferring_share", "running", "候选已提交", final_source=str(getattr(best, "_tg115_source", "") or ""), resource_kind="magnet" if execution.via_magnet else "pan")
             handled = self._finish_subscribe(
                 subscribe, meta, mediainfo, best, execution.message,
                 via_offline_magnet=execution.via_magnet,
@@ -1374,6 +1411,9 @@ class TgSearch115(_PluginBase):
                     queue["owner"] = "tg115"
                     queue["current_index"] = len(attempted)
                     self._save_magnet_queues()
+            if self._timeline:
+                wait_organize = bool(execution.via_magnet or self._wait_for_mp_organize)
+                self._timeline.event(run_id, "pending_organize" if wait_organize else "completed", "waiting_organize" if wait_organize else "completed", "等待 MoviePilot 整理确认" if wait_organize else "订阅处理完成", waiting_organize=wait_organize, subscription_written=bool(handled))
             return
 
             source_report = SearchReport({
@@ -1552,6 +1592,8 @@ class TgSearch115(_PluginBase):
             )
         except Exception as e:
             logger.error(f"【TG115】处理订阅 {subscribe_id} 异常，回退到默认搜索: {e}")
+            if self._timeline and run_id:
+                self._timeline.event(run_id, "failed", "failed", "处理异常，已安全回退")
         finally:
             if handled:
                 self._complete_claim(subscribe_id)
@@ -1559,6 +1601,7 @@ class TgSearch115(_PluginBase):
                 self._restore_claim(subscribe_id)
             with self._lock:
                 self._running_ids.discard(subscribe_id)
+            self._save_diagnostics()
 
     # ============================ 辅助方法 ============================
     def _search_auto_sources(
@@ -1651,7 +1694,9 @@ class TgSearch115(_PluginBase):
                 logger.warn(f"【TG115】{source} 来源熔断中，剩余 {remaining} 秒，本轮跳过")
                 continue
             try:
+                source_started = time.monotonic()
                 source_hits = callback() or []
+                elapsed = time.monotonic() - source_started
                 for hit in source_hits:
                     # Preserve source identity through the common TorrentInfo
                     # conversion so automatic ordering is deterministic.
@@ -1672,6 +1717,8 @@ class TgSearch115(_PluginBase):
                 if source_report:
                     source_report.record(source, source_hits)
                 if status in (403, 429):
+                    if self._source_health:
+                        self._source_health.record(source, str(status), elapsed, len(source_hits))
                     if source_report:
                         source_report.mark(source, "error")
                     opened = self._source_breaker.failure(source, f"HTTP {status}") \
@@ -1679,6 +1726,8 @@ class TgSearch115(_PluginBase):
                     if opened:
                         logger.warn(f"【TG115】{source} 连续失败达到阈值，已进入冷却")
                 elif source_error and not source_hits:
+                    if self._source_health:
+                        self._source_health.record(source, "timeout" if "timeout" in source_error.lower() else "failed", elapsed, 0)
                     if source_report:
                         source_report.mark(source, "error")
                     opened = self._source_breaker.failure(source, source_error) \
@@ -1689,10 +1738,14 @@ class TgSearch115(_PluginBase):
                     )
                 elif self._source_breaker:
                     self._source_breaker.success(source)
+                if self._source_health and not (status in (403, 429) or (source_error and not source_hits)):
+                    self._source_health.record(source, "success" if source_hits else "empty", elapsed, len(source_hits))
                 if self._search_cache and should_cache_source_result(status, source_error):
                     self._search_cache.set(cache_key, source_hits)
                 hits.extend(source_hits)
             except Exception as exc:
+                if self._source_health:
+                    self._source_health.record(source, "timeout" if "timeout" in type(exc).__name__.lower() else "failed")
                 if source_report:
                     source_report.mark(source, "error")
                 opened = self._source_breaker.failure(source, str(exc)) \
@@ -3230,7 +3283,31 @@ class TgSearch115(_PluginBase):
                 "safe_candidates": self._pansou_safe_candidates,
             },
             "tasks": self._cms_tasks.public_records() if self._cms_tasks else [],
+            "timeline": self._timeline.list(limit=10) if self._timeline else {"total": 0, "items": []},
+            "source_health": self._source_health.snapshot(self._source_breaker.snapshot() if self._source_breaker else {}) if self._source_health else {},
         })
+
+    def __timeline_api(self, status: str = "all", offset: int = 0, limit: int = 30):
+        from starlette.responses import JSONResponse
+        if not self._timeline:
+            return JSONResponse({"success": True, "data": {"total": 0, "items": []}})
+        return JSONResponse({"success": True, "data": self._timeline.list(str(status or "all"), int(offset or 0), int(limit or 30))})
+
+    def __source_health_api(self):
+        from starlette.responses import JSONResponse
+        breaker = self._source_breaker.snapshot() if self._source_breaker else {}
+        return JSONResponse({"success": True, "data": self._source_health.snapshot(breaker) if self._source_health else {}})
+
+    def __clear_timeline_api(self, payload: dict = Body(default=None)):
+        from starlette.responses import JSONResponse
+        if not isinstance(payload, dict) or payload.get("confirm") is not True:
+            return JSONResponse({"success": False, "message": "请显式确认仅清除本地终态诊断记录"}, status_code=400)
+        try:
+            count = self._timeline.clear_terminal() if self._timeline else 0
+            self._save_diagnostics()
+            return JSONResponse({"success": True, "message": f"已清除 {count} 条本地终态诊断记录"})
+        except RuntimeError as exc:
+            return JSONResponse({"success": False, "message": str(exc)}, status_code=409)
 
     def __subscription_dry_run_api(self, payload: dict = Body(default=None)):
         """POST /subscription/dry-run: execute the shared evaluator with zero writes."""
