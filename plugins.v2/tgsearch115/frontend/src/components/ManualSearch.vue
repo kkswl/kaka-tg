@@ -25,10 +25,6 @@
     </div>
 
     <div v-if="results.length" class="filter-row mb-2">
-      <span class="filter-label">结果来源</span>
-      <v-btn-toggle v-model="resultSource" mandatory color="primary" density="compact" divided class="filter-toggle">
-        <v-btn v-for="item in resultSourceOptions" :key="item.value" :value="item.value" size="small">{{ item.title }}</v-btn>
-      </v-btn-toggle>
       <v-btn size="small" variant="text" prepend-icon="mdi-delete-outline" @click="clearResults">清空结果</v-btn>
     </div>
 
@@ -40,7 +36,7 @@
         <v-btn value="pan" size="small">网盘</v-btn>
       </v-btn-toggle>
       <v-chip v-if="results.length" size="x-small" variant="tonal" color="primary">{{ filtered.length }}/{{ results.length }} 条</v-chip>
-      <v-btn v-if="resourceType !== 'all' || resultSource !== 'all' || detailFilter !== 'all'" size="small" variant="text" @click="resetFilters">重置筛选</v-btn>
+      <v-btn v-if="resourceType !== 'all' || detailFilter !== 'all'" size="small" variant="text" @click="resetFilters">重置筛选</v-btn>
     </div>
 
     <div v-if="resourceType === 'magnet'" class="filter-row mb-3">
@@ -137,7 +133,6 @@ const props = defineProps({ pluginId: { type: String, default: 'TgSearch115' }, 
 const base = computed(() => `plugin/${props.pluginId || 'TgSearch115'}`)
 const keyword = ref('')
 const source = ref('all')
-const resultSource = ref('all')
 const resourceType = ref('all')
 const detailFilter = ref('all')
 const results = ref([])
@@ -155,16 +150,8 @@ const ok = ref(false)
 const snack = ref(false)
 const snackColor = ref('')
 const snackText = ref('')
-const resultSourceOptions = computed(() => [
-  { title: '全部', value: 'all' },
-  ...Array.from(new Set(results.value.map((item) => String(item?.source || '')).filter(Boolean)))
-    .map((value) => ({ title: sourceLabel(value), value })),
-])
-const sourceFilteredResults = computed(() => resultSource.value === 'all'
-  ? results.value
-  : results.value.filter((item) => String(item?.source || '') === resultSource.value))
-const filtered = computed(() => filterSearchResults(sourceFilteredResults.value, resourceType.value, detailFilter.value))
-const resourceFilteredCount = computed(() => resourceType.value === 'all' ? sourceFilteredResults.value.length : filterSearchResults(sourceFilteredResults.value, resourceType.value, 'all').length)
+const filtered = computed(() => filterSearchResults(results.value, resourceType.value, detailFilter.value))
+const resourceFilteredCount = computed(() => resourceType.value === 'all' ? results.value.length : filterSearchResults(results.value, resourceType.value, 'all').length)
 const backendCount = computed(() => Object.values(sourceStats.value).reduce((total, stat) => total + Number(stat?.returned_count || 0), 0) || results.value.length)
 const sourceSummary = computed(() => Object.entries(sourceStatus.value).map(([name, state]) => {
   const label = sourceLabel(name)
@@ -175,7 +162,7 @@ const sourceSummary = computed(() => Object.entries(sourceStatus.value).map(([na
 }).join(' · '))
 
 watch(resourceType, () => { detailFilter.value = 'all' })
-watch([source, resultSource, resourceType, detailFilter], persistSession)
+watch([source, resourceType, detailFilter], persistSession)
 restoreSession()
 
 function sessionStore() {
@@ -191,7 +178,6 @@ function persistSession() {
     store.setItem(CACHE_KEY, JSON.stringify({
       keyword: keyword.value,
       source: source.value,
-      resultSource: resultSource.value,
       resourceType: resourceType.value,
       detailFilter: detailFilter.value,
       results: results.value.slice(0, MAX_CACHED_RESULTS).map(safeResult),
@@ -211,7 +197,6 @@ function restoreSession() {
     if (!cached || !Array.isArray(cached.results)) return
     keyword.value = String(cached.keyword || '')
     source.value = String(cached.source || 'all')
-    resultSource.value = String(cached.resultSource || 'all')
     resourceType.value = String(cached.resourceType || 'all')
     detailFilter.value = String(cached.detailFilter || 'all')
     results.value = cached.results.slice(0, MAX_CACHED_RESULTS).map(safeResult)
@@ -226,13 +211,12 @@ function clearResults() {
   results.value = []
   sourceStatus.value = {}
   sourceStats.value = {}
-  resultSource.value = 'all'
   searched.value = false
   message.value = ''
   ok.value = false
   sessionStore()?.removeItem(CACHE_KEY)
 }
-function resetFilters() { resultSource.value = 'all'; resourceType.value = 'all'; detailFilter.value = 'all' }
+function resetFilters() { resourceType.value = 'all'; detailFilter.value = 'all' }
 
 function unwrap(res) {
   let value = res

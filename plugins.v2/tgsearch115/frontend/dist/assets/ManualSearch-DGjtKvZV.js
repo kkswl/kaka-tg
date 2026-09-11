@@ -85,7 +85,7 @@ const _export_sfc = (sfc, props) => {
   return target;
 };
 
-const {createElementVNode:_createElementVNode,createTextVNode:_createTextVNode,resolveComponent:_resolveComponent,withCtx:_withCtx,createVNode:_createVNode,withKeys:_withKeys,renderList:_renderList,Fragment:_Fragment,openBlock:_openBlock,createElementBlock:_createElementBlock,toDisplayString:_toDisplayString,createBlock:_createBlock,createCommentVNode:_createCommentVNode,unref:_unref,normalizeClass:_normalizeClass} = await importShared('vue');
+const {createElementVNode:_createElementVNode,createTextVNode:_createTextVNode,resolveComponent:_resolveComponent,withCtx:_withCtx,createVNode:_createVNode,withKeys:_withKeys,openBlock:_openBlock,createElementBlock:_createElementBlock,createCommentVNode:_createCommentVNode,toDisplayString:_toDisplayString,createBlock:_createBlock,unref:_unref,renderList:_renderList,Fragment:_Fragment,normalizeClass:_normalizeClass} = await importShared('vue');
 
 
 const _hoisted_1 = { class: "manual-search" };
@@ -144,7 +144,6 @@ const props = __props;
 const base = computed(() => `plugin/${props.pluginId || 'TgSearch115'}`);
 const keyword = ref('');
 const source = ref('all');
-const resultSource = ref('all');
 const resourceType = ref('all');
 const detailFilter = ref('all');
 const results = ref([]);
@@ -162,16 +161,8 @@ const ok = ref(false);
 const snack = ref(false);
 const snackColor = ref('');
 const snackText = ref('');
-const resultSourceOptions = computed(() => [
-  { title: '全部', value: 'all' },
-  ...Array.from(new Set(results.value.map((item) => String(item?.source || '')).filter(Boolean)))
-    .map((value) => ({ title: sourceLabel(value), value })),
-]);
-const sourceFilteredResults = computed(() => resultSource.value === 'all'
-  ? results.value
-  : results.value.filter((item) => String(item?.source || '') === resultSource.value));
-const filtered = computed(() => filterSearchResults(sourceFilteredResults.value, resourceType.value, detailFilter.value));
-const resourceFilteredCount = computed(() => resourceType.value === 'all' ? sourceFilteredResults.value.length : filterSearchResults(sourceFilteredResults.value, resourceType.value, 'all').length);
+const filtered = computed(() => filterSearchResults(results.value, resourceType.value, detailFilter.value));
+const resourceFilteredCount = computed(() => resourceType.value === 'all' ? results.value.length : filterSearchResults(results.value, resourceType.value, 'all').length);
 const backendCount = computed(() => Object.values(sourceStats.value).reduce((total, stat) => total + Number(stat?.returned_count || 0), 0) || results.value.length);
 const sourceSummary = computed(() => Object.entries(sourceStatus.value).map(([name, state]) => {
   const label = sourceLabel(name);
@@ -182,7 +173,7 @@ const sourceSummary = computed(() => Object.entries(sourceStatus.value).map(([na
 }).join(' · '));
 
 watch(resourceType, () => { detailFilter.value = 'all'; });
-watch([source, resultSource, resourceType, detailFilter], persistSession);
+watch([source, resourceType, detailFilter], persistSession);
 restoreSession();
 
 function sessionStore() {
@@ -198,7 +189,6 @@ function persistSession() {
     store.setItem(CACHE_KEY, JSON.stringify({
       keyword: keyword.value,
       source: source.value,
-      resultSource: resultSource.value,
       resourceType: resourceType.value,
       detailFilter: detailFilter.value,
       results: results.value.slice(0, MAX_CACHED_RESULTS).map(safeResult),
@@ -218,7 +208,6 @@ function restoreSession() {
     if (!cached || !Array.isArray(cached.results)) return
     keyword.value = String(cached.keyword || '');
     source.value = String(cached.source || 'all');
-    resultSource.value = String(cached.resultSource || 'all');
     resourceType.value = String(cached.resourceType || 'all');
     detailFilter.value = String(cached.detailFilter || 'all');
     results.value = cached.results.slice(0, MAX_CACHED_RESULTS).map(safeResult);
@@ -233,13 +222,12 @@ function clearResults() {
   results.value = [];
   sourceStatus.value = {};
   sourceStats.value = {};
-  resultSource.value = 'all';
   searched.value = false;
   message.value = '';
   ok.value = false;
   sessionStore()?.removeItem(CACHE_KEY);
 }
-function resetFilters() { resultSource.value = 'all'; resourceType.value = 'all'; detailFilter.value = 'all'; }
+function resetFilters() { resourceType.value = 'all'; detailFilter.value = 'all'; }
 
 function unwrap(res) {
   let value = res;
@@ -366,7 +354,7 @@ return (_ctx, _cache) => {
 
   return (_openBlock(), _createElementBlock("div", _hoisted_1, [
     _createElementVNode("div", _hoisted_2, [
-      _cache[14] || (_cache[14] = _createElementVNode("span", { class: "filter-label" }, "搜索范围", -1)),
+      _cache[13] || (_cache[13] = _createElementVNode("span", { class: "filter-label" }, "搜索范围", -1)),
       _createVNode(_component_v_btn_toggle, {
         modelValue: source.value,
         "onUpdate:modelValue": _cache[0] || (_cache[0] = $event => ((source).value = $event)),
@@ -381,7 +369,7 @@ return (_ctx, _cache) => {
             value: "all",
             size: "small"
           }, {
-            default: _withCtx(() => [...(_cache[9] || (_cache[9] = [
+            default: _withCtx(() => [...(_cache[8] || (_cache[8] = [
               _createTextVNode("全部", -1)
             ]))]),
             _: 1
@@ -390,7 +378,7 @@ return (_ctx, _cache) => {
             value: "tg",
             size: "small"
           }, {
-            default: _withCtx(() => [...(_cache[10] || (_cache[10] = [
+            default: _withCtx(() => [...(_cache[9] || (_cache[9] = [
               _createTextVNode("TG", -1)
             ]))]),
             _: 1
@@ -399,7 +387,7 @@ return (_ctx, _cache) => {
             value: "site",
             size: "small"
           }, {
-            default: _withCtx(() => [...(_cache[11] || (_cache[11] = [
+            default: _withCtx(() => [...(_cache[10] || (_cache[10] = [
               _createTextVNode("观影", -1)
             ]))]),
             _: 1
@@ -408,7 +396,7 @@ return (_ctx, _cache) => {
             value: "pansou",
             size: "small"
           }, {
-            default: _withCtx(() => [...(_cache[12] || (_cache[12] = [
+            default: _withCtx(() => [...(_cache[11] || (_cache[11] = [
               _createTextVNode("PanSou", -1)
             ]))]),
             _: 1
@@ -417,7 +405,7 @@ return (_ctx, _cache) => {
             value: "juying",
             size: "small"
           }, {
-            default: _withCtx(() => [...(_cache[13] || (_cache[13] = [
+            default: _withCtx(() => [...(_cache[12] || (_cache[12] = [
               _createTextVNode("聚影", -1)
             ]))]),
             _: 1
@@ -425,7 +413,7 @@ return (_ctx, _cache) => {
         ]),
         _: 1
       }, 8, ["modelValue"]),
-      _cache[15] || (_cache[15] = _createElementVNode("span", { class: "text-caption text-medium-emphasis" }, "选择后点击搜索生效", -1))
+      _cache[14] || (_cache[14] = _createElementVNode("span", { class: "text-caption text-medium-emphasis" }, "选择后点击搜索生效", -1))
     ]),
     _createElementVNode("div", _hoisted_3, [
       _createVNode(_component_v_text_field, {
@@ -445,7 +433,7 @@ return (_ctx, _cache) => {
         "prepend-icon": "mdi-magnify",
         onClick: search
       }, {
-        default: _withCtx(() => [...(_cache[16] || (_cache[16] = [
+        default: _withCtx(() => [...(_cache[15] || (_cache[15] = [
           _createTextVNode("搜索", -1)
         ]))]),
         _: 1
@@ -453,39 +441,13 @@ return (_ctx, _cache) => {
     ]),
     (results.value.length)
       ? (_openBlock(), _createElementBlock("div", _hoisted_4, [
-          _cache[18] || (_cache[18] = _createElementVNode("span", { class: "filter-label" }, "结果来源", -1)),
-          _createVNode(_component_v_btn_toggle, {
-            modelValue: resultSource.value,
-            "onUpdate:modelValue": _cache[2] || (_cache[2] = $event => ((resultSource).value = $event)),
-            mandatory: "",
-            color: "primary",
-            density: "compact",
-            divided: "",
-            class: "filter-toggle"
-          }, {
-            default: _withCtx(() => [
-              (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(resultSourceOptions.value, (item) => {
-                return (_openBlock(), _createBlock(_component_v_btn, {
-                  key: item.value,
-                  value: item.value,
-                  size: "small"
-                }, {
-                  default: _withCtx(() => [
-                    _createTextVNode(_toDisplayString(item.title), 1)
-                  ]),
-                  _: 2
-                }, 1032, ["value"]))
-              }), 128))
-            ]),
-            _: 1
-          }, 8, ["modelValue"]),
           _createVNode(_component_v_btn, {
             size: "small",
             variant: "text",
             "prepend-icon": "mdi-delete-outline",
             onClick: clearResults
           }, {
-            default: _withCtx(() => [...(_cache[17] || (_cache[17] = [
+            default: _withCtx(() => [...(_cache[16] || (_cache[16] = [
               _createTextVNode("清空结果", -1)
             ]))]),
             _: 1
@@ -493,10 +455,10 @@ return (_ctx, _cache) => {
         ]))
       : _createCommentVNode("", true),
     _createElementVNode("div", _hoisted_5, [
-      _cache[23] || (_cache[23] = _createElementVNode("span", { class: "filter-label" }, "资源", -1)),
+      _cache[21] || (_cache[21] = _createElementVNode("span", { class: "filter-label" }, "资源", -1)),
       _createVNode(_component_v_btn_toggle, {
         modelValue: resourceType.value,
-        "onUpdate:modelValue": _cache[3] || (_cache[3] = $event => ((resourceType).value = $event)),
+        "onUpdate:modelValue": _cache[2] || (_cache[2] = $event => ((resourceType).value = $event)),
         mandatory: "",
         color: "primary",
         density: "compact",
@@ -508,7 +470,7 @@ return (_ctx, _cache) => {
             value: "all",
             size: "small"
           }, {
-            default: _withCtx(() => [...(_cache[19] || (_cache[19] = [
+            default: _withCtx(() => [...(_cache[17] || (_cache[17] = [
               _createTextVNode("全部", -1)
             ]))]),
             _: 1
@@ -517,7 +479,7 @@ return (_ctx, _cache) => {
             value: "magnet",
             size: "small"
           }, {
-            default: _withCtx(() => [...(_cache[20] || (_cache[20] = [
+            default: _withCtx(() => [...(_cache[18] || (_cache[18] = [
               _createTextVNode("磁力", -1)
             ]))]),
             _: 1
@@ -526,7 +488,7 @@ return (_ctx, _cache) => {
             value: "pan",
             size: "small"
           }, {
-            default: _withCtx(() => [...(_cache[21] || (_cache[21] = [
+            default: _withCtx(() => [...(_cache[19] || (_cache[19] = [
               _createTextVNode("网盘", -1)
             ]))]),
             _: 1
@@ -547,14 +509,14 @@ return (_ctx, _cache) => {
             _: 1
           }))
         : _createCommentVNode("", true),
-      (resourceType.value !== 'all' || resultSource.value !== 'all' || detailFilter.value !== 'all')
+      (resourceType.value !== 'all' || detailFilter.value !== 'all')
         ? (_openBlock(), _createBlock(_component_v_btn, {
             key: 1,
             size: "small",
             variant: "text",
             onClick: resetFilters
           }, {
-            default: _withCtx(() => [...(_cache[22] || (_cache[22] = [
+            default: _withCtx(() => [...(_cache[20] || (_cache[20] = [
               _createTextVNode("重置筛选", -1)
             ]))]),
             _: 1
@@ -563,10 +525,10 @@ return (_ctx, _cache) => {
     ]),
     (resourceType.value === 'magnet')
       ? (_openBlock(), _createElementBlock("div", _hoisted_6, [
-          _cache[24] || (_cache[24] = _createElementVNode("span", { class: "filter-label" }, "画质", -1)),
+          _cache[22] || (_cache[22] = _createElementVNode("span", { class: "filter-label" }, "画质", -1)),
           _createVNode(_component_v_btn_toggle, {
             modelValue: detailFilter.value,
-            "onUpdate:modelValue": _cache[4] || (_cache[4] = $event => ((detailFilter).value = $event)),
+            "onUpdate:modelValue": _cache[3] || (_cache[3] = $event => ((detailFilter).value = $event)),
             mandatory: "",
             color: "primary",
             density: "compact",
@@ -592,10 +554,10 @@ return (_ctx, _cache) => {
         ]))
       : (resourceType.value === 'pan')
         ? (_openBlock(), _createElementBlock("div", _hoisted_7, [
-            _cache[25] || (_cache[25] = _createElementVNode("span", { class: "filter-label" }, "网盘", -1)),
+            _cache[23] || (_cache[23] = _createElementVNode("span", { class: "filter-label" }, "网盘", -1)),
             _createVNode(_component_v_btn_toggle, {
               modelValue: detailFilter.value,
-              "onUpdate:modelValue": _cache[5] || (_cache[5] = $event => ((detailFilter).value = $event)),
+              "onUpdate:modelValue": _cache[4] || (_cache[4] = $event => ((detailFilter).value = $event)),
               mandatory: "",
               color: "primary",
               density: "compact",
@@ -624,7 +586,7 @@ return (_ctx, _cache) => {
       ? (_openBlock(), _createElementBlock("div", _hoisted_8, _toDisplayString(sourceSummary.value), 1))
       : _createCommentVNode("", true),
     (searched.value)
-      ? (_openBlock(), _createElementBlock("div", _hoisted_9, "后端返回：" + _toDisplayString(backendCount.value) + " 条 · 来源筛选：" + _toDisplayString(sourceFilteredResults.value.length) + " 条 · 资源筛选：" + _toDisplayString(resourceFilteredCount.value) + " 条 · 详细筛选：" + _toDisplayString(filtered.value.length) + " 条", 1))
+      ? (_openBlock(), _createElementBlock("div", _hoisted_9, "后端返回：" + _toDisplayString(backendCount.value) + " 条 · 来源筛选：" + _toDisplayString(_ctx.sourceFilteredResults.length) + " 条 · 资源筛选：" + _toDisplayString(resourceFilteredCount.value) + " 条 · 详细筛选：" + _toDisplayString(filtered.value.length) + " 条", 1))
       : _createCommentVNode("", true),
     (message.value)
       ? (_openBlock(), _createElementBlock("div", {
@@ -715,7 +677,7 @@ return (_ctx, _cache) => {
                                     color: "success",
                                     variant: "outlined"
                                   }, {
-                                    default: _withCtx(() => [...(_cache[26] || (_cache[26] = [
+                                    default: _withCtx(() => [...(_cache[24] || (_cache[24] = [
                                       _createTextVNode("中文字幕", -1)
                                     ]))]),
                                     _: 1
@@ -728,7 +690,7 @@ return (_ctx, _cache) => {
                                     size: "x-small",
                                     variant: "tonal"
                                   }, {
-                                    default: _withCtx(() => [...(_cache[27] || (_cache[27] = [
+                                    default: _withCtx(() => [...(_cache[25] || (_cache[25] = [
                                       _createTextVNode("完结", -1)
                                     ]))]),
                                     _: 1
@@ -753,7 +715,7 @@ return (_ctx, _cache) => {
                               "prepend-icon": "mdi-content-copy",
                               onClick: $event => (copy(r))
                             }, {
-                              default: _withCtx(() => [...(_cache[28] || (_cache[28] = [
+                              default: _withCtx(() => [...(_cache[26] || (_cache[26] = [
                                 _createTextVNode("复制链接", -1)
                               ]))]),
                               _: 1
@@ -793,7 +755,7 @@ return (_ctx, _cache) => {
           : _createCommentVNode("", true),
     _createVNode(_component_v_dialog, {
       modelValue: processDialog.value,
-      "onUpdate:modelValue": _cache[7] || (_cache[7] = $event => ((processDialog).value = $event)),
+      "onUpdate:modelValue": _cache[6] || (_cache[6] = $event => ((processDialog).value = $event)),
       "max-width": "520",
       persistent: ""
     }, {
@@ -807,16 +769,16 @@ return (_ctx, _cache) => {
                   color: "primary",
                   class: "mr-2"
                 }),
-                _cache[29] || (_cache[29] = _createTextVNode("确认正式操作 ", -1))
+                _cache[27] || (_cache[27] = _createTextVNode("确认正式操作 ", -1))
               ]),
               _: 1
             }),
             _createVNode(_component_v_card_text, null, {
               default: _withCtx(() => [
-                _cache[30] || (_cache[30] = _createElementVNode("div", { class: "text-body-2 mb-3" }, "请选择对应的 MoviePilot 订阅。系统将在提交前重新执行规则和媒体身份确认。", -1)),
+                _cache[28] || (_cache[28] = _createElementVNode("div", { class: "text-body-2 mb-3" }, "请选择对应的 MoviePilot 订阅。系统将在提交前重新执行规则和媒体身份确认。", -1)),
                 _createVNode(_component_v_select, {
                   modelValue: subscribeId.value,
-                  "onUpdate:modelValue": _cache[6] || (_cache[6] = $event => ((subscribeId).value = $event)),
+                  "onUpdate:modelValue": _cache[5] || (_cache[5] = $event => ((subscribeId).value = $event)),
                   items: subscriptions.value,
                   "item-title": "label",
                   "item-value": "id",
@@ -836,7 +798,7 @@ return (_ctx, _cache) => {
                   disabled: !!transferring.value,
                   onClick: closeProcessDialog
                 }, {
-                  default: _withCtx(() => [...(_cache[31] || (_cache[31] = [
+                  default: _withCtx(() => [...(_cache[29] || (_cache[29] = [
                     _createTextVNode("取消", -1)
                   ]))]),
                   _: 1
@@ -848,7 +810,7 @@ return (_ctx, _cache) => {
                   loading: !!transferring.value,
                   onClick: transfer
                 }, {
-                  default: _withCtx(() => [...(_cache[32] || (_cache[32] = [
+                  default: _withCtx(() => [...(_cache[30] || (_cache[30] = [
                     _createTextVNode("确认提交", -1)
                   ]))]),
                   _: 1
@@ -864,7 +826,7 @@ return (_ctx, _cache) => {
     }, 8, ["modelValue"]),
     _createVNode(_component_v_snackbar, {
       modelValue: snack.value,
-      "onUpdate:modelValue": _cache[8] || (_cache[8] = $event => ((snack).value = $event)),
+      "onUpdate:modelValue": _cache[7] || (_cache[7] = $event => ((snack).value = $event)),
       color: snackColor.value,
       timeout: 3000,
       location: "top"
@@ -879,6 +841,6 @@ return (_ctx, _cache) => {
 }
 
 };
-const ManualSearch = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-0074bb27"]]);
+const ManualSearch = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-b4e126a0"]]);
 
 export { ManualSearch as M, _export_sfc as _, filterSearchResults as f };
