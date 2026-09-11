@@ -123,6 +123,7 @@ from .recognition_control import RecognitionGate, RecognitionUnavailable
 from .search_reporting import SearchReport, candidate_source, candidate_upstream_source, format_selected_source
 from .tmdb_support import season_year_map
 from .site_query_policy import site_query_years
+from .resource_metadata import normalize_resource_metadata
 
 
 # get_data / save_data 存储本插件配置使用的 key
@@ -242,7 +243,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.7.50"
+    plugin_version = "4.7.51"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -1016,13 +1017,11 @@ class TgSearch115(_PluginBase):
                         season_label = ",".join(
                             f"S{s:02d}" for s in sorted(hit_seasons)
                         ) or "无明确季号"
-                        _reject_url = str(getattr(hit, "share_url", "") or "")
                         logger.info(
                             f"【TG115】订阅 [{subscribe.name}] S{target_season:02d} "
-                            f"本地季号初筛拒绝: title=%s url=%s 候选季号=%s",
+                            f"本地季号初筛拒绝: title=%s 候选季号=%s",
                             str(getattr(hit, "resource_title", "")
                                 or getattr(hit, "title", "") or "")[:80],
-                            _reject_url if not is_magnet_url(_reject_url) else "(magnet)",
                             season_label,
                         )
                 keyword_hits = season_kept
@@ -1425,13 +1424,11 @@ class TgSearch115(_PluginBase):
                             season_label = ",".join(
                                 f"S{s:02d}" for s in sorted(hit_seasons)
                             ) or "无明确季号"
-                            _reject_url = str(getattr(hit, "share_url", "") or "")
                             logger.info(
                                 f"【TG115】订阅 [{subscribe.name}] S{target_season:02d} "
-                                f"本地季号初筛拒绝: title=%s url=%s 候选季号=%s",
+                                f"本地季号初筛拒绝: title=%s 候选季号=%s",
                                 str(getattr(hit, "resource_title", "")
                                     or getattr(hit, "title", "") or "")[:80],
-                                _reject_url if not is_magnet_url(_reject_url) else "(magnet)",
                                 season_label,
                             )
                     logger.info(
@@ -2097,7 +2094,14 @@ class TgSearch115(_PluginBase):
                 resource_title, source_title, source_year, h.text or ""
             )
             display_title = resource_title or identity_title or "未命名资源"
-            pan_type = str(getattr(h, "pan_type", "") or "").lower()
+            normalized = normalize_resource_metadata({
+                "share_url": url, "pan_type": getattr(h, "pan_type", "") or "",
+                "resource_title": resource_title, "text": h.text or "",
+                "is_complete": parsed_meta.get("is_complete"),
+                "source": getattr(h, "_tg115_source", ""),
+                "upstream_source": getattr(h, "upstream_source", ""),
+            })
+            pan_type = normalized["pan_type"]
             parsed_meta = TgSearch115._parse_resource_meta(h.text or resource_title)
             torrent = TorrentInfo(
                 title=display_title,
@@ -2116,6 +2120,7 @@ class TgSearch115(_PluginBase):
             setattr(torrent, "_tg115_source", str(getattr(h, "_tg115_source", "") or "").lower())
             setattr(torrent, "_tg115_upstream_source", str(getattr(h, "upstream_source", "") or "").strip())
             setattr(torrent, "_tg115_is_complete", bool(parsed_meta.get("is_complete")))
+            setattr(torrent, "_tg115_metadata", normalized)
             # A magnet returned by the site's detail API has a concrete resource
             # title, page title and query year. Permit it to reach the exact
             # MoviePilot ID/type recognizer even if its local alias parser is
@@ -2129,14 +2134,11 @@ class TgSearch115(_PluginBase):
                 setattr(torrent, "_tg115_unavailable_rule_fields", {
                     "size", "seeders", "downloadvolumefactor", "publish_time",
                 })
-            # 磁力候选只记录名称，115 分享候选记录完整链接
-            log_url = "" if is_magnet_url(url) else url
             logger.info(
-                "【TG115】[候选] source=%s type=%s title=%s url=%s",
+                "【TG115】[候选] source=%s type=%s title=%s",
                 str(getattr(h, "_tg115_source", "") or "unknown"),
                 pan_type or "unknown",
                 display_title,
-                log_url or "(magnet)",
             )
             torrents.append(torrent)
         return torrents
@@ -2300,8 +2302,8 @@ class TgSearch115(_PluginBase):
                 else:
                     cached = []
                     logger.info(
-                        "【TG115】115 分享元数据探测失败：%s，url=%s",
-                        _message, getattr(torrent, "page_url", "") or "",
+                        "【TG115】115 分享元数据探测失败：%s",
+                        _message,
                     )
                 if self._share_metadata_cache:
                     self._share_metadata_cache.set(code, cached)
@@ -2326,9 +2328,8 @@ class TgSearch115(_PluginBase):
             has_sub_file = has_chinese_subtitle_file(cached)
             setattr(torrent, "_tg115_has_chinese_sub_file", has_sub_file)
             logger.info(
-                "【TG115】115 分享只读文件名已补充候选元数据，中文字幕文件=%s url=%s",
+                "【TG115】115 分享只读文件名已补充候选元数据，中文字幕文件=%s",
                 "是" if has_sub_file else "未检测到",
-                getattr(torrent, "page_url", "") or "",
             )
 
     @staticmethod
@@ -3518,9 +3519,6 @@ class TgSearch115(_PluginBase):
             dedupe_rejected = Counter()
             returned_counts = Counter()
             for h in hits:
-                pt = getattr(h, "pan_type", "") or ""
-                if not pt:
-                    pt = "115" if P115Transfer._is_115_share_url(h.share_url or "") else "other"
                 title = h.resource_title or h.text or "未命名资源"
                 meta = self._parse_resource_meta(h.text or title)
                 # 观影资源：用 search_suggest 的作品名(source_title)+年份做标题，
@@ -3547,7 +3545,17 @@ class TgSearch115(_PluginBase):
                     relevance_rejected[hit_source or "unknown"] += 1
                     continue
                 share_url = h.share_url or ""
-                if P115Transfer._is_115_share_url(share_url):
+                normalized = normalize_resource_metadata({
+                    "share_url": share_url,
+                    "pan_type": getattr(h, "pan_type", "") or "",
+                    "resource_title": title,
+                    "text": h.text or "",
+                    "is_complete": meta["is_complete"],
+                    "source": hit_source,
+                    "upstream_source": getattr(h, "upstream_source", "") or "",
+                })
+                pt = normalized["pan_type"]
+                if pt == "115":
                     share_code, _ = P115Transfer._extract_payload(share_url)
                     dedupe_key = f"115:{share_code or share_url}".lower()
                 else:
@@ -3557,7 +3565,7 @@ class TgSearch115(_PluginBase):
                     continue
                 seen_results.add(dedupe_key)
                 returned_counts[hit_source or "unknown"] += 1
-                results.append({
+                result = {
                     "title": title,
                     "display_name": display_name,
                     "meta": meta["meta"],
@@ -3571,7 +3579,11 @@ class TgSearch115(_PluginBase):
                     "pan_type": pt,
                     "pub_date": h.pub_date or "",
                     "text": (h.text or "")[:500],
-                })
+                }
+                result.update(normalized)
+                # 展示标题的站点年份比资源文件名更可靠，结构化年份优先保留它。
+                result["year"] = candidate_year or result.get("year")
+                results.append(result)
             # 排序：完结优先，然后按最大集数降序
             results.sort(key=lambda r: (r["is_complete"], r["episode_num"]), reverse=True)
             for source_name, state in source_status.items():

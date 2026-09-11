@@ -40,6 +40,7 @@
         <v-btn value="pan" size="small">网盘</v-btn>
       </v-btn-toggle>
       <v-chip v-if="results.length" size="x-small" variant="tonal" color="primary">{{ filtered.length }}/{{ results.length }} 条</v-chip>
+      <v-btn v-if="resourceType !== 'all' || resultSource !== 'all' || detailFilter !== 'all'" size="small" variant="text" @click="resetFilters">重置筛选</v-btn>
     </div>
 
     <div v-if="resourceType === 'magnet'" class="filter-row mb-3">
@@ -56,7 +57,7 @@
     </div>
 
     <div v-if="sourceSummary" class="source-summary mb-2">{{ sourceSummary }}</div>
-    <div v-if="searched" class="text-caption text-medium-emphasis mb-3">后端返回：{{ backendCount }} 条 · 前端筛选后：{{ filtered.length }} 条</div>
+    <div v-if="searched" class="text-caption text-medium-emphasis mb-3">后端返回：{{ backendCount }} 条 · 来源筛选：{{ sourceFilteredResults.length }} 条 · 资源筛选：{{ resourceFilteredCount }} 条 · 详细筛选：{{ filtered.length }} 条</div>
     <div v-if="message" class="text-caption mb-3" :class="ok ? 'text-success' : 'text-error'">{{ message }}</div>
     <div v-if="searching" class="empty-state"><v-progress-circular indeterminate size="40" color="primary" /></div>
     <v-row v-else-if="filtered.length" dense>
@@ -67,6 +68,8 @@
               <v-chip :color="panColor(r.pan_type)" size="x-small" variant="tonal">{{ panLabel(r.pan_type) }}</v-chip>
               <v-chip v-if="r.source" size="x-small" variant="tonal">{{ sourceLabel(r.source) }}</v-chip>
               <v-chip v-if="r.upstream_source" size="x-small" variant="outlined">{{ r.upstream_source }}</v-chip>
+              <v-chip v-if="r.resource_kind === 'magnet' && r.resolution !== 'unknown'" size="x-small" variant="outlined">{{ qualityLabel(r) }}</v-chip>
+              <v-chip v-if="r.has_chinese_subtitle" size="x-small" color="success" variant="outlined">中文字幕</v-chip>
               <v-chip v-if="r.is_complete" color="success" size="x-small" variant="tonal">完结</v-chip>
             </div>
             <div class="text-body-2 font-weight-medium">{{ r.display_name || r.title }}</div>
@@ -91,7 +94,7 @@
         </v-card>
       </v-col>
     </v-row>
-    <div v-else-if="searched && !searching" class="empty-state">所有可用来源均未找到符合条件的资源</div>
+    <div v-else-if="searched && !searching" class="empty-state">{{ results.length ? '当前筛选条件下没有资源，可重置筛选后查看全部结果' : '所有可用来源均未找到符合条件的资源' }}</div>
 
     <v-dialog v-model="processDialog" max-width="520" persistent>
       <v-card>
@@ -129,7 +132,7 @@ import { filterSearchResults, MAGNET_FILTERS, PAN_FILTERS } from '../searchFilte
 
 const CACHE_KEY = 'TgSearch115:manual-search:v1'
 const MAX_CACHED_RESULTS = 500
-const RESULT_FIELDS = ['title', 'display_name', 'meta', 'is_complete', 'episode_num', 'share_url', 'receive_code', 'channel', 'source', 'upstream_source', 'pan_type', 'pub_date', 'text']
+const RESULT_FIELDS = ['title', 'display_name', 'meta', 'is_complete', 'episode_num', 'share_url', 'receive_code', 'channel', 'source', 'upstream_source', 'pan_type', 'resource_kind', 'resolution', 'quality_class', 'has_chinese_subtitle', 'subtitle_type', 'is_remux', 'season', 'year', 'pub_date', 'text']
 const props = defineProps({ pluginId: { type: String, default: 'TgSearch115' }, api: { type: Object, default: null } })
 const base = computed(() => `plugin/${props.pluginId || 'TgSearch115'}`)
 const keyword = ref('')
@@ -161,6 +164,7 @@ const sourceFilteredResults = computed(() => resultSource.value === 'all'
   ? results.value
   : results.value.filter((item) => String(item?.source || '') === resultSource.value))
 const filtered = computed(() => filterSearchResults(sourceFilteredResults.value, resourceType.value, detailFilter.value))
+const resourceFilteredCount = computed(() => resourceType.value === 'all' ? sourceFilteredResults.value.length : filterSearchResults(sourceFilteredResults.value, resourceType.value, 'all').length)
 const backendCount = computed(() => Object.values(sourceStats.value).reduce((total, stat) => total + Number(stat?.returned_count || 0), 0) || results.value.length)
 const sourceSummary = computed(() => Object.entries(sourceStatus.value).map(([name, state]) => {
   const label = sourceLabel(name)
@@ -228,6 +232,7 @@ function clearResults() {
   ok.value = false
   sessionStore()?.removeItem(CACHE_KEY)
 }
+function resetFilters() { resultSource.value = 'all'; resourceType.value = 'all'; detailFilter.value = 'all' }
 
 function unwrap(res) {
   let value = res
@@ -331,13 +336,14 @@ async function loadSubscriptions() {
 function sourceLabel(value) { return ({ tg: 'TG', site: '观影', pansou: 'PanSou', juying: '聚影' })[value] || value }
 function panLabel(t) { return ({ '115':'115网盘', quark:'夸克网盘', baidu:'百度网盘', aliyun:'阿里网盘', xunlei:'迅雷网盘', cloud189:'天翼网盘', uc:'UC网盘', '123':'123网盘', magnet:'磁力' })[t] || '其他' }
 function panColor(t) { return ({ '115':'success', quark:'info', baidu:'error', aliyun:'warning', xunlei:'secondary', cloud189:'primary', uc:'orange', '123':'teal', magnet:'deep-purple' })[t] || 'grey' }
+function qualityLabel(r) { return ({ '4k': '4K', '1080p': '1080P', '720p': '720P' })[r?.resolution] || '未知' }
 </script>
 
 <style scoped>
 .search-toolbar { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:8px; align-items:center; }
 .filter-row { display:flex; align-items:center; gap:8px; min-width:0; flex-wrap:wrap; }
 .filter-label { flex:0 0 32px; font-size:.75rem; color:rgba(var(--v-theme-on-surface),.6); }
-.filter-toggle { flex-wrap:wrap; height:auto; }
+.filter-toggle { flex-wrap:wrap; height:auto; max-width:calc(100% - 40px); overflow-x:auto; }
 .source-summary { padding:10px 12px; border:1px solid rgba(var(--v-border-color), var(--v-border-opacity)); border-radius:6px; font-size:.8rem; }
 .result-card { min-height:172px; border-radius:8px; }
 .line-clamp-3 { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }

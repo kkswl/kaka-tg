@@ -78,7 +78,7 @@ class P115Transfer:
         if not share_code or not receive_code:
             return False, "解析 115 分享链接失败，缺少分享码或提取码", result
 
-        logger.info("【TG115】115 分享转存请求已接收 url=%s", share_url)
+        logger.info("【TG115】115 分享转存请求已接收")
         # 目标目录：纯数字视为 cid 直接用；否则按路径查找/创建
         try:
             if effective.isdigit():
@@ -110,8 +110,8 @@ class P115Transfer:
             snap_items = (snap_data.get("list") or snap_data.get("filelist") or []) \
                 if isinstance(snap_data, dict) else []
             logger.info(
-                "【TG115】share_snap 完成 state=%s items=%s url=%s",
-                bool(self._response_ok(snap)), len(snap_items), share_url,
+                "【TG115】share_snap 完成 state=%s items=%s",
+                bool(self._response_ok(snap)), len(snap_items),
             )
             if isinstance(snap, dict) and snap.get("state") not in (True, 1, "1"):
                 snap_err = snap.get("error") or snap.get("message") or "分享不可用"
@@ -127,8 +127,8 @@ class P115Transfer:
                         # 目录分享：保持 file_id=0 转存整个分享
                         is_dir_share = True
             logger.info(
-                "【TG115】分享文件定位完成 has_file_id=%s is_dir_share=%s url=%s",
-                bool(file_id), is_dir_share, share_url,
+                "【TG115】分享文件定位完成 has_file_id=%s is_dir_share=%s",
+                bool(file_id), is_dir_share,
             )
         except Exception as e:
             logger.warn(f"【TG115】share_snap 异常（继续用 file_id=0）: {e}")
@@ -145,8 +145,8 @@ class P115Transfer:
         try:
             resp = self._api_post("/share/receive", payload)
             logger.info(
-                "【TG115】share_receive 完成 state=%s url=%s",
-                bool(self._response_ok(resp)), share_url,
+                "【TG115】share_receive 完成 state=%s",
+                bool(self._response_ok(resp)),
             )
         except Exception as e:
             logger.error(f"【TG115】share_receive 异常: {e}")

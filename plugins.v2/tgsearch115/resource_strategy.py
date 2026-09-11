@@ -486,14 +486,12 @@ def execute_auto_candidates(
             result.candidate = candidate
             result.message = message
             _logger.info(
-                "【TG115】[115转存] %s → 成功 url=%s",
-                _safe_title(candidate), getattr(candidate, "page_url", "") or "",
+                "【TG115】[115转存] %s → 成功", _safe_title(candidate),
             )
             return result
         result.errors.append(f"115 转存失败: {message}")
         _logger.info(
-            "【TG115】[115转存] %s → 失败：%s url=%s",
-            _safe_title(candidate), message, getattr(candidate, "page_url", "") or "",
+            "【TG115】[115转存] %s → 失败：%s", _safe_title(candidate), message,
         )
 
     # 已确认中字全部失败后，尝试待确认中字的候选
@@ -510,15 +508,14 @@ def execute_auto_candidates(
             ok_inspect, _inspect_msg, names = inspect_share(candidate)
             if not ok_inspect:
                 _logger.info(
-                    "【TG115】[115转存] %s → 探测失败：%s，跳过 url=%s",
+                    "【TG115】[115转存] %s → 探测失败：%s，跳过",
                     _safe_title(candidate), _inspect_msg,
-                    getattr(candidate, "page_url", "") or "",
                 )
                 continue
             if not has_chinese_subtitle_file(names):
                 _logger.info(
-                    "【TG115】[115转存] %s → 未检测到中文字幕文件，跳过 url=%s",
-                    _safe_title(candidate), getattr(candidate, "page_url", "") or "",
+                    "【TG115】[115转存] %s → 未检测到中文字幕文件，跳过",
+                    _safe_title(candidate),
                 )
                 continue
             # 探测到中字文件，执行转存
@@ -527,14 +524,13 @@ def execute_auto_candidates(
                 result.candidate = candidate
                 result.message = message
                 _logger.info(
-                    "【TG115】[115转存] %s → 成功（延迟确认中字）url=%s",
-                    _safe_title(candidate), getattr(candidate, "page_url", "") or "",
+                    "【TG115】[115转存] %s → 成功（延迟确认中字）",
+                    _safe_title(candidate),
                 )
                 return result
             result.errors.append(f"115 转存失败: {message}")
             _logger.info(
-                "【TG115】[115转存] %s → 失败：%s url=%s",
-                _safe_title(candidate), message, getattr(candidate, "page_url", "") or "",
+                "【TG115】[115转存] %s → 失败：%s", _safe_title(candidate), message,
             )
     elif pending_shares and not inspect_share:
         _logger.info("【TG115】[115转存] 待确认候选 %d 个，但未提供 inspect_share 回调，跳过", len(pending_shares))

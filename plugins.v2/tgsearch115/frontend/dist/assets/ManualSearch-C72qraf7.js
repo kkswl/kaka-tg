@@ -21,6 +21,7 @@ const PAN_FILTERS = [
   { title: 'UC网盘', value: 'uc' },
   { title: '阿里网盘', value: 'aliyun' },
   { title: '123网盘', value: '123' },
+  { title: '其他', value: 'other' },
 ];
 
 function resultText(result) {
@@ -30,30 +31,46 @@ function resultText(result) {
     .toLowerCase()
 }
 
+// Compatibility path for results restored from a pre-v4.7.51 browser cache.
+// New API results always carry normalized fields produced by resource_metadata.py.
+function legacyMetadata(result) {
+  const text = resultText(result);
+  const panType = String(result?.pan_type || '').toLowerCase();
+  const is4k = /(?<![\w\d])(?:4\s*k|2160[pi]?|3840\s*[x×]\s*2160|uhd)(?![\w\d])/i.test(text);
+  const is1080 = !is4k && /(?<![\w\d])(?:1080[pi]?|1920\s*[x×]\s*1080)(?![\w\d])/i.test(text);
+  const is720 = !is4k && !is1080 && /(?<![\w\d])(?:720[pi]?|1280\s*[x×]\s*720)(?![\w\d])/i.test(text);
+  const subtitle = /(?:中文字幕|中字|简体中文|繁体中文|简繁|\bchs\b|\bcht\b|\.(?:chs|cht)\.(?:srt|ass|sub)|chinese\s+subtitles?)/i.test(text);
+  const isRemux = /(?<![\w])(?:remux|原盘|bdmv|blu[\s-]?ray\s+iso|uhd\s+blu[\s-]?ray\s+原盘)(?![\w])/i.test(text);
+  const resolution = is4k ? '4k' : is1080 ? '1080p' : is720 ? '720p' : 'unknown';
+  return {
+    resource_kind: panType === 'magnet' ? 'magnet' : 'pan',
+    pan_type: panType || 'other',
+    resolution,
+    has_chinese_subtitle: subtitle,
+    is_remux: isRemux,
+    quality_class: isRemux ? 'remux' : subtitle && resolution === '4k' ? 'chs4k' : subtitle && resolution === '1080p' ? 'chs1080p' : resolution,
+  }
+}
+
+function searchResultMetadata(result) {
+  if (result && ['magnet', 'pan'].includes(result.resource_kind) && result.quality_class) return result
+  return { ...result, ...legacyMetadata(result) }
+}
+
 function filterSearchResults(results, resourceFilter, qualityFilter) {
   return (Array.isArray(results) ? results : []).filter((result) => {
-    const panType = String(result?.pan_type || 'other').toLowerCase();
-    if (resourceFilter === 'magnet' && panType !== 'magnet') return false
-    if (resourceFilter === 'pan' && panType === 'magnet') return false
+    const metadata = searchResultMetadata(result);
+    const panType = String(metadata.pan_type || 'other').toLowerCase();
+    if (resourceFilter === 'magnet' && metadata.resource_kind !== 'magnet') return false
+    if (resourceFilter === 'pan' && metadata.resource_kind !== 'pan') return false
     if (resourceFilter === '115' && panType !== '115') return false
 
     if (resourceFilter === 'pan' && qualityFilter !== 'all' && panType !== qualityFilter) return false
-
+    if (resourceFilter === 'magnet' && qualityFilter !== 'all' && metadata.quality_class !== qualityFilter) return false
+    // Legacy configuration page filters still use these values. Keep them structured too.
+    if (qualityFilter === '4k' && metadata.resolution !== '4k') return false
+    if (qualityFilter === '1080p' && metadata.resolution !== '1080p') return false
     const text = resultText(result);
-    const chinese = /(?:中文字幕|国语中字|中字|简中|繁中|简繁|内封.{0,6}(?:简|繁|中)|(?:chs|cht|chinese).{0,8}(?:sub|subtitle))/i.test(text);
-    const is720 = /720[pi]?/i.test(text);
-    const is1080 = /1080[pi]?/i.test(text);
-    const is4k = /(?:\b4k\b|2160p|\buhd\b)/i.test(text);
-    const isRemux = /(?:remux|原盘|blu-?ray|bdmv)/i.test(text);
-    if (resourceFilter === 'magnet' && qualityFilter === '720p' && !is720) return false
-    if (resourceFilter === 'magnet' && qualityFilter === '1080p' && !is1080) return false
-    if (resourceFilter === 'magnet' && qualityFilter === 'chs1080p' && !(is1080 && chinese)) return false
-    if (resourceFilter === 'magnet' && qualityFilter === '4k' && !is4k) return false
-    if (resourceFilter === 'magnet' && qualityFilter === 'chs4k' && !(is4k && chinese)) return false
-    if (resourceFilter === 'magnet' && qualityFilter === 'remux' && !isRemux) return false
-    if (resourceFilter === 'magnet' && qualityFilter === 'unknown' && (is720 || is1080 || is4k || isRemux)) return false
-    if (qualityFilter === '4k' && !/(?:\b4k\b|2160p|\buhd\b)/i.test(text)) return false
-    if (qualityFilter === '1080p' && !/1080[pi]?/i.test(text)) return false
     if (qualityFilter === 'hfr' && !/(?:\b(?:50|60|90|120)\s*fps\b|(?:50|60|90|120)\s*帧(?:率)?|\bhfr\b|高帧率)/i.test(text)) return false
     if (qualityFilter === 'no_hdr' && /(?:\bhdr(?:10\+?)?\b|dolby\s*vision|\bdv\b|dovi|杜比视界)/i.test(text)) return false
     return true
@@ -122,7 +139,7 @@ const _sfc_main = {
   props: { pluginId: { type: String, default: 'TgSearch115' }, api: { type: Object, default: null } },
   setup(__props) {
 
-const RESULT_FIELDS = ['title', 'display_name', 'meta', 'is_complete', 'episode_num', 'share_url', 'receive_code', 'channel', 'source', 'upstream_source', 'pan_type', 'pub_date', 'text'];
+const RESULT_FIELDS = ['title', 'display_name', 'meta', 'is_complete', 'episode_num', 'share_url', 'receive_code', 'channel', 'source', 'upstream_source', 'pan_type', 'resource_kind', 'resolution', 'quality_class', 'has_chinese_subtitle', 'subtitle_type', 'is_remux', 'season', 'year', 'pub_date', 'text'];
 const props = __props;
 const base = computed(() => `plugin/${props.pluginId || 'TgSearch115'}`);
 const keyword = ref('');
@@ -154,6 +171,7 @@ const sourceFilteredResults = computed(() => resultSource.value === 'all'
   ? results.value
   : results.value.filter((item) => String(item?.source || '') === resultSource.value));
 const filtered = computed(() => filterSearchResults(sourceFilteredResults.value, resourceType.value, detailFilter.value));
+const resourceFilteredCount = computed(() => resourceType.value === 'all' ? sourceFilteredResults.value.length : filterSearchResults(sourceFilteredResults.value, resourceType.value, 'all').length);
 const backendCount = computed(() => Object.values(sourceStats.value).reduce((total, stat) => total + Number(stat?.returned_count || 0), 0) || results.value.length);
 const sourceSummary = computed(() => Object.entries(sourceStatus.value).map(([name, state]) => {
   const label = sourceLabel(name);
@@ -221,6 +239,7 @@ function clearResults() {
   ok.value = false;
   sessionStore()?.removeItem(CACHE_KEY);
 }
+function resetFilters() { resultSource.value = 'all'; resourceType.value = 'all'; detailFilter.value = 'all'; }
 
 function unwrap(res) {
   let value = res;
@@ -324,6 +343,7 @@ async function loadSubscriptions() {
 function sourceLabel(value) { return ({ tg: 'TG', site: '观影', pansou: 'PanSou', juying: '聚影' })[value] || value }
 function panLabel(t) { return ({ '115':'115网盘', quark:'夸克网盘', baidu:'百度网盘', aliyun:'阿里网盘', xunlei:'迅雷网盘', cloud189:'天翼网盘', uc:'UC网盘', '123':'123网盘', magnet:'磁力' })[t] || '其他' }
 function panColor(t) { return ({ '115':'success', quark:'info', baidu:'error', aliyun:'warning', xunlei:'secondary', cloud189:'primary', uc:'orange', '123':'teal', magnet:'deep-purple' })[t] || 'grey' }
+function qualityLabel(r) { return ({ '4k': '4K', '1080p': '1080P', '720p': '720P' })[r?.resolution] || '未知' }
 
 return (_ctx, _cache) => {
   const _component_v_text_field = _resolveComponent("v-text-field");
@@ -472,7 +492,7 @@ return (_ctx, _cache) => {
         ]))
       : _createCommentVNode("", true),
     _createElementVNode("div", _hoisted_5, [
-      _cache[21] || (_cache[21] = _createElementVNode("span", { class: "filter-label" }, "资源", -1)),
+      _cache[22] || (_cache[22] = _createElementVNode("span", { class: "filter-label" }, "资源", -1)),
       _createVNode(_component_v_btn_toggle, {
         modelValue: resourceType.value,
         "onUpdate:modelValue": _cache[3] || (_cache[3] = $event => ((resourceType).value = $event)),
@@ -525,11 +545,24 @@ return (_ctx, _cache) => {
             ]),
             _: 1
           }))
+        : _createCommentVNode("", true),
+      (resourceType.value !== 'all' || resultSource.value !== 'all' || detailFilter.value !== 'all')
+        ? (_openBlock(), _createBlock(_component_v_btn, {
+            key: 1,
+            size: "small",
+            variant: "text",
+            onClick: resetFilters
+          }, {
+            default: _withCtx(() => [...(_cache[21] || (_cache[21] = [
+              _createTextVNode("重置筛选", -1)
+            ]))]),
+            _: 1
+          }))
         : _createCommentVNode("", true)
     ]),
     (resourceType.value === 'magnet')
       ? (_openBlock(), _createElementBlock("div", _hoisted_6, [
-          _cache[22] || (_cache[22] = _createElementVNode("span", { class: "filter-label" }, "画质", -1)),
+          _cache[23] || (_cache[23] = _createElementVNode("span", { class: "filter-label" }, "画质", -1)),
           _createVNode(_component_v_btn_toggle, {
             modelValue: detailFilter.value,
             "onUpdate:modelValue": _cache[4] || (_cache[4] = $event => ((detailFilter).value = $event)),
@@ -558,7 +591,7 @@ return (_ctx, _cache) => {
         ]))
       : (resourceType.value === 'pan')
         ? (_openBlock(), _createElementBlock("div", _hoisted_7, [
-            _cache[23] || (_cache[23] = _createElementVNode("span", { class: "filter-label" }, "网盘", -1)),
+            _cache[24] || (_cache[24] = _createElementVNode("span", { class: "filter-label" }, "网盘", -1)),
             _createVNode(_component_v_btn_toggle, {
               modelValue: detailFilter.value,
               "onUpdate:modelValue": _cache[5] || (_cache[5] = $event => ((detailFilter).value = $event)),
@@ -590,7 +623,7 @@ return (_ctx, _cache) => {
       ? (_openBlock(), _createElementBlock("div", _hoisted_8, _toDisplayString(sourceSummary.value), 1))
       : _createCommentVNode("", true),
     (searched.value)
-      ? (_openBlock(), _createElementBlock("div", _hoisted_9, "后端返回：" + _toDisplayString(backendCount.value) + " 条 · 前端筛选后：" + _toDisplayString(filtered.value.length) + " 条", 1))
+      ? (_openBlock(), _createElementBlock("div", _hoisted_9, "后端返回：" + _toDisplayString(backendCount.value) + " 条 · 来源筛选：" + _toDisplayString(sourceFilteredResults.value.length) + " 条 · 资源筛选：" + _toDisplayString(resourceFilteredCount.value) + " 条 · 详细筛选：" + _toDisplayString(filtered.value.length) + " 条", 1))
       : _createCommentVNode("", true),
     (message.value)
       ? (_openBlock(), _createElementBlock("div", {
@@ -662,14 +695,39 @@ return (_ctx, _cache) => {
                                     _: 2
                                   }, 1024))
                                 : _createCommentVNode("", true),
-                              (r.is_complete)
+                              (r.resource_kind === 'magnet' && r.resolution !== 'unknown')
                                 ? (_openBlock(), _createBlock(_component_v_chip, {
                                     key: 2,
+                                    size: "x-small",
+                                    variant: "outlined"
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _createTextVNode(_toDisplayString(qualityLabel(r)), 1)
+                                    ]),
+                                    _: 2
+                                  }, 1024))
+                                : _createCommentVNode("", true),
+                              (r.has_chinese_subtitle)
+                                ? (_openBlock(), _createBlock(_component_v_chip, {
+                                    key: 3,
+                                    size: "x-small",
+                                    color: "success",
+                                    variant: "outlined"
+                                  }, {
+                                    default: _withCtx(() => [...(_cache[25] || (_cache[25] = [
+                                      _createTextVNode("中文字幕", -1)
+                                    ]))]),
+                                    _: 1
+                                  }))
+                                : _createCommentVNode("", true),
+                              (r.is_complete)
+                                ? (_openBlock(), _createBlock(_component_v_chip, {
+                                    key: 4,
                                     color: "success",
                                     size: "x-small",
                                     variant: "tonal"
                                   }, {
-                                    default: _withCtx(() => [...(_cache[24] || (_cache[24] = [
+                                    default: _withCtx(() => [...(_cache[26] || (_cache[26] = [
                                       _createTextVNode("完结", -1)
                                     ]))]),
                                     _: 1
@@ -694,7 +752,7 @@ return (_ctx, _cache) => {
                               "prepend-icon": "mdi-content-copy",
                               onClick: $event => (copy(r))
                             }, {
-                              default: _withCtx(() => [...(_cache[25] || (_cache[25] = [
+                              default: _withCtx(() => [...(_cache[27] || (_cache[27] = [
                                 _createTextVNode("复制链接", -1)
                               ]))]),
                               _: 1
@@ -730,7 +788,7 @@ return (_ctx, _cache) => {
             _: 1
           }))
         : (searched.value && !searching.value)
-          ? (_openBlock(), _createElementBlock("div", _hoisted_16, "所有可用来源均未找到符合条件的资源"))
+          ? (_openBlock(), _createElementBlock("div", _hoisted_16, _toDisplayString(results.value.length ? '当前筛选条件下没有资源，可重置筛选后查看全部结果' : '所有可用来源均未找到符合条件的资源'), 1))
           : _createCommentVNode("", true),
     _createVNode(_component_v_dialog, {
       modelValue: processDialog.value,
@@ -748,13 +806,13 @@ return (_ctx, _cache) => {
                   color: "primary",
                   class: "mr-2"
                 }),
-                _cache[26] || (_cache[26] = _createTextVNode("确认正式操作 ", -1))
+                _cache[28] || (_cache[28] = _createTextVNode("确认正式操作 ", -1))
               ]),
               _: 1
             }),
             _createVNode(_component_v_card_text, null, {
               default: _withCtx(() => [
-                _cache[27] || (_cache[27] = _createElementVNode("div", { class: "text-body-2 mb-3" }, "请选择对应的 MoviePilot 订阅。系统将在提交前重新执行规则和媒体身份确认。", -1)),
+                _cache[29] || (_cache[29] = _createElementVNode("div", { class: "text-body-2 mb-3" }, "请选择对应的 MoviePilot 订阅。系统将在提交前重新执行规则和媒体身份确认。", -1)),
                 _createVNode(_component_v_select, {
                   modelValue: subscribeId.value,
                   "onUpdate:modelValue": _cache[6] || (_cache[6] = $event => ((subscribeId).value = $event)),
@@ -777,7 +835,7 @@ return (_ctx, _cache) => {
                   disabled: !!transferring.value,
                   onClick: closeProcessDialog
                 }, {
-                  default: _withCtx(() => [...(_cache[28] || (_cache[28] = [
+                  default: _withCtx(() => [...(_cache[30] || (_cache[30] = [
                     _createTextVNode("取消", -1)
                   ]))]),
                   _: 1
@@ -789,7 +847,7 @@ return (_ctx, _cache) => {
                   loading: !!transferring.value,
                   onClick: transfer
                 }, {
-                  default: _withCtx(() => [...(_cache[29] || (_cache[29] = [
+                  default: _withCtx(() => [...(_cache[31] || (_cache[31] = [
                     _createTextVNode("确认提交", -1)
                   ]))]),
                   _: 1
@@ -820,6 +878,6 @@ return (_ctx, _cache) => {
 }
 
 };
-const ManualSearch = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-5ef71b70"]]);
+const ManualSearch = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-b656de14"]]);
 
 export { ManualSearch as M, _export_sfc as _, filterSearchResults as f };
