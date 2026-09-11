@@ -38,6 +38,12 @@ class PanSouUiContractTest(unittest.TestCase):
         self.assertNotIn("resultSource", manual)
         self.assertIn("upstream_source", manual)
 
+    def test_detail_page_places_manual_search_before_diagnostics_and_task_history(self):
+        page = (ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "Page.vue").read_text(encoding="utf-8")
+        self.assertIn("手动搜索（固定置顶）", page)
+        self.assertLess(page.index("手动搜索（固定置顶）"), page.index("订阅处理诊断"))
+        self.assertLess(page.index("手动搜索（固定置顶）"), page.index("磁力下载任务"))
+
     def test_manual_search_uses_bounded_session_cache_without_process_state(self):
         manual = (ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "ManualSearch.vue").read_text(encoding="utf-8")
         cache = manual[manual.index("const CACHE_KEY"):manual.index("function unwrap")]

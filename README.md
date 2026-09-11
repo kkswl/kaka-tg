@@ -1,5 +1,10 @@
 # 拦截 MP 订阅（tgsearch115）
 
+## v4.8.7 移动端手动搜索置顶
+
+- 修复手动搜索虽然已渲染、但被运行状态、订阅诊断和磁力任务列表推到详情页底部的问题。
+- 手动搜索现固定在插件详情页顶部；搜索范围、关键字输入框、搜索按钮和资源筛选无需滚过任务账本即可操作。
+
 ## v4.8.6 手动搜索交付与故障恢复
 
 - 手动搜索的 Vue 联邦工程位于 `plugins.v2/tgsearch115/frontend`，由 MoviePilot 通过 `frontend/dist/assets/remoteEntry.js` 加载；构建命令为在该目录执行 `npm run build`。

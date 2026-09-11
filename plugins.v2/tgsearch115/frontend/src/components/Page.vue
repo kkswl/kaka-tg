@@ -1,10 +1,19 @@
 <!--
   Page.vue -- 插件详情页（被 MoviePilot 前端通过 Module Federation 加载到插件详情 Tab）。
-  上方运行状态概览；下方手动搜索（TG 频道 + 资源站），结果用响应式卡片网格展示。
+  手动搜索固定置顶；运行状态、诊断与任务记录位于其后，避免手机端误以为入口消失。
   props 由 MP 注入：pluginId、api。
 -->
 <template>
   <div class="tg115-page">
+    <!-- ============ 手动搜索（固定置顶） ============ -->
+    <v-card variant="outlined" rounded="lg" class="mb-3">
+      <v-card-title class="d-flex align-center px-4 py-3">
+        <v-icon icon="mdi-magnify" color="primary" class="mr-2" />手动搜索
+      </v-card-title>
+      <v-divider />
+      <v-card-text><ManualSearch :plugin-id="PID" :api="props.api" /></v-card-text>
+    </v-card>
+
     <!-- ============ 状态概览 ============ -->
     <v-card variant="outlined" rounded="lg" class="mb-3">
       <v-card-title
@@ -203,14 +212,6 @@
       </v-card>
     </v-dialog>
 
-    <!-- ============ 手动搜索 ============ -->
-    <v-card variant="outlined" rounded="lg">
-      <v-card-title class="d-flex align-center px-4 py-3">
-        <v-icon icon="mdi-magnify" color="primary" class="mr-2" />手动搜索
-      </v-card-title>
-      <v-divider />
-      <v-card-text><ManualSearch :plugin-id="PID" :api="props.api" /></v-card-text>
-    </v-card>
     <v-card v-if="false" variant="outlined" rounded="lg">
       <v-card-title class="d-flex align-center px-4 py-3">
         <v-icon icon="mdi-magnify" color="primary" class="mr-2" />
