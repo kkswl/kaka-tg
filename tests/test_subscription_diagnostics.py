@@ -25,6 +25,35 @@ class DiagnosticTest(unittest.TestCase):
         timeline.event(run, "skipped", "skipped", "safe reject")
         self.assertEqual(1, timeline.clear_terminal())
 
+    def test_terminal_clear_keeps_only_terminal_records_and_reports_counts(self):
+        timeline = timeline_module.SubscriptionTimeline()
+        terminal = timeline.start(SimpleNamespace(id=10, name="Terminal", year=None, season=None), "periodic")
+        timeline.event(terminal, "completed", "completed", "done")
+        self.assertEqual({"total": 1, "active_count": 0, "terminal_count": 1}, timeline.counts())
+        persisted = timeline.dump()
+        self.assertEqual(1, timeline.clear_terminal())
+        self.assertEqual({"total": 0, "active_count": 0, "terminal_count": 0}, timeline.counts())
+        self.assertEqual([], timeline_module.SubscriptionTimeline(timeline.dump()).dump())
+        self.assertEqual("completed", persisted[0]["status"])
+
+    def test_list_includes_full_terminal_count_when_page_is_limited(self):
+        timeline = timeline_module.SubscriptionTimeline()
+        for number in range(12):
+            run = timeline.start(SimpleNamespace(id=100 + number, name="Terminal", year=None, season=None), "periodic")
+            timeline.event(run, "skipped", "skipped", "done")
+        listing = timeline.list(limit=10)
+        self.assertEqual(12, listing["total"])
+        self.assertEqual(12, listing["terminal_count"])
+        self.assertEqual(10, len(listing["items"]))
+
+    def test_waiting_status_is_protected_from_terminal_clear(self):
+        timeline = timeline_module.SubscriptionTimeline()
+        run = timeline.start(SimpleNamespace(id=11, name="Waiting", year=None, season=None), "periodic")
+        timeline.event(run, "waiting", "waiting", "waiting safely")
+        self.assertEqual(1, timeline.counts()["active_count"])
+        with self.assertRaises(RuntimeError):
+            timeline.clear_terminal()
+
     def test_timeline_sanitizes_links_and_bounds_events(self):
         timeline = timeline_module.SubscriptionTimeline(max_events=10)
         run = timeline.start(SimpleNamespace(id=9, name="Example", year=None, season=None), "periodic")

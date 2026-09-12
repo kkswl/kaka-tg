@@ -56,6 +56,7 @@ import json
 import random
 import threading
 import time
+import uuid
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, wait
 from datetime import datetime, timedelta
@@ -248,7 +249,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.8.8"
+    plugin_version = "4.8.9"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -3393,14 +3394,51 @@ class TgSearch115(_PluginBase):
 
     def __clear_timeline_api(self, payload: dict = Body(default=None)):
         from starlette.responses import JSONResponse
+        request_id = uuid.uuid4().hex[:12]
         if not isinstance(payload, dict) or payload.get("confirm") is not True:
-            return JSONResponse({"success": False, "message": "请显式确认仅清除本地终态诊断记录"}, status_code=400)
+            return JSONResponse({
+                "success": False,
+                "message": "请显式确认仅清除本地终态诊断记录",
+                "removed_count": 0,
+                "remaining_count": self._timeline.counts()["total"] if self._timeline else 0,
+                "active_count": self._timeline.counts()["active_count"] if self._timeline else 0,
+                "request_id": request_id,
+            }, status_code=400)
         try:
+            before = self._timeline.counts() if self._timeline else {"total": 0, "active_count": 0, "terminal_count": 0}
+            if before["active_count"]:
+                logger.info("【TG115】订阅诊断清理被活动记录保护 request_id=%s active_count=%s", request_id, before["active_count"])
+                return JSONResponse({
+                    "success": False,
+                    "message": f"仍有 {before['active_count']} 条订阅处理进行中，完成后再清理终态记录",
+                    "removed_count": 0,
+                    "remaining_count": before["total"],
+                    "active_count": before["active_count"],
+                    "request_id": request_id,
+                }, status_code=409)
             count = self._timeline.clear_terminal() if self._timeline else 0
             self._save_diagnostics()
-            return JSONResponse({"success": True, "message": f"已清除 {count} 条本地终态诊断记录"})
-        except RuntimeError as exc:
-            return JSONResponse({"success": False, "message": str(exc)}, status_code=409)
+            after = self._timeline.counts() if self._timeline else {"total": 0, "active_count": 0}
+            logger.info("【TG115】订阅诊断清理完成 request_id=%s removed_count=%s remaining_count=%s", request_id, count, after["total"])
+            return JSONResponse({
+                "success": True,
+                "message": f"已清除 {count} 条本地终态诊断记录" if count else "没有可清理的终态诊断记录",
+                "removed_count": count,
+                "remaining_count": after["total"],
+                "active_count": after["active_count"],
+                "request_id": request_id,
+            })
+        except RuntimeError:
+            logger.warning("【TG115】订阅诊断清理状态冲突 request_id=%s", request_id)
+            counts = self._timeline.counts() if self._timeline else {"total": 0, "active_count": 0}
+            return JSONResponse({
+                "success": False,
+                "message": "订阅诊断状态正在变化，请刷新后重试",
+                "removed_count": 0,
+                "remaining_count": counts["total"],
+                "active_count": counts["active_count"],
+                "request_id": request_id,
+            }, status_code=409)
 
     def __subscription_dry_run_api(self, payload: dict = Body(default=None)):
         """POST /subscription/dry-run: execute the shared evaluator with zero writes."""

@@ -103,7 +103,7 @@
       <v-card-title class="d-flex align-center px-4 py-3 task-toggle" @click="diagnosticsExpanded = !diagnosticsExpanded">
         <v-icon icon="mdi-chart-timeline-variant" color="primary" class="mr-2" />订阅处理诊断
         <v-chip size="x-small" variant="tonal" class="ml-2">{{ timeline.total || 0 }}</v-chip><v-spacer />
-        <v-btn size="x-small" variant="text" color="error" :disabled="timeline.items?.some(item => ['running', 'waiting_organize'].includes(item.status))" @click.stop="clearTimeline">清除终态记录</v-btn>
+        <v-btn size="x-small" variant="text" color="error" :loading="clearingTimeline" aria-label="清理订阅终态诊断记录" @click.stop="clearTimeline">清理状态记录</v-btn>
         <v-icon :icon="diagnosticsExpanded ? 'mdi-chevron-up' : 'mdi-chevron-down'" />
       </v-card-title>
       <v-expand-transition><div v-show="diagnosticsExpanded"><v-divider /><v-card-text class="px-4 py-3">
@@ -351,7 +351,8 @@ const runtime = reactive({
   tasks: [],
 })
 const diagnosticsExpanded = ref(false)
-const timeline = reactive({ total: 0, items: [] })
+const timeline = reactive({ total: 0, active_count: 0, terminal_count: 0, items: [] })
+const clearingTimeline = ref(false)
 const sourceHealth = ref({})
 const healthLabels = computed(() => Object.entries(sourceHealth.value || {}).map(([source, item]) => `${({ tg: 'TG', site: '观影', pansou: 'PanSou', juying: '聚影' })[source] || source} ${item.score}分`).join(' · '))
 const statusLoading = ref(false)
@@ -452,13 +453,21 @@ function taskStatusColor(status) {
 function timelineStatus(status) { return ({ running: '处理中', waiting_organize: '等待整理', completed: '已完成', recovered: '已恢复', failed: '失败', skipped: '已跳过' })[status] || status || '未知' }
 function timelineColor(status) { return ({ running: 'primary', waiting_organize: 'warning', completed: 'success', recovered: 'info', failed: 'error', skipped: 'grey' })[status] || 'grey' }
 async function clearTimeline() {
-  if (!props.api?.post || !window.confirm('仅删除本地已结束的诊断记录，不删除 115 文件、不取消下载、不修改订阅。是否继续？')) return
+  if (!props.api?.post) { showSnack('诊断接口未就绪，请重新加载插件页面后重试', 'error'); return }
+  const terminalCount = Number(timeline.terminal_count || 0)
+  if (!terminalCount) { showSnack('没有可清理的终态诊断记录', 'info'); return }
+  if (!window.confirm(`仅删除本地终态诊断记录；不会删除 115 文件、不会取消下载、不会修改订阅。\n将清理当前列表中的 ${terminalCount} 条终态记录，是否继续？`)) return
+  clearingTimeline.value = true
   try {
     const res = await props.api.post(`plugin/${PID.value}/runtime/timeline/clear`, { confirm: true })
-    const data = res?.data || res
+    const raw = res?.data || res
+    const data = raw?.data?.success !== undefined ? raw.data : raw
     showSnack(data?.message || '清除失败', data?.success ? 'success' : 'error')
     if (data?.success) await loadRuntimeStatus()
-  } catch { showSnack('清除诊断记录失败', 'error') }
+  } catch (error) {
+    const message = error?.response?.data?.message
+    showSnack(message || '清除诊断记录请求失败，可重试', 'error')
+  } finally { clearingTimeline.value = false }
 }
 
 async function loadRuntimeStatus() {
@@ -473,7 +482,7 @@ async function loadRuntimeStatus() {
       runtime.sources = data.sources || {}
       Object.assign(runtime.pansou, data.pansou || {})
       runtime.tasks = Array.isArray(data.tasks) ? data.tasks : []
-      Object.assign(timeline, data.timeline || { total: 0, items: [] })
+      Object.assign(timeline, data.timeline || { total: 0, active_count: 0, terminal_count: 0, items: [] })
       sourceHealth.value = data.source_health || {}
     }
   } catch {

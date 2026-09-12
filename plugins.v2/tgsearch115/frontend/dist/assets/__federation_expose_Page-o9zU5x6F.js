@@ -100,7 +100,8 @@ const runtime = reactive({
   tasks: [],
 });
 const diagnosticsExpanded = ref(false);
-const timeline = reactive({ total: 0, items: [] });
+const timeline = reactive({ total: 0, active_count: 0, terminal_count: 0, items: [] });
+const clearingTimeline = ref(false);
 const sourceHealth = ref({});
 const healthLabels = computed(() => Object.entries(sourceHealth.value || {}).map(([source, item]) => `${({ tg: 'TG', site: '观影', pansou: 'PanSou', juying: '聚影' })[source] || source} ${item.score}分`).join(' · '));
 const statusLoading = ref(false);
@@ -181,13 +182,21 @@ function taskStatusColor(status) {
 function timelineStatus(status) { return ({ running: '处理中', waiting_organize: '等待整理', completed: '已完成', recovered: '已恢复', failed: '失败', skipped: '已跳过' })[status] || status || '未知' }
 function timelineColor(status) { return ({ running: 'primary', waiting_organize: 'warning', completed: 'success', recovered: 'info', failed: 'error', skipped: 'grey' })[status] || 'grey' }
 async function clearTimeline() {
-  if (!props.api?.post || !window.confirm('仅删除本地已结束的诊断记录，不删除 115 文件、不取消下载、不修改订阅。是否继续？')) return
+  if (!props.api?.post) { showSnack('诊断接口未就绪，请重新加载插件页面后重试', 'error'); return }
+  const terminalCount = Number(timeline.terminal_count || 0);
+  if (!terminalCount) { showSnack('没有可清理的终态诊断记录', 'info'); return }
+  if (!window.confirm(`仅删除本地终态诊断记录；不会删除 115 文件、不会取消下载、不会修改订阅。\n将清理当前列表中的 ${terminalCount} 条终态记录，是否继续？`)) return
+  clearingTimeline.value = true;
   try {
     const res = await props.api.post(`plugin/${PID.value}/runtime/timeline/clear`, { confirm: true });
-    const data = res?.data || res;
+    const raw = res?.data || res;
+    const data = raw?.data?.success !== undefined ? raw.data : raw;
     showSnack(data?.message || '清除失败', data?.success ? 'success' : 'error');
     if (data?.success) await loadRuntimeStatus();
-  } catch { showSnack('清除诊断记录失败', 'error'); }
+  } catch (error) {
+    const message = error?.response?.data?.message;
+    showSnack(message || '清除诊断记录请求失败，可重试', 'error');
+  } finally { clearingTimeline.value = false; }
 }
 
 async function loadRuntimeStatus() {
@@ -202,7 +211,7 @@ async function loadRuntimeStatus() {
       runtime.sources = data.sources || {};
       Object.assign(runtime.pansou, data.pansou || {});
       runtime.tasks = Array.isArray(data.tasks) ? data.tasks : [];
-      Object.assign(timeline, data.timeline || { total: 0, items: [] });
+      Object.assign(timeline, data.timeline || { total: 0, active_count: 0, terminal_count: 0, items: [] });
       sourceHealth.value = data.source_health || {};
     }
   } catch {
@@ -554,14 +563,15 @@ return (_ctx, _cache) => {
               size: "x-small",
               variant: "text",
               color: "error",
-              disabled: timeline.items?.some(item => ['running', 'waiting_organize'].includes(item.status)),
+              loading: clearingTimeline.value,
+              "aria-label": "清理订阅终态诊断记录",
               onClick: _withModifiers(clearTimeline, ["stop"])
             }, {
               default: _withCtx(() => [...(_cache[25] || (_cache[25] = [
-                _createTextVNode("清除终态记录", -1)
+                _createTextVNode("清理状态记录", -1)
               ]))]),
               _: 1
-            }, 8, ["disabled"]),
+            }, 8, ["loading"]),
             _createVNode(_component_v_icon, {
               icon: diagnosticsExpanded.value ? 'mdi-chevron-up' : 'mdi-chevron-down'
             }, null, 8, ["icon"])
@@ -931,6 +941,6 @@ return (_ctx, _cache) => {
 }
 
 };
-const Page = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-bc923cde"]]);
+const Page = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-00093145"]]);
 
 export { Page as default };

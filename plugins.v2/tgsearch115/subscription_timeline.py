@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, Iterable, Optional
 
-ACTIVE = {"running", "waiting_organize"}
+ACTIVE = {"running", "waiting", "waiting_organize"}
 TERMINAL = {"completed", "failed", "skipped", "recovered"}
 
 
@@ -82,11 +82,28 @@ class SubscriptionTimeline:
             return sorted((dict(r, events=list(r.get("events") or [])) for r in self._records.values()), key=lambda r: r.get("updated_at", ""), reverse=True)
 
     def list(self, status: str = "all", offset: int = 0, limit: int = 30) -> dict:
-        records = self.dump()
+        all_records = self.dump()
+        all_statuses = [str(record.get("status") or "") for record in all_records]
+        records = all_records
         if status != "all":
             wanted = {"failed", "skipped"} if status == "failed" else {status}
             records = [r for r in records if r.get("status") in wanted]
-        return {"total": len(records), "items": records[max(0, offset):max(0, offset) + min(100, max(1, limit))]}
+        return {
+            "total": len(records),
+            "active_count": sum(item in ACTIVE for item in all_statuses),
+            "terminal_count": sum(item in TERMINAL for item in all_statuses),
+            "items": records[max(0, offset):max(0, offset) + min(100, max(1, limit))],
+        }
+
+    def counts(self) -> dict:
+        """Return only state counts; safe to expose in the plugin runtime API."""
+        with self._lock:
+            statuses = [str(record.get("status") or "") for record in self._records.values()]
+            return {
+                "total": len(statuses),
+                "active_count": sum(status in ACTIVE for status in statuses),
+                "terminal_count": sum(status in TERMINAL for status in statuses),
+            }
 
     def clear_terminal(self) -> int:
         with self._lock:

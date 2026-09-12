@@ -1,5 +1,11 @@
 # 拦截 MP 订阅（tgsearch115）
 
+## v4.8.9 订阅诊断清理闭环修复
+
+- 修复“订阅处理诊断”的“清理状态记录”因活动记录而静默禁用、点击无反馈的问题。按钮会明确反馈无可清理记录、活动记录保护、请求失败或实际已清理数量。
+- 后端仅删除本地 `completed`、`recovered`、`failed`、`skipped` 诊断记录；`running`、`waiting`、`waiting_organize` 保持保护。清理不会删除 115 文件、取消下载或修改订阅，也不影响“磁力下载任务”的独立清理功能。
+- 清理接口固定返回 `success`、`message`、`removed_count`、`remaining_count`、`active_count`、脱敏 `request_id`；成功后页面立即刷新列表。
+
 ## v4.8.8 手动搜索前端兼容回退
 
 - 按宿主兼容性反馈，将 `Page.vue` 与 `ManualSearch.vue` 完整恢复为 v4.8.4 的已验证页面结构与搜索交互。
