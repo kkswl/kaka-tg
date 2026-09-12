@@ -54,6 +54,19 @@ class DiagnosticTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             timeline.clear_terminal()
 
+    def test_force_clear_removes_display_records_and_allows_new_timeline(self):
+        timeline = timeline_module.SubscriptionTimeline()
+        active = timeline.start(SimpleNamespace(id=42, name="Show", year=2024, season=2), "periodic")
+        timeline.event(active, "pending_organize", "waiting_organize", "waiting")
+        terminal = timeline.start(SimpleNamespace(id=43, name="Movie", year=2025, season=None), "periodic")
+        timeline.event(terminal, "completed", "completed", "done")
+        result = timeline.clear_all()
+        self.assertEqual({"cleared_count": 2, "active_cleared_count": 1}, result)
+        self.assertEqual(0, timeline.counts()["total"])
+        recreated = timeline.start(SimpleNamespace(id=42, name="Show", year=2024, season=2), "periodic")
+        self.assertNotEqual(active, recreated)
+        self.assertEqual(1, timeline.counts()["active_count"])
+
     def test_task_completion_updates_latest_subscription_season(self):
         timeline = timeline_module.SubscriptionTimeline()
         timeline.start(SimpleNamespace(id=12, name="Example", year=2024, season=2), "periodic")

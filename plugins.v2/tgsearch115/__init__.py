@@ -249,7 +249,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.8.10"
+    plugin_version = "4.8.11"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -639,7 +639,7 @@ class TgSearch115(_PluginBase):
             },
             {"path": "/runtime/timeline", "endpoint": self.__timeline_api, "methods": ["GET"], "auth": "bear", "summary": "获取订阅处理诊断"},
             {"path": "/runtime/source-health", "endpoint": self.__source_health_api, "methods": ["GET"], "auth": "bear", "summary": "获取来源健康评分"},
-            {"path": "/runtime/timeline/clear", "endpoint": self.__clear_timeline_api, "methods": ["POST"], "auth": "bear", "summary": "清除终态订阅诊断"},
+            {"path": "/runtime/timeline/clear", "endpoint": self.__clear_timeline_api, "methods": ["POST"], "auth": "bear", "summary": "清除订阅诊断显示记录"},
             {
                 "path": "/tasks/retry",
                 "endpoint": self.__retry_cms_task_api,
@@ -3432,6 +3432,7 @@ class TgSearch115(_PluginBase):
         }
         return JSONResponse({
             "success": True,
+            "plugin_version": self.plugin_version,
             "scheduler": scheduler,
             "recognition": self._recognition_gate.status() if self._recognition_gate else {
                 "waiting": 0, "active": 0, "max_active": 0,
@@ -3482,18 +3483,52 @@ class TgSearch115(_PluginBase):
                 "success": False,
                 "message": "请显式确认仅清除本地终态诊断记录",
                 "removed_count": 0,
+                "cleared_count": 0,
+                "active_cleared_count": 0,
                 "remaining_count": self._timeline.counts()["total"] if self._timeline else 0,
                 "active_count": self._timeline.counts()["active_count"] if self._timeline else 0,
                 "request_id": request_id,
             }, status_code=400)
+        force = payload.get("force") is True
+        if force and payload.get("confirmation_text") != "强制清理诊断记录":
+            counts = self._timeline.counts() if self._timeline else {"total": 0, "active_count": 0}
+            return JSONResponse({
+                "success": False,
+                "message": "强制清理确认文字不匹配",
+                "removed_count": 0,
+                "cleared_count": 0,
+                "active_cleared_count": 0,
+                "remaining_count": counts["total"],
+                "active_count": counts["active_count"],
+                "request_id": request_id,
+            }, status_code=400)
         try:
             before = self._timeline.counts() if self._timeline else {"total": 0, "active_count": 0, "terminal_count": 0}
+            if force:
+                cleared = self._timeline.clear_all() if self._timeline else {"cleared_count": 0, "active_cleared_count": 0}
+                self._save_diagnostics()
+                logger.info(
+                    "【TG115】订阅诊断强制清理完成 request_id=%s cleared_count=%s active_cleared_count=%s",
+                    request_id, cleared["cleared_count"], cleared["active_cleared_count"],
+                )
+                return JSONResponse({
+                    "success": True,
+                    "message": f"已强制清理 {cleared['cleared_count']} 条本地订阅诊断记录",
+                    "removed_count": cleared["cleared_count"],
+                    "cleared_count": cleared["cleared_count"],
+                    "active_cleared_count": cleared["active_cleared_count"],
+                    "remaining_count": 0,
+                    "active_count": 0,
+                    "request_id": request_id,
+                })
             if before["active_count"]:
                 logger.info("【TG115】订阅诊断清理被活动记录保护 request_id=%s active_count=%s", request_id, before["active_count"])
                 return JSONResponse({
                     "success": False,
                     "message": f"仍有 {before['active_count']} 条订阅处理进行中，完成后再清理终态记录",
                     "removed_count": 0,
+                    "cleared_count": 0,
+                    "active_cleared_count": 0,
                     "remaining_count": before["total"],
                     "active_count": before["active_count"],
                     "request_id": request_id,
@@ -3506,6 +3541,8 @@ class TgSearch115(_PluginBase):
                 "success": True,
                 "message": f"已清除 {count} 条本地终态诊断记录" if count else "没有可清理的终态诊断记录",
                 "removed_count": count,
+                "cleared_count": count,
+                "active_cleared_count": 0,
                 "remaining_count": after["total"],
                 "active_count": after["active_count"],
                 "request_id": request_id,
@@ -3517,6 +3554,8 @@ class TgSearch115(_PluginBase):
                 "success": False,
                 "message": "订阅诊断状态正在变化，请刷新后重试",
                 "removed_count": 0,
+                "cleared_count": 0,
+                "active_cleared_count": 0,
                 "remaining_count": counts["total"],
                 "active_count": counts["active_count"],
                 "request_id": request_id,

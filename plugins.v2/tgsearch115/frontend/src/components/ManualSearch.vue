@@ -1,5 +1,5 @@
 <template>
-  <div class="manual-search">
+  <div class="manual-search" data-testid="manual-search-root">
     <v-alert
       v-if="recoveryMessage"
       type="warning"
@@ -23,7 +23,7 @@
       </v-btn-toggle>
       <span class="text-caption text-medium-emphasis">选择后点击搜索生效</span>
     </div>
-    <div class="search-toolbar mb-3">
+    <div class="search-toolbar mb-3" data-testid="manual-search-controls">
       <v-text-field
         v-model="keyword"
         label="搜索关键字（影片名 + 年份）"
@@ -67,7 +67,7 @@
     <div v-if="sourceSummary" class="source-summary mb-2">{{ sourceSummary }}</div>
     <div v-if="searched" class="text-caption text-medium-emphasis mb-3">后端返回：{{ backendCount }} 条 · 来源筛选：{{ sourceFilteredResults.length }} 条 · 资源筛选：{{ resourceFilteredCount }} 条 · 详细筛选：{{ filtered.length }} 条</div>
     <div v-if="message" class="text-caption mb-3" :class="ok ? 'text-success' : 'text-error'">{{ message }}</div>
-    <div v-if="searching" class="empty-state"><v-progress-circular indeterminate size="40" color="primary" /></div>
+    <div v-if="searching" class="manual-loading" role="status" aria-live="polite">搜索中…</div>
     <v-row v-else-if="filtered.length" dense>
       <v-col v-for="r in filtered" :key="r.result_id" cols="12" sm="6" lg="4">
         <v-card variant="outlined" class="result-card h-100 d-flex flex-column">
@@ -217,11 +217,21 @@ function normalizeManualResult(result, index = 0) {
     pan_type: panType,
     resource_kind: resourceKind,
     source: safeText(item.source, 'unknown'),
+    upstream_source: safeText(item.upstream_source),
+    channel: safeText(item.channel, '未知来源'),
     text: safeText(item.text || title, title).slice(0, 2000),
     meta: safeText(item.meta).slice(0, 500),
     resolution: safeText(item.resolution, 'unknown').toLowerCase() || 'unknown',
     quality_class: safeText(item.quality_class, 'unknown').toLowerCase() || 'unknown',
     has_chinese_subtitle: item.has_chinese_subtitle === true,
+    is_complete: item.is_complete === true,
+    episode_num: Number.isFinite(Number(item.episode_num)) ? Number(item.episode_num) : 0,
+    receive_code: safeText(item.receive_code).slice(0, 16),
+    subtitle_type: safeText(item.subtitle_type, 'unknown'),
+    is_remux: item.is_remux === true,
+    season: Number.isFinite(Number(item.season)) ? Number(item.season) : null,
+    year: Number.isFinite(Number(item.year)) ? Number(item.year) : null,
+    pub_date: safeText(item.pub_date).slice(0, 40),
     share_url: safeText(item.share_url),
   }
 }
@@ -392,6 +402,8 @@ function qualityLabel(r) { return ({ '4k': '4K', '1080p': '1080P', '720p': '720P
 
 <style scoped>
 .search-toolbar { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:8px; align-items:center; }
+.manual-search { display:block; visibility:visible; width:100%; min-width:0; min-height:180px; height:auto; overflow:visible; }
+.manual-loading { padding:28px 20px; text-align:center; color:rgba(var(--v-theme-on-surface),.6); }
 .filter-row { display:flex; align-items:center; gap:8px; min-width:0; flex-wrap:wrap; }
 .filter-label { flex:0 0 32px; font-size:.75rem; color:rgba(var(--v-theme-on-surface),.6); }
 .filter-toggle { flex-wrap:wrap; height:auto; max-width:calc(100% - 40px); overflow-x:auto; }
@@ -399,5 +411,11 @@ function qualityLabel(r) { return ({ '4k': '4K', '1080p': '1080P', '720p': '720P
 .result-card { min-height:172px; border-radius:8px; }
 .line-clamp-3 { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
 .empty-state { padding:36px 20px; text-align:center; color:rgba(var(--v-theme-on-surface),.6); }
-@media (max-width:600px) { .search-toolbar { grid-template-columns:1fr; } .search-toolbar .v-btn { width:100%; } }
+@media (max-width:600px) {
+  .search-toolbar { display:grid; grid-template-columns:minmax(0, 1fr); width:100%; min-width:0; }
+  .search-toolbar > * { width:100%; min-width:0; }
+  .search-toolbar .v-btn { width:100%; }
+  .manual-search { min-height:210px; }
+  .filter-toggle { max-width:100%; overflow-x:auto; }
+}
 </style>

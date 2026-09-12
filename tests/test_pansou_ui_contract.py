@@ -65,9 +65,23 @@ class PanSouUiContractTest(unittest.TestCase):
         self.assertIn("onErrorCaptured", page)
         self.assertIn(":key=\"manualSearchKey\"", page)
         self.assertIn("reloadManualSearch", page)
+        self.assertIn('data-testid="manual-search-fallback"', page)
+        self.assertIn('v-if="manualSearchError" class="manual-search-fallback"', page)
+        self.assertIn('<ManualSearch v-else', page)
+        self.assertNotIn("v-progress-circular", manual)
+        self.assertIn('class="manual-loading"', manual)
         self.assertNotIn('v-if="results.length" class="manual-search"', manual)
         self.assertIn('@media (max-width:600px)', manual)
-        self.assertIn('.search-toolbar { grid-template-columns:1fr; }', manual)
+        self.assertIn('grid-template-columns:minmax(0, 1fr)', manual)
+
+    def test_page_has_one_search_state_owner_and_build_marker(self):
+        page = (ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "Page.vue").read_text(encoding="utf-8")
+        self.assertEqual(1, page.count("<ManualSearch"))
+        self.assertNotIn('v-if="false"', page)
+        self.assertIn("FRONTEND_VERSION = '4.8.11'", page)
+        self.assertIn("frontendBuildId", page)
+        self.assertIn("versionMismatch", page)
+        self.assertIn("manual-search-body", page)
 
     def test_page_exposes_sanitized_organize_wait_diagnostics(self):
         page = (ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "Page.vue").read_text(encoding="utf-8")

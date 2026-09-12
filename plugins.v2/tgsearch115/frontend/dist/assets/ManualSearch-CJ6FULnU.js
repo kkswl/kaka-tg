@@ -88,9 +88,15 @@ const _export_sfc = (sfc, props) => {
 const {toDisplayString:_toDisplayString,createTextVNode:_createTextVNode,resolveComponent:_resolveComponent,withCtx:_withCtx,createVNode:_createVNode,openBlock:_openBlock,createBlock:_createBlock,createCommentVNode:_createCommentVNode,createElementVNode:_createElementVNode,withKeys:_withKeys,createElementBlock:_createElementBlock,unref:_unref,renderList:_renderList,Fragment:_Fragment,normalizeClass:_normalizeClass} = await importShared('vue');
 
 
-const _hoisted_1 = { class: "manual-search" };
+const _hoisted_1 = {
+  class: "manual-search",
+  "data-testid": "manual-search-root"
+};
 const _hoisted_2 = { class: "filter-row mb-2" };
-const _hoisted_3 = { class: "search-toolbar mb-3" };
+const _hoisted_3 = {
+  class: "search-toolbar mb-3",
+  "data-testid": "manual-search-controls"
+};
 const _hoisted_4 = {
   key: 1,
   class: "filter-row mb-2"
@@ -114,7 +120,9 @@ const _hoisted_9 = {
 };
 const _hoisted_10 = {
   key: 7,
-  class: "empty-state"
+  class: "manual-loading",
+  role: "status",
+  "aria-live": "polite"
 };
 const _hoisted_11 = { class: "d-flex align-center ga-1 mb-2" };
 const _hoisted_12 = { class: "text-body-2 font-weight-medium" };
@@ -216,11 +224,21 @@ function normalizeManualResult(result, index = 0) {
     pan_type: panType,
     resource_kind: resourceKind,
     source: safeText(item.source, 'unknown'),
+    upstream_source: safeText(item.upstream_source),
+    channel: safeText(item.channel, '未知来源'),
     text: safeText(item.text || title, title).slice(0, 2000),
     meta: safeText(item.meta).slice(0, 500),
     resolution: safeText(item.resolution, 'unknown').toLowerCase() || 'unknown',
     quality_class: safeText(item.quality_class, 'unknown').toLowerCase() || 'unknown',
     has_chinese_subtitle: item.has_chinese_subtitle === true,
+    is_complete: item.is_complete === true,
+    episode_num: Number.isFinite(Number(item.episode_num)) ? Number(item.episode_num) : 0,
+    receive_code: safeText(item.receive_code).slice(0, 16),
+    subtitle_type: safeText(item.subtitle_type, 'unknown'),
+    is_remux: item.is_remux === true,
+    season: Number.isFinite(Number(item.season)) ? Number(item.season) : null,
+    year: Number.isFinite(Number(item.year)) ? Number(item.year) : null,
+    pub_date: safeText(item.pub_date).slice(0, 40),
     share_url: safeText(item.share_url),
   }
 }
@@ -394,7 +412,6 @@ return (_ctx, _cache) => {
   const _component_v_btn_toggle = _resolveComponent("v-btn-toggle");
   const _component_v_text_field = _resolveComponent("v-text-field");
   const _component_v_chip = _resolveComponent("v-chip");
-  const _component_v_progress_circular = _resolveComponent("v-progress-circular");
   const _component_v_card_item = _resolveComponent("v-card-item");
   const _component_v_spacer = _resolveComponent("v-spacer");
   const _component_v_card_actions = _resolveComponent("v-card-actions");
@@ -677,13 +694,7 @@ return (_ctx, _cache) => {
         }, _toDisplayString(message.value), 3))
       : _createCommentVNode("", true),
     (searching.value)
-      ? (_openBlock(), _createElementBlock("div", _hoisted_10, [
-          _createVNode(_component_v_progress_circular, {
-            indeterminate: "",
-            size: "40",
-            color: "primary"
-          })
-        ]))
+      ? (_openBlock(), _createElementBlock("div", _hoisted_10, "搜索中…"))
       : (filtered.value.length)
         ? (_openBlock(), _createBlock(_component_v_row, {
             key: 8,
@@ -923,6 +934,6 @@ return (_ctx, _cache) => {
 }
 
 };
-const ManualSearch = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-cc81a46b"]]);
+const ManualSearch = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-4b875e35"]]);
 
 export { ManualSearch as M, _export_sfc as _, filterSearchResults as f };

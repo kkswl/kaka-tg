@@ -141,6 +141,17 @@ class SubscriptionTimeline:
             self._records = {k: v for k, v in self._records.items() if v.get("status") not in TERMINAL}
             return old - len(self._records)
 
+    def clear_all(self) -> dict:
+        """Delete timeline display records only; running jobs may create fresh records later."""
+        with self._lock:
+            statuses = [str(record.get("status") or "") for record in self._records.values()]
+            result = {
+                "cleared_count": len(statuses),
+                "active_cleared_count": sum(status in ACTIVE for status in statuses),
+            }
+            self._records.clear()
+            return result
+
     def _trim(self) -> None:
         if len(self._records) <= self.max_runs:
             return
