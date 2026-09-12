@@ -53,6 +53,13 @@ def _normalize_media_type(value: Any) -> str:
     return text
 
 
+def _safe_label(value: Any, limit: int = 160) -> str:
+    text = str(value or "").replace("magnet:?", "[magnet]")
+    text = re.sub(r"https?://\S+", "[链接已脱敏]", text, flags=re.IGNORECASE)
+    text = re.sub(r"(?i)\b(cookie|token|api[_ -]?key|authorization)\s*[:=]\s*\S+", r"\1=[已脱敏]", text)
+    return text[:max(1, int(limit))]
+
+
 class CmsTaskLedger:
     """Store only non-secret CMS task metadata in MoviePilot plugin data."""
 
@@ -68,6 +75,13 @@ class CmsTaskLedger:
                 migrated.pop("magnet", None)
                 migrated["source"] = migrated.get("source") or "cms"
                 migrated["error_message"] = migrated.get("error_message") or migrated.get("error") or ""
+                migrated.setdefault("mp_event_seen", False)
+                migrated.setdefault("mp_event_match_status", "not_seen")
+                migrated.setdefault("mp_history_checked_at", "")
+                migrated.setdefault("mp_history_match_status", "not_checked")
+                migrated.setdefault("organize_wait_reason", "等待 MoviePilot 整理确认" if migrated.get("status") == "pending_organize" else "")
+                migrated.setdefault("last_reconcile_at", "")
+                migrated.setdefault("last_reconcile_error_category", "")
                 self.records.append(migrated)
         self.records = self.records[-self.max_records:]
 
@@ -117,6 +131,13 @@ class CmsTaskLedger:
                 "submitted_at": now_text,
                 "updated_at": now_text,
                 "error": "",
+                "mp_event_seen": False,
+                "mp_event_match_status": "not_seen",
+                "mp_history_checked_at": "",
+                "mp_history_match_status": "not_checked",
+                "organize_wait_reason": "等待 115 下载完成",
+                "last_reconcile_at": "",
+                "last_reconcile_error_category": "",
             }
             self.records.append(record)
             self.records = self.records[-self.max_records:]
@@ -131,9 +152,15 @@ class CmsTaskLedger:
                     record["updated_at"] = self._now().isoformat(timespec="seconds")
                     record["error"] = str(error or "")[:300]
                     record["error_message"] = record["error"]
-                    for key in ("task_id", "target_cid", "download_name", "progress", "error_code", "error_message", "retry_count", "source", "completion_notified"):
+                    for key in (
+                        "task_id", "target_cid", "download_name", "progress", "error_code",
+                        "error_message", "retry_count", "source", "completion_notified",
+                        "mp_event_seen", "mp_event_match_status", "mp_history_checked_at",
+                        "mp_history_match_status", "organize_wait_reason", "last_reconcile_at",
+                        "last_reconcile_error_category",
+                    ):
                         if key in fields:
-                            record[key] = fields[key]
+                            record[key] = _safe_label(fields[key]) if key in {"download_name", "organize_wait_reason", "error_message"} else fields[key]
                     return record
         return None
 
@@ -167,17 +194,31 @@ class CmsTaskLedger:
         media_type: str = "",
         season: Any = None,
     ) -> Optional[Dict[str, Any]]:
+        return self.diagnose_transfer_complete(
+            tmdb_id=tmdb_id,
+            douban_id=douban_id,
+            media_type=media_type,
+            season=season,
+        )[0]
+
+    def diagnose_transfer_complete(
+        self,
+        tmdb_id: Any = None,
+        douban_id: Any = None,
+        media_type: str = "",
+        season: Any = None,
+    ) -> Tuple[Optional[Dict[str, Any]], str, List[str]]:
+        """Return a unique match plus a stable, non-sensitive mismatch category."""
         tmdb_key = str(tmdb_id or "").strip()
         douban_key = str(douban_id or "").strip()
         if not tmdb_key and not douban_key:
-            return None
+            return None, "missing_identity", []
         event_type = _normalize_media_type(media_type)
         event_season = str(season).strip() if season is not None else ""
-        matches = []
         with self._lock:
-            for record in self.records:
-                if record.get("status") != "pending_organize":
-                    continue
+            pending = [record for record in self.records if record.get("status") == "pending_organize"]
+            identity_matches = []
+            for record in pending:
                 record_tmdb = str(record.get("tmdb_id") or "").strip()
                 record_douban = str(record.get("douban_id") or "").strip()
                 if tmdb_key:
@@ -185,15 +226,30 @@ class CmsTaskLedger:
                         continue
                 elif not record_douban or record_douban != douban_key:
                     continue
+                identity_matches.append(record)
+            candidate_ids = [str(record.get("btih") or "") for record in identity_matches]
+            if not identity_matches:
+                return None, "identity_mismatch", []
+            type_matches = []
+            for record in identity_matches:
                 record_type = _normalize_media_type(record.get("media_type"))
                 if event_type and record_type and event_type != record_type:
                     continue
+                type_matches.append(record)
+            if not type_matches:
+                return None, "type_mismatch", candidate_ids
+            season_matches = []
+            for record in type_matches:
                 record_season = record.get("season")
                 if record_season is not None:
                     if not event_season or str(record_season).strip() != event_season:
                         continue
-                matches.append(record)
-            return matches[0] if len(matches) == 1 else None
+                season_matches.append(record)
+            if not season_matches:
+                return None, "season_mismatch", [str(record.get("btih") or "") for record in type_matches]
+            if len(season_matches) != 1:
+                return None, "ambiguous", [str(record.get("btih") or "") for record in season_matches]
+            return season_matches[0], "matched", [str(season_matches[0].get("btih") or "")]
 
     def restart(self, btih: str) -> Optional[Dict[str, Any]]:
         with self._lock:
@@ -225,14 +281,34 @@ class CmsTaskLedger:
             for record in self.records:
                 if record.get("status") not in ACTIVE_STATUSES:
                     continue
+                now_text = now.isoformat(timespec="seconds")
+                record["last_reconcile_at"] = now_text
                 sid = record.get("subscribe_id")
-                if sid and history_exists(record):
+                history_matched = False
+                if sid:
+                    record["mp_history_checked_at"] = now_text
+                    try:
+                        history_matched = bool(history_exists(record))
+                        record["mp_history_match_status"] = "matched" if history_matched else "not_found"
+                        record["last_reconcile_error_category"] = ""
+                    except Exception as exc:
+                        record["mp_history_match_status"] = "check_failed"
+                        record["last_reconcile_error_category"] = type(exc).__name__[:80]
+                        if record.get("status") == "pending_organize":
+                            record["organize_wait_reason"] = "MoviePilot 订阅历史检查暂时不可用"
+                if sid and history_matched:
                     record["status"] = "completed"
-                    record["updated_at"] = now.isoformat(timespec="seconds")
+                    record["updated_at"] = now_text
                     record["error"] = ""
                     record["completion_notified"] = False
+                    record["organize_wait_reason"] = "已由 MoviePilot 订阅历史确认完成"
                     result["completed"] += 1
                     continue
+                if record.get("status") == "pending_organize" and record.get("mp_history_match_status") == "not_found":
+                    record["organize_wait_reason"] = (
+                        "已收到整理事件，等待 MoviePilot 订阅历史"
+                        if record.get("mp_event_seen") else "等待 MoviePilot 整理事件或订阅历史"
+                    )
                 if sid and not subscription_exists(int(sid)):
                     record["status"] = "failed"
                     record["updated_at"] = now.isoformat(timespec="seconds")
@@ -269,6 +345,9 @@ class CmsTaskLedger:
                 public.pop("error", None)
                 task_id = str(public.get("task_id") or "")
                 public["task_id"] = f"{task_id[:12]}..." if len(task_id) > 12 else task_id
+                public["download_name"] = _safe_label(public.get("download_name"), 160)
+                public["error_message"] = _safe_label(public.get("error_message"), 180)
+                public["organize_wait_reason"] = _safe_label(public.get("organize_wait_reason"), 180)
                 result.append(public)
             return result
 

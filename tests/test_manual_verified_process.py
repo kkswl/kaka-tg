@@ -78,6 +78,9 @@ class ManualVerifiedProcessContractTest(unittest.TestCase):
         poll_filter = source[source.index('record.get("source") != "115_direct"'):source.index("task_id = record.get", source.index('record.get("source") != "115_direct"'))]
         self.assertNotIn("pending_organize", poll_filter)
         self.assertIn('queue["state"] = "completed"', source)
+        self.assertIn("diagnose_transfer_complete", source)
+        self.assertIn("_sync_task_timeline(completed, \"completed\"", source)
+        self.assertIn("mp_history_match_status", source)
         self.assertIn('queue["owner"] = "none"', source)
 
     def test_settings_section_order(self):

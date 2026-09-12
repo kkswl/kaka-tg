@@ -1,5 +1,17 @@
 <template>
   <div class="manual-search">
+    <v-alert
+      v-if="recoveryMessage"
+      type="warning"
+      variant="tonal"
+      density="compact"
+      class="mb-3"
+    >
+      {{ recoveryMessage }}
+      <template #append>
+        <v-btn size="small" variant="text" @click="resetSearchArea">重新加载搜索区域</v-btn>
+      </template>
+    </v-alert>
     <div class="filter-row mb-2">
       <span class="filter-label">搜索范围</span>
       <v-btn-toggle v-model="source" mandatory color="primary" density="compact" divided class="filter-toggle">
@@ -57,7 +69,7 @@
     <div v-if="message" class="text-caption mb-3" :class="ok ? 'text-success' : 'text-error'">{{ message }}</div>
     <div v-if="searching" class="empty-state"><v-progress-circular indeterminate size="40" color="primary" /></div>
     <v-row v-else-if="filtered.length" dense>
-      <v-col v-for="(r, i) in filtered" :key="r.share_url || i" cols="12" sm="6" lg="4">
+      <v-col v-for="r in filtered" :key="r.result_id" cols="12" sm="6" lg="4">
         <v-card variant="outlined" class="result-card h-100 d-flex flex-column">
           <v-card-item>
             <div class="d-flex align-center ga-1 mb-2">
@@ -150,6 +162,8 @@ const ok = ref(false)
 const snack = ref(false)
 const snackColor = ref('')
 const snackText = ref('')
+const recoveryMessage = ref('')
+const cacheAvailable = ref(true)
 const filtered = computed(() => filterSearchResults(results.value, resourceType.value, detailFilter.value))
 const resourceFilteredCount = computed(() => resourceType.value === 'all' ? results.value.length : filterSearchResults(results.value, resourceType.value, 'all').length)
 const backendCount = computed(() => Object.values(sourceStats.value).reduce((total, stat) => total + Number(stat?.returned_count || 0), 0) || results.value.length)
@@ -166,16 +180,56 @@ watch([source, resourceType, detailFilter], persistSession)
 restoreSession()
 
 function sessionStore() {
-  try { return window.sessionStorage } catch { return null }
+  if (!cacheAvailable.value) return null
+  try { return window.sessionStorage } catch { cacheAvailable.value = false; return null }
+}
+function cacheGet(key) {
+  try { return sessionStore()?.getItem(key) || null }
+  catch { cacheAvailable.value = false; return null }
+}
+function cacheSet(key, value) {
+  try { sessionStore()?.setItem(key, value); return true }
+  catch { cacheAvailable.value = false; return false }
+}
+function cacheRemove(key) {
+  try { sessionStore()?.removeItem(key); return true }
+  catch { cacheAvailable.value = false; return false }
 }
 function safeResult(result) {
   return Object.fromEntries(RESULT_FIELDS.filter((field) => result?.[field] !== undefined).map((field) => [field, result[field]]))
+}
+function safeText(value, fallback = '') {
+  if (value === null || value === undefined) return fallback
+  try { return String(value) } catch { return fallback }
+}
+function normalizeManualResult(result, index = 0) {
+  const item = result && typeof result === 'object' && !Array.isArray(result) ? result : { title: safeText(result) }
+  const panType = safeText(item.pan_type, 'other').toLowerCase() || 'other'
+  const resourceKind = ['magnet', 'pan'].includes(item.resource_kind)
+    ? item.resource_kind
+    : panType === 'magnet' ? 'magnet' : 'pan'
+  const title = safeText(item.title || item.display_name, '未命名资源').slice(0, 500)
+  return {
+    ...safeResult(item),
+    result_id: `manual-${index}-${safeText(item.source, 'unknown')}-${panType}`,
+    title,
+    display_name: safeText(item.display_name || title, title).slice(0, 500),
+    pan_type: panType,
+    resource_kind: resourceKind,
+    source: safeText(item.source, 'unknown'),
+    text: safeText(item.text || title, title).slice(0, 2000),
+    meta: safeText(item.meta).slice(0, 500),
+    resolution: safeText(item.resolution, 'unknown').toLowerCase() || 'unknown',
+    quality_class: safeText(item.quality_class, 'unknown').toLowerCase() || 'unknown',
+    has_chinese_subtitle: item.has_chinese_subtitle === true,
+    share_url: safeText(item.share_url),
+  }
 }
 function persistSession() {
   const store = sessionStore()
   if (!store || !searched.value) return
   try {
-    store.setItem(CACHE_KEY, JSON.stringify({
+    cacheSet(CACHE_KEY, JSON.stringify({
       keyword: keyword.value,
       source: source.value,
       resourceType: resourceType.value,
@@ -193,19 +247,19 @@ function restoreSession() {
   const store = sessionStore()
   if (!store) return
   try {
-    const cached = JSON.parse(store.getItem(CACHE_KEY) || 'null')
+    const cached = JSON.parse(cacheGet(CACHE_KEY) || 'null')
     if (!cached || !Array.isArray(cached.results)) return
     keyword.value = String(cached.keyword || '')
     source.value = String(cached.source || 'all')
     resourceType.value = String(cached.resourceType || 'all')
     detailFilter.value = String(cached.detailFilter || 'all')
-    results.value = cached.results.slice(0, MAX_CACHED_RESULTS).map(safeResult)
+    results.value = cached.results.slice(0, MAX_CACHED_RESULTS).map(normalizeManualResult)
     sourceStatus.value = cached.sourceStatus && typeof cached.sourceStatus === 'object' ? cached.sourceStatus : {}
     sourceStats.value = cached.sourceStats && typeof cached.sourceStats === 'object' ? cached.sourceStats : {}
     searched.value = !!cached.searched
     message.value = String(cached.message || '')
     ok.value = !!cached.ok
-  } catch { store.removeItem(CACHE_KEY) }
+  } catch { cacheRemove(CACHE_KEY) }
 }
 function clearResults() {
   results.value = []
@@ -214,9 +268,18 @@ function clearResults() {
   searched.value = false
   message.value = ''
   ok.value = false
-  sessionStore()?.removeItem(CACHE_KEY)
+  cacheRemove(CACHE_KEY)
 }
 function resetFilters() { resourceType.value = 'all'; detailFilter.value = 'all' }
+function resetSearchArea() {
+  searching.value = false
+  processDialog.value = false
+  selectedResult.value = null
+  transferring.value = ''
+  recoveryMessage.value = ''
+  message.value = '搜索区域已恢复，可以重新搜索'
+  ok.value = true
+}
 
 function unwrap(res) {
   let value = res
@@ -236,14 +299,15 @@ function fullUrl(r) {
   return url
 }
 async function search() {
-  const value = keyword.value.trim()
+  const value = safeText(keyword.value).trim()
   if (!value) return notify('请输入搜索关键字', 'warning')
   if (!props.api?.get) return notify('API 未就绪', 'error')
-  clearResults()
-  searching.value = true
-  searched.value = true
-  message.value = ''
   try {
+    clearResults()
+    searching.value = true
+    searched.value = true
+    recoveryMessage.value = ''
+    message.value = ''
     const data = unwrap(await props.api.get(`${base.value}/search?keyword=${encodeURIComponent(value)}&source=${source.value}`))
     const sourceItems = Array.isArray(data?.items)
       ? data.items
@@ -254,7 +318,7 @@ async function search() {
           : Array.isArray(data?.data?.items)
             ? data.data.items
             : []
-    results.value = sourceItems
+    results.value = sourceItems.map(normalizeManualResult)
     sourceStatus.value = data?.source_status && typeof data.source_status === 'object' ? data.source_status : {}
     sourceStats.value = data?.source_stats && typeof data.source_stats === 'object' ? data.source_stats : {}
     ok.value = !!data?.success
@@ -262,7 +326,9 @@ async function search() {
   } catch (e) {
     results.value = []
     ok.value = false
-    message.value = e?.response?.data?.message || e?.message || '搜索失败'
+    const status = Number(e?.response?.status || 0)
+    message.value = status ? `搜索请求失败（HTTP ${status}），可重试` : '搜索请求异常或超时，可重试'
+    recoveryMessage.value = '搜索区域发生异常，已恢复；可重新搜索'
   } finally {
     searching.value = false
     persistSession()
@@ -307,7 +373,8 @@ async function transfer() {
     notify(data.message || (success ? '任务提交成功' : '提交失败'), success ? 'success' : 'error')
     if (success) closeProcessDialog()
   } catch (e) {
-    notify(e?.response?.data?.message || e?.message || '离线请求失败', 'error')
+    const status = Number(e?.response?.status || 0)
+    notify(status ? `提交请求失败（HTTP ${status}），可重试` : '提交请求异常或超时，可重试', 'error')
   } finally { transferring.value = '' }
 }
 async function loadSubscriptions() {

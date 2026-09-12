@@ -41,15 +41,38 @@ class PanSouUiContractTest(unittest.TestCase):
     def test_manual_search_uses_bounded_session_cache_without_process_state(self):
         manual = (ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "ManualSearch.vue").read_text(encoding="utf-8")
         cache = manual[manual.index("const CACHE_KEY"):manual.index("function unwrap")]
-        persisted = manual[manual.index("store.setItem(CACHE_KEY"):manual.index("function restoreSession")]
+        persisted = manual[manual.index("cacheSet(CACHE_KEY"):manual.index("function restoreSession")]
         self.assertIn("TgSearch115:manual-search:v1", cache)
         self.assertIn("window.sessionStorage", cache)
         self.assertIn("MAX_CACHED_RESULTS = 500", cache)
         self.assertIn("slice(0, MAX_CACHED_RESULTS).map(safeResult)", cache)
-        self.assertIn("sessionStore()?.removeItem(CACHE_KEY)", cache)
+        self.assertIn("function cacheGet", cache)
+        self.assertIn("function cacheSet", cache)
+        self.assertIn("function cacheRemove", cache)
+        self.assertIn("try { sessionStore()?.removeItem(key)", cache)
         self.assertNotIn("subscribeId", persisted)
         self.assertNotIn("selectedResult", persisted)
         self.assertNotIn("transferring", persisted)
+
+    def test_manual_search_survives_storage_and_result_shape_failures(self):
+        manual = (ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "ManualSearch.vue").read_text(encoding="utf-8")
+        page = (ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "Page.vue").read_text(encoding="utf-8")
+        self.assertIn("normalizeManualResult", manual)
+        self.assertIn("sourceItems.map(normalizeManualResult)", manual)
+        self.assertIn("搜索区域发生异常，已恢复；可重新搜索", manual)
+        self.assertIn("重新加载搜索区域", manual)
+        self.assertLess(manual.index("try {\n    clearResults()"), manual.index("props.api.get("))
+        self.assertIn("onErrorCaptured", page)
+        self.assertIn(":key=\"manualSearchKey\"", page)
+        self.assertIn("reloadManualSearch", page)
+        self.assertNotIn('v-if="results.length" class="manual-search"', manual)
+        self.assertIn('@media (max-width:600px)', manual)
+        self.assertIn('.search-toolbar { grid-template-columns:1fr; }', manual)
+
+    def test_page_exposes_sanitized_organize_wait_diagnostics(self):
+        page = (ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "Page.vue").read_text(encoding="utf-8")
+        for field in ("organize_wait_reason", "last_reconcile_at", "btih_prefix", "formatWaitDuration"):
+            self.assertIn(field, page)
 
     def test_manual_search_backend_has_stable_safe_error_shape(self):
         backend = (ROOT / "plugins.v2" / "tgsearch115" / "__init__.py").read_text(encoding="utf-8")

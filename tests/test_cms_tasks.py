@@ -147,6 +147,26 @@ class CmsTaskLedgerTest(unittest.TestCase):
         self.assertEqual(1, result["completed"])
         self.assertEqual("completed", ledger.records[0]["status"])
         self.assertFalse(ledger.records[0]["completion_notified"])
+        self.assertEqual("matched", ledger.records[0]["mp_history_match_status"])
+        self.assertIn("订阅历史", ledger.records[0]["organize_wait_reason"])
+
+    def test_pending_organize_records_history_diagnostic_without_completing(self):
+        now = datetime(2026, 7, 20, tzinfo=timezone.utc)
+        ledger = cms_tasks.CmsTaskLedger(now=lambda: now)
+        record = ledger.add(magnet(), "示例电影", subscribe=SimpleNamespace(
+            id=8, tmdbid=100, doubanid=None, type="MOVIE", season=None
+        ))
+        ledger.update(record["btih"], "pending_organize")
+        result = ledger.reconcile(
+            timeout_hours=12,
+            subscription_exists=lambda _sid: True,
+            history_exists=lambda _record: False,
+            restore_subscription=lambda _sid: None,
+        )
+        self.assertEqual(0, result["completed"])
+        self.assertEqual("not_found", record["mp_history_match_status"])
+        self.assertTrue(record["mp_history_checked_at"])
+        self.assertIn("等待 MoviePilot", record["organize_wait_reason"])
 
     def test_completed_record_is_not_reconciled_again(self):
         now = datetime(2026, 7, 20, tzinfo=timezone.utc)
@@ -189,6 +209,19 @@ class CmsTaskLedgerTest(unittest.TestCase):
             ledger.match_transfer_complete(tmdb_id=100, media_type="TV", season=2)["btih"],
         )
 
+    def test_transfer_complete_reports_type_and_season_mismatch(self):
+        ledger = cms_tasks.CmsTaskLedger()
+        record = ledger.add(magnet(), "示例剧集", subscribe=SimpleNamespace(
+            id=8, tmdbid=100, doubanid=None, type="TV", season=2
+        ))
+        ledger.update(record["btih"], "pending_organize")
+        self.assertEqual("type_mismatch", ledger.diagnose_transfer_complete(tmdb_id=100, media_type="MOVIE", season=2)[1])
+        self.assertEqual("season_mismatch", ledger.diagnose_transfer_complete(tmdb_id=100, media_type="TV", season=1)[1])
+        matched, status, ids = ledger.diagnose_transfer_complete(tmdb_id=100, media_type="电视剧", season=2)
+        self.assertEqual("matched", status)
+        self.assertEqual(record["btih"], matched["btih"])
+        self.assertEqual([record["btih"]], ids)
+
     def test_transfer_complete_rejects_ambiguous_records(self):
         ledger = cms_tasks.CmsTaskLedger()
         for char in ("a", "b"):
@@ -198,6 +231,22 @@ class CmsTaskLedgerTest(unittest.TestCase):
             ledger.update(record["btih"], "pending_organize")
 
         self.assertIsNone(ledger.match_transfer_complete(tmdb_id=100, media_type="MOVIE"))
+        self.assertEqual("ambiguous", ledger.diagnose_transfer_complete(tmdb_id=100, media_type="MOVIE")[1])
+
+    def test_public_diagnostics_redact_credentials_and_links(self):
+        ledger = cms_tasks.CmsTaskLedger()
+        record = ledger.add(magnet(), "示例电影", subscribe=SimpleNamespace(
+            id=8, tmdbid=100, doubanid=None, type="MOVIE", season=None
+        ))
+        ledger.update(
+            record["btih"], "pending_organize",
+            download_name="http://private.invalid/movie Cookie=secret",
+            organize_wait_reason="Token=secret https://private.invalid/wait",
+        )
+        public = ledger.public_records()[0]
+        self.assertNotIn("private.invalid", public["download_name"])
+        self.assertNotIn("secret", public["download_name"])
+        self.assertNotIn("secret", public["organize_wait_reason"])
 
     def test_unknown_uses_minute_timeout(self):
         now = [datetime(2026, 7, 20, tzinfo=timezone.utc)]

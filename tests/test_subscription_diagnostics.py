@@ -54,6 +54,20 @@ class DiagnosticTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             timeline.clear_terminal()
 
+    def test_task_completion_updates_latest_subscription_season(self):
+        timeline = timeline_module.SubscriptionTimeline()
+        timeline.start(SimpleNamespace(id=12, name="Example", year=2024, season=2), "periodic")
+        timeline.start(SimpleNamespace(id=12, name="Example", year=2024, season=3), "periodic")
+        changed = timeline.event_for_subscription(
+            12, 2, "completed", "completed", "MoviePilot 整理已确认",
+            btih_prefix="a" * 12, task_status="completed",
+        )
+        self.assertTrue(changed)
+        by_season = {item["season"]: item for item in timeline.list()["items"]}
+        self.assertEqual("completed", by_season[2]["status"])
+        self.assertEqual("running", by_season[3]["status"])
+        self.assertEqual("a" * 12, by_season[2]["btih_prefix"])
+
     def test_timeline_sanitizes_links_and_bounds_events(self):
         timeline = timeline_module.SubscriptionTimeline(max_events=10)
         run = timeline.start(SimpleNamespace(id=9, name="Example", year=None, season=None), "periodic")

@@ -68,7 +68,12 @@ class SubscriptionTimeline:
             run = self._records.get(str(run_id))
             if not run:
                 return
-            run.update({k: v for k, v in fields.items() if k in {"source_stats", "candidate_stats", "final_source", "resource_kind", "subscription_written", "waiting_organize"}})
+            run.update({k: v for k, v in fields.items() if k in {
+                "source_stats", "candidate_stats", "final_source", "resource_kind",
+                "subscription_written", "waiting_organize", "btih_prefix", "task_status",
+                "organize_wait_reason", "last_reconcile_at", "mp_event_match_status",
+                "mp_history_match_status",
+            }})
             run.update({"stage": stage, "status": status, "updated_at": _now()})
             if summary:
                 run["reason"] = _safe(summary)
@@ -76,6 +81,29 @@ class SubscriptionTimeline:
             run["events"] = run["events"][-self.max_events:]
             if status in TERMINAL:
                 run["ended_at"] = _now()
+
+    def event_for_subscription(
+        self,
+        subscribe_id: Any,
+        season: Any,
+        stage: str,
+        status: str,
+        summary: str,
+        **fields: Any,
+    ) -> bool:
+        """Update the newest run for a subscription/season without persisting task secrets."""
+        try:
+            wanted = self.key(int(subscribe_id), season)
+        except (TypeError, ValueError):
+            return False
+        with self._lock:
+            matches = [record for record in self._records.values() if record.get("key") == wanted]
+            if not matches:
+                return False
+            latest = max(matches, key=lambda record: str(record.get("updated_at") or ""))
+            run_id = str(latest.get("run_id") or "")
+        self.event(run_id, stage, status, summary, **fields)
+        return True
 
     def dump(self) -> list:
         with self._lock:

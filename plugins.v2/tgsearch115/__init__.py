@@ -249,7 +249,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.8.9"
+    plugin_version = "4.8.10"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -951,13 +951,17 @@ class TgSearch115(_PluginBase):
         mediainfo = data.get("mediainfo") or {}
         meta = data.get("meta") or {}
 
-        def value(source, name):
-            return source.get(name) if isinstance(source, dict) else getattr(source, name, None)
+        def value(source, *names):
+            for name in names:
+                item = source.get(name) if isinstance(source, dict) else getattr(source, name, None)
+                if item is not None and item != "":
+                    return item
+            return None
 
-        tmdb_id = value(mediainfo, "tmdb_id")
-        douban_id = value(mediainfo, "douban_id")
+        tmdb_id = value(mediainfo, "tmdb_id", "tmdbid")
+        douban_id = value(mediainfo, "douban_id", "doubanid")
         media_type = value(mediainfo, "type") or value(meta, "type")
-        season = value(mediainfo, "season")
+        season = value(mediainfo, "season", "season_num")
         if season is None:
             season = value(meta, "begin_season")
         if not tmdb_id and not douban_id:
@@ -965,18 +969,42 @@ class TgSearch115(_PluginBase):
                 "【MP整理】状态=事件无法匹配 动作=等待历史补偿 缺少字段=tmdb_id,douban_id"
             )
             return
-        record = self._cms_tasks.match_transfer_complete(
+        record, match_status, candidate_btihs = self._cms_tasks.diagnose_transfer_complete(
             tmdb_id=tmdb_id,
             douban_id=douban_id,
             media_type=media_type,
             season=season,
         )
+        reason_labels = {
+            "identity_mismatch": "整理事件媒体 ID 与等待任务不一致",
+            "type_mismatch": "整理事件媒体类型与等待任务不一致",
+            "season_mismatch": "整理事件季号与等待任务不一致",
+            "ambiguous": "整理事件同时匹配多个等待任务，无法唯一确认",
+            "matched": "已由 MoviePilot 整理事件唯一确认",
+        }
+        for btih in candidate_btihs:
+            current = self._cms_tasks.latest(btih)
+            if not current:
+                continue
+            updated = self._cms_tasks.update(
+                btih,
+                current.get("status") or "pending_organize",
+                mp_event_seen=True,
+                mp_event_match_status=match_status,
+                organize_wait_reason=reason_labels.get(match_status, "等待 MoviePilot 订阅历史补偿"),
+                last_reconcile_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+            )
+            if not record and updated:
+                self._sync_task_timeline(updated, "waiting_organize", reason_labels.get(match_status, "等待 MoviePilot 订阅历史补偿"))
+        if candidate_btihs:
+            self._save_cms_tasks()
         if not record:
             logger.info(
-                "【MP整理】媒体=%s 年份=%s 季=%s 状态=未唯一匹配 动作=等待历史补偿",
+                "【MP整理】媒体=%s 年份=%s 季=%s 状态=%s 动作=等待历史补偿",
                 value(mediainfo, "title") or value(meta, "name") or "未知",
                 value(mediainfo, "year") or value(meta, "year") or "未知",
                 season if season is not None else "无",
+                match_status,
             )
             return
         if not self._reconcile_lock.acquire(blocking=False):
@@ -1458,7 +1486,21 @@ class TgSearch115(_PluginBase):
                     self._save_magnet_queues()
             if self._timeline:
                 wait_organize = bool(execution.via_magnet or self._wait_for_mp_organize)
-                self._timeline.event(run_id, "pending_organize" if wait_organize else "completed", "waiting_organize" if wait_organize else "completed", "等待 MoviePilot 整理确认" if wait_organize else "订阅处理完成", waiting_organize=wait_organize, subscription_written=bool(handled))
+                active_task = self._cms_tasks.active_by_subscription(subscribe_id) if self._cms_tasks else None
+                self._timeline.event(
+                    run_id,
+                    "pending_organize" if wait_organize else "completed",
+                    "waiting_organize" if wait_organize else "completed",
+                    "等待 MoviePilot 整理确认" if wait_organize else "订阅处理完成",
+                    waiting_organize=wait_organize,
+                    subscription_written=bool(handled),
+                    btih_prefix=str((active_task or {}).get("btih") or "")[:12],
+                    task_status=str((active_task or {}).get("status") or ""),
+                    organize_wait_reason=str((active_task or {}).get("organize_wait_reason") or ("等待 MoviePilot 整理确认" if wait_organize else ""))[:180],
+                    last_reconcile_at=str((active_task or {}).get("last_reconcile_at") or ""),
+                    mp_event_match_status=str((active_task or {}).get("mp_event_match_status") or "not_seen"),
+                    mp_history_match_status=str((active_task or {}).get("mp_history_match_status") or "not_checked"),
+                )
             return
 
             source_report = SearchReport({
@@ -1864,6 +1906,29 @@ class TgSearch115(_PluginBase):
         except Exception as exc:
             logger.warn(f"【TG115】保存磁力候选队列失败: {exc}")
 
+    def _sync_task_timeline(self, record: Dict[str, Any], status: str, reason: str) -> None:
+        """Synchronize a ledger transition to its newest sanitized subscription timeline."""
+        if not self._timeline or not isinstance(record, dict):
+            return
+        timeline_status = status if status in {"completed", "recovered", "failed"} else "waiting_organize"
+        stage = "completed" if timeline_status == "completed" else ("recovered" if timeline_status == "recovered" else ("failed" if timeline_status == "failed" else "pending_organize"))
+        changed = self._timeline.event_for_subscription(
+            record.get("subscribe_id"),
+            record.get("season"),
+            stage,
+            timeline_status,
+            reason,
+            waiting_organize=timeline_status == "waiting_organize",
+            btih_prefix=str(record.get("btih") or "")[:12],
+            task_status=str(record.get("status") or ""),
+            organize_wait_reason=str(record.get("organize_wait_reason") or reason)[:180],
+            last_reconcile_at=str(record.get("last_reconcile_at") or ""),
+            mp_event_match_status=str(record.get("mp_event_match_status") or "not_seen"),
+            mp_history_match_status=str(record.get("mp_history_match_status") or "not_checked"),
+        )
+        if changed:
+            self._save_diagnostics()
+
     def _complete_task_record(self, record: Dict[str, Any], confirmation_source: str) -> bool:
         current = self._cms_tasks.latest(record.get("btih")) if self._cms_tasks else None
         if not current or current.get("status") in {"failed", "timed_out"}:
@@ -1886,6 +1951,7 @@ class TgSearch115(_PluginBase):
             queue["completed_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
             self._save_magnet_queues()
         self._save_cms_tasks()
+        self._sync_task_timeline(completed, "completed", "MoviePilot 整理已确认")
         subscribe = SubscribeOper().get(int(sid)) if sid else None
         notification_resolved = not self._notify_success or not subscribe
         if not subscribe and self._notify_success:
@@ -1940,6 +2006,10 @@ class TgSearch115(_PluginBase):
         if not self._cms_tasks:
             return
         oper = SubscribeOper()
+        previous_statuses = {
+            str(record.get("btih") or ""): str(record.get("status") or "")
+            for record in self._cms_tasks.dump_records()
+        }
 
         def subscription_exists(sid: int) -> bool:
             return bool(oper.get(sid))
@@ -1980,12 +2050,16 @@ class TgSearch115(_PluginBase):
                     state = self._offline_client.get_task_status(task_id)
                     status = state.get("status")
                     if status == "completed":
-                        self._cms_tasks.update(
+                        pending = self._cms_tasks.update(
                             record["btih"], "pending_organize", progress=100,
                             task_id=task_id,
                             target_cid=state.get("target_cid") or record.get("target_cid", ""),
                             download_name=state.get("name", ""),
+                            organize_wait_reason="115 下载完成，等待 MoviePilot 整理事件或订阅历史",
+                            last_reconcile_at=datetime.now().astimezone().isoformat(timespec="seconds"),
                         )
+                        if pending:
+                            self._sync_task_timeline(pending, "waiting_organize", pending.get("organize_wait_reason"))
                     elif status in {"downloading", "submitted", "failed", "cancelled", "no_resource"}:
                         self._cms_tasks.update(record["btih"], status, progress=state.get("progress"), task_id=task_id, error_code=state.get("error_code", ""), error_message=state.get("message", ""))
                         if status in {"submitted", "downloading"}:
@@ -2008,6 +2082,9 @@ class TgSearch115(_PluginBase):
                                 )
                                 if self._coordinator and (status != "cancelled" or self._magnet_cancel_failover):
                                     self._coordinator.enqueue_subscription(int(record["subscribe_id"]), priority=0)
+                            changed = self._cms_tasks.latest(record.get("btih"))
+                            if changed:
+                                self._sync_task_timeline(changed, "recovered", "115 任务未完成，订阅已恢复等待下一轮")
                 except Exception as exc:
                     logger.warning("【TG115】115 任务状态查询失败 btih=%s... reason=%s", str(record.get("btih", ""))[:12], type(exc).__name__)
             unknown_result = self._cms_tasks.reconcile(
@@ -2042,6 +2119,11 @@ class TgSearch115(_PluginBase):
         for record in self._cms_tasks.dump_records():
             if record.get("status") == "completed" and not record.get("completion_notified"):
                 self._complete_task_record(record, "MoviePilot 整理历史")
+            previous = previous_statuses.get(str(record.get("btih") or ""), "")
+            if record.get("status") == "timed_out" and previous != "timed_out":
+                self._sync_task_timeline(record, "recovered", "等待 MoviePilot 整理超时，订阅已恢复")
+            elif record.get("status") == "failed" and previous != "failed":
+                self._sync_task_timeline(record, "failed", "任务异常，未确认 MoviePilot 整理完成")
         if result["completed"] or result["failed"] or result["timed_out"]:
             self._save_cms_tasks()
             logger.info(

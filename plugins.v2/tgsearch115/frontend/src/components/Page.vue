@@ -111,6 +111,12 @@
         <div v-for="run in timeline.items" :key="run.run_id" class="mb-3">
           <div class="d-flex align-center ga-2 flex-wrap"><v-chip size="x-small" :color="timelineColor(run.status)">{{ timelineStatus(run.status) }}</v-chip><strong>{{ run.title }}<template v-if="run.year">（{{ run.year }}）</template><template v-if="run.season !== null && run.season !== undefined"> S{{ String(run.season).padStart(2, '0') }}</template></strong><span class="text-caption">{{ run.stage }}</span></div>
           <div class="text-caption text-medium-emphasis mt-1">{{ run.events?.map(e => e.summary).filter(Boolean).join(' → ') || run.reason || '等待诊断事件' }}</div>
+          <div v-if="run.organize_wait_reason" class="text-caption text-warning mt-1">当前：{{ run.organize_wait_reason }}</div>
+          <div v-if="run.btih_prefix || run.last_reconcile_at" class="text-caption text-medium-emphasis mt-1">
+            <span v-if="run.btih_prefix">BTIH {{ run.btih_prefix }}…</span>
+            <span v-if="run.last_reconcile_at"> · 最近检查 {{ formatTime(run.last_reconcile_at) }}</span>
+            <span v-if="run.status === 'waiting_organize'"> · 已等待 {{ formatWaitDuration(run.started_at) }}</span>
+          </div>
         </div><div v-if="!timeline.items?.length" class="text-caption text-medium-emphasis">尚无订阅处理诊断记录</div>
       </v-card-text></div></v-expand-transition>
     </v-card>
@@ -156,6 +162,8 @@
                 115 目标 cid {{ task.target_cid }}<span v-if="task.download_name"> · {{ task.download_name }}</span>
               </div>
               <div v-if="task.error_message" class="text-caption text-error">{{ task.error_message }}</div>
+              <div v-if="task.organize_wait_reason" class="text-caption text-warning">{{ task.organize_wait_reason }}</div>
+              <div v-if="task.last_reconcile_at" class="text-caption text-medium-emphasis">最近对账 {{ formatTime(task.last_reconcile_at) }}</div>
             </td>
             <td><v-chip size="x-small" variant="tonal" :color="taskStatusColor(task.status)">{{ taskStatusLabel(task.status) }}</v-chip></td>
             <td class="text-caption">{{ formatTime(task.submitted_at) }}</td>
@@ -209,7 +217,13 @@
         <v-icon icon="mdi-magnify" color="primary" class="mr-2" />手动搜索
       </v-card-title>
       <v-divider />
-      <v-card-text><ManualSearch :plugin-id="PID" :api="props.api" /></v-card-text>
+      <v-card-text>
+        <v-alert v-if="manualSearchError" type="warning" variant="tonal" density="compact" class="mb-3">
+          搜索区域发生异常，已恢复；可重新搜索。
+          <template #append><v-btn size="small" variant="text" @click="reloadManualSearch">重新加载搜索区域</v-btn></template>
+        </v-alert>
+        <ManualSearch :key="manualSearchKey" :plugin-id="PID" :api="props.api" />
+      </v-card-text>
     </v-card>
     <v-card v-if="false" variant="outlined" rounded="lg">
       <v-card-title class="d-flex align-center px-4 py-3">
@@ -311,7 +325,7 @@
 </template>
 
 <script setup>
-import { computed, getCurrentInstance, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, getCurrentInstance, onErrorCaptured, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { filterSearchResults, QUALITY_FILTERS, RESOURCE_FILTERS } from '../searchFilters.js'
 import ManualSearch from './ManualSearch.vue'
 
@@ -321,6 +335,22 @@ const props = defineProps({
 })
 const emit = defineEmits(['close', 'back'])
 const instance = getCurrentInstance()
+const manualSearchKey = ref(0)
+const manualSearchError = ref(false)
+
+onErrorCaptured((_error, child) => {
+  const name = child?.type?.name || child?.type?.__name || ''
+  if (String(name).includes('ManualSearch')) {
+    manualSearchError.value = true
+    return false
+  }
+  return true
+})
+
+function reloadManualSearch() {
+  manualSearchError.value = false
+  manualSearchKey.value += 1
+}
 
 function closePage() {
   try {
@@ -438,6 +468,14 @@ function formatTime(value) {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
 }
+function formatWaitDuration(value) {
+  const started = new Date(value || '')
+  if (Number.isNaN(started.getTime())) return '未知'
+  const minutes = Math.max(0, Math.floor((Date.now() - started.getTime()) / 60000))
+  if (minutes < 60) return `${minutes} 分钟`
+  const hours = Math.floor(minutes / 60)
+  return `${hours} 小时 ${minutes % 60} 分钟`
+}
 function taskStatusLabel(status) {
   return {
     waiting: '等待中', submitted: '已提交', downloading: '下载中', pending_organize: '待整理',
@@ -501,7 +539,7 @@ async function retryTask(task) {
     showSnack(data?.message || (data?.success ? '订阅已恢复' : '重试失败'), data?.success ? 'success' : 'error')
     await loadRuntimeStatus()
   } catch (e) {
-    showSnack('重试异常：' + (e?.message || e), 'error')
+    showSnack(safeRequestError(e, '重试请求失败'), 'error')
   } finally {
     retryingBtih.value = ''
   }
@@ -514,7 +552,7 @@ async function cancelTask(task) {
     showSnack(data?.message || '取消失败', data?.success ? 'success' : 'error')
     await loadRuntimeStatus()
   } catch (e) {
-    showSnack('取消异常：' + (e?.message || e), 'error')
+    showSnack(safeRequestError(e, '取消请求失败'), 'error')
   }
 }
 
@@ -535,7 +573,7 @@ async function clearTasksConfirmed() {
       await loadRuntimeStatus()
     }
   } catch (e) {
-    showSnack(e?.response?.data?.message || e?.message || '清除任务记录失败', 'error')
+    showSnack(safeRequestError(e, '清除任务记录失败'), 'error')
   } finally {
     clearingTasks.value = false
   }
@@ -564,7 +602,7 @@ async function doSearch() {
     }
   } catch (e) {
     results.value = []
-    searchMsg.value = '搜索异常：' + (e?.message || e)
+    searchMsg.value = safeRequestError(e, '搜索请求失败')
     searchOk.value = false
   } finally {
     searching.value = false
@@ -592,7 +630,7 @@ async function loadMore() {
       showSnack(data?.message || '加载更多失败', 'error')
     }
   } catch (e) {
-    showSnack('加载更多异常：' + (e?.message || e), 'error')
+    showSnack(safeRequestError(e, '加载更多失败'), 'error')
   } finally {
     loadingMore.value = false
   }
@@ -638,7 +676,7 @@ async function transfer(r, i) {
     const success = data?.success === true || data?.code === 0
     showSnack(data?.message || (success ? '任务提交成功' : '转存失败'), success ? 'success' : 'error')
   } catch (e) {
-    showSnack('转存异常：' + (e?.message || e), 'error')
+    showSnack(safeRequestError(e, '转存请求失败'), 'error')
   } finally {
     transferringIdx.value = -1
   }
@@ -648,6 +686,14 @@ function showSnack(text, color) {
   snackText.value = text
   snackColor.value = color
   snack.value = true
+}
+
+function safeRequestError(error, fallback) {
+  const status = Number(error?.response?.status || error?.status || 0)
+  if (status >= 400 && status <= 599) return `${fallback}（HTTP ${status}）`
+  const code = String(error?.code || '').toUpperCase()
+  if (code.includes('TIMEOUT') || code === 'ECONNABORTED') return `${fallback}（请求超时）`
+  return fallback
 }
 
 onMounted(async () => {
