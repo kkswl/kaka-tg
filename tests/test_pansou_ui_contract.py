@@ -8,12 +8,12 @@ ROOT = Path(__file__).resolve().parents[1]
 class PanSouUiContractTest(unittest.TestCase):
     def test_config_and_manual_search_expose_pansou_without_token_in_search_url(self):
         config = (ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "Config.vue").read_text(encoding="utf-8")
-        manual = (ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "ManualSearch.vue").read_text(encoding="utf-8")
+        manual = (ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "Page.vue").read_text(encoding="utf-8")
         self.assertIn('value="pansou"', config)
         self.assertIn('config.pansou_url', config)
         self.assertIn('config.pansou_token', config)
         self.assertIn('config.pansou_proxy', config)
-        self.assertIn('value="pansou"', manual)
+        self.assertIn("{ title: 'PanSou', value: 'pansou' }", manual)
         check_body = config[config.index("async function checkPanSou"):config.index("async function doSearch")]
         self.assertNotIn("pansou_token", check_body)
         self.assertNotIn("token=", check_body)
@@ -24,61 +24,55 @@ class PanSouUiContractTest(unittest.TestCase):
             self.assertIn(f"runtime.pansou.{field}", page)
 
     def test_manual_search_deeply_unwraps_host_response_before_counting(self):
-        manual = (ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "ManualSearch.vue").read_text(encoding="utf-8")
-        unwrap = manual[manual.index("function unwrap"):manual.index("function notify")]
-        self.assertIn("while (value", unwrap)
+        manual = (ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "Page.vue").read_text(encoding="utf-8")
+        unwrap = manual[manual.index("function unwrapApiResponse"):manual.index("const MANUAL_CACHE_KEY")]
+        self.assertIn("for (let depth", unwrap)
         self.assertIn("value = value.data", unwrap)
-        self.assertIn("results.value.length", manual)
+        self.assertIn("manualResults.value.length", manual)
 
     def test_manual_search_keeps_a_single_source_selection(self):
-        manual = (ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "ManualSearch.vue").read_text(encoding="utf-8")
+        manual = (ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "Page.vue").read_text(encoding="utf-8")
         self.assertIn("搜索范围", manual)
-        self.assertLess(manual.index("搜索范围"), manual.index("search-toolbar"))
+        self.assertLess(manual.index("搜索范围"), manual.index("manual-search-toolbar"))
         self.assertNotIn("结果来源", manual)
         self.assertNotIn("resultSource", manual)
         self.assertIn("upstream_source", manual)
 
     def test_manual_search_uses_bounded_session_cache_without_process_state(self):
-        manual = (ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "ManualSearch.vue").read_text(encoding="utf-8")
-        cache = manual[manual.index("const CACHE_KEY"):manual.index("function unwrap")]
-        persisted = manual[manual.index("cacheSet(CACHE_KEY"):manual.index("function restoreSession")]
-        self.assertIn("TgSearch115:manual-search:v1", cache)
+        manual = (ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "Page.vue").read_text(encoding="utf-8")
+        cache = manual[manual.index("const MANUAL_CACHE_KEY"):manual.index("function closePage")]
+        persisted = cache[cache.index("function persistManualSession"):cache.index("function restoreManualSession")]
+        self.assertIn("TgSearch115:manual-search:v2", cache)
         self.assertIn("window.sessionStorage", cache)
-        self.assertIn("MAX_CACHED_RESULTS = 500", cache)
-        self.assertIn("slice(0, MAX_CACHED_RESULTS).map(safeResult)", cache)
-        self.assertIn("function cacheGet", cache)
-        self.assertIn("function cacheSet", cache)
-        self.assertIn("function cacheRemove", cache)
-        self.assertIn("try { sessionStore()?.removeItem(key)", cache)
-        self.assertNotIn("subscribeId", persisted)
-        self.assertNotIn("selectedResult", persisted)
-        self.assertNotIn("transferring", persisted)
+        self.assertIn("slice(0, 500)", cache)
+        self.assertIn("function manualSessionStore", cache)
+        self.assertNotIn("manualSubscribeId", persisted)
+        self.assertNotIn("manualSelectedResult", persisted)
+        self.assertNotIn("manualTransferring", persisted)
 
     def test_manual_search_survives_storage_and_result_shape_failures(self):
-        manual = (ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "ManualSearch.vue").read_text(encoding="utf-8")
         page = (ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "Page.vue").read_text(encoding="utf-8")
-        self.assertIn("normalizeManualResult", manual)
-        self.assertIn("sourceItems.map(normalizeManualResult)", manual)
-        self.assertIn("搜索区域发生异常，已恢复；可重新搜索", manual)
-        self.assertIn("重新加载搜索区域", manual)
-        self.assertLess(manual.index("try {\n    clearResults()"), manual.index("props.api.get("))
-        self.assertIn("onErrorCaptured", page)
-        self.assertIn(":key=\"manualSearchKey\"", page)
-        self.assertIn("reloadManualSearch", page)
-        self.assertIn('data-testid="manual-search-fallback"', page)
-        self.assertIn('v-if="manualSearchError" class="manual-search-fallback"', page)
-        self.assertIn('<ManualSearch v-else', page)
-        self.assertNotIn("v-progress-circular", manual)
-        self.assertIn('class="manual-loading"', manual)
-        self.assertNotIn('v-if="results.length" class="manual-search"', manual)
-        self.assertIn('@media (max-width:600px)', manual)
-        self.assertIn('grid-template-columns:minmax(0, 1fr)', manual)
+        self.assertIn("normalizeManualResult", page)
+        self.assertIn("sourceItems.map(normalizeManualResult)", page)
+        self.assertIn('data-testid="manual-search-root"', page)
+        self.assertIn('data-testid="manual-search-input"', page)
+        self.assertIn('data-testid="manual-search-button"', page)
+        self.assertNotIn("import ManualSearch", page)
+        self.assertNotIn("<ManualSearch", page)
+        self.assertNotIn("v-progress-circular", page)
+        self.assertIn('class="manual-loading"', page)
+        self.assertIn('@media (max-width: 600px)', page)
+        self.assertIn('grid-template-columns:minmax(0, 1fr)', page)
+        search = page[page.index("async function runManualSearch"):page.index("function manualSourceLabel")]
+        self.assertIn("finally", search)
+        self.assertIn("manualSearching.value = false", search)
 
     def test_page_has_one_search_state_owner_and_build_marker(self):
         page = (ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "Page.vue").read_text(encoding="utf-8")
-        self.assertEqual(1, page.count("<ManualSearch"))
+        self.assertEqual(0, page.count("<ManualSearch"))
+        self.assertEqual(1, page.count('data-testid="manual-search-root"'))
         self.assertNotIn('v-if="false"', page)
-        self.assertIn("FRONTEND_VERSION = '4.8.11'", page)
+        self.assertIn("FRONTEND_VERSION = '4.8.12'", page)
         self.assertIn("frontendBuildId", page)
         self.assertIn("versionMismatch", page)
         self.assertIn("manual-search-body", page)

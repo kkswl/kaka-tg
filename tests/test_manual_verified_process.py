@@ -5,7 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "plugins.v2" / "tgsearch115" / "__init__.py"
-MANUAL = ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "ManualSearch.vue"
+MANUAL = ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "Page.vue"
 CONFIG = ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "Config.vue"
 PAGE = ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "Page.vue"
 
@@ -13,10 +13,10 @@ PAGE = ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" /
 class ManualVerifiedProcessContractTest(unittest.TestCase):
     def test_frontend_requires_subscription_and_uses_verified_endpoint(self):
         source = MANUAL.read_text(encoding="utf-8")
-        self.assertIn("subscribeId", source)
+        self.assertIn("manualSubscribeId", source)
         self.assertIn("/manual/subscriptions", source)
         self.assertIn("/manual/process", source)
-        transfer = source[source.index("async function transfer"):source.index("async function loadSubscriptions")]
+        transfer = source[source.index("async function submitManualResult"):source.index("watch([manualSource")]
         self.assertIn("confirm: true", transfer)
         self.assertNotIn("/magnet/offline", transfer)
         self.assertNotIn("/transfer?", transfer)

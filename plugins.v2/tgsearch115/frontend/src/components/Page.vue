@@ -255,47 +255,136 @@
         <v-alert v-if="versionMismatch" type="warning" variant="tonal" density="compact" class="mb-3">
           插件后端与前端资源版本不一致，请刷新 MoviePilot 插件资源缓存。
         </v-alert>
-        <v-alert v-if="manualSearchError" type="warning" variant="tonal" density="compact" class="mb-3">
-          搜索区域发生异常，已切换到安全模式。
-          <template #append><v-btn size="small" variant="text" @click="reloadManualSearch">重新加载搜索区域</v-btn></template>
-        </v-alert>
-        <div v-if="manualSearchError" class="manual-search-fallback" data-testid="manual-search-fallback">
-          <label for="tg115-fallback-keyword" class="fallback-label">搜索关键字（影片名 + 年份）</label>
-          <div class="fallback-toolbar">
+        <div class="manual-search-shell" data-testid="manual-search-root">
+          <div class="manual-filter-row mb-2" data-testid="manual-source-filter">
+            <span class="manual-filter-label">搜索范围</span>
+            <div class="manual-button-group">
+              <button
+                v-for="item in MANUAL_SOURCE_FILTERS"
+                :key="item.value"
+                type="button"
+                class="manual-filter-button"
+                :class="{ active: manualSource === item.value }"
+                @click="manualSource = item.value"
+              >{{ item.title }}</button>
+            </div>
+          </div>
+          <label for="tg115-manual-keyword" class="manual-input-label">搜索关键字（影片名 + 年份）</label>
+          <div class="manual-search-toolbar" data-testid="manual-search-controls">
             <input
-              id="tg115-fallback-keyword"
-              v-model="fallbackKeyword"
-              class="fallback-input"
+              id="tg115-manual-keyword"
+              v-model="manualKeyword"
+              class="manual-search-input"
               type="search"
               autocomplete="off"
-              @keyup.enter="fallbackSearch"
+              data-testid="manual-search-input"
+              @keyup.enter="runManualSearch"
             />
-            <button class="fallback-button" type="button" :disabled="fallbackSearching" @click="fallbackSearch">
-              {{ fallbackSearching ? '搜索中…' : '搜索' }}
-            </button>
+            <button
+              class="manual-search-button"
+              type="button"
+              data-testid="manual-search-button"
+              :disabled="manualSearching"
+              @click="runManualSearch"
+            >{{ manualSearching ? '搜索中…' : '搜索' }}</button>
           </div>
-          <div v-if="fallbackMessage" class="text-caption mt-2">{{ fallbackMessage }}</div>
-          <ul v-if="fallbackResults.length" class="fallback-results">
-            <li v-for="item in fallbackResults" :key="item.result_id">{{ item.title }}</li>
-          </ul>
+
+          <div class="manual-filter-row mt-3 mb-2" data-testid="manual-resource-filter">
+            <span class="manual-filter-label">资源</span>
+            <div class="manual-button-group">
+              <button
+                v-for="item in MANUAL_RESOURCE_FILTERS"
+                :key="item.value"
+                type="button"
+                class="manual-filter-button"
+                :class="{ active: manualResourceType === item.value }"
+                @click="setManualResourceType(item.value)"
+              >{{ item.title }}</button>
+            </div>
+            <span v-if="manualResults.length" class="manual-count">{{ manualFilteredResults.length }}/{{ manualResults.length }} 条</span>
+          </div>
+          <div v-if="manualResourceType !== 'all'" class="manual-filter-row mb-3" data-testid="manual-detail-filter">
+            <span class="manual-filter-label">{{ manualResourceType === 'magnet' ? '画质' : '网盘' }}</span>
+            <div class="manual-button-group">
+              <button
+                v-for="item in manualDetailFilters"
+                :key="item.value"
+                type="button"
+                class="manual-filter-button"
+                :class="{ active: manualDetailFilter === item.value }"
+                @click="manualDetailFilter = item.value"
+              >{{ item.title }}</button>
+            </div>
+          </div>
+
+          <div v-if="manualSourceSummary" class="manual-source-summary">{{ manualSourceSummary }}</div>
+          <div v-if="manualMessage" class="manual-message" :class="manualOk ? 'success' : 'error'">{{ manualMessage }}</div>
+          <div v-if="manualSearching" class="manual-loading" role="status" aria-live="polite">搜索中…</div>
+          <div v-else-if="manualFilteredResults.length" class="manual-result-grid" data-testid="manual-search-results">
+            <article v-for="item in manualFilteredResults" :key="item.result_id" class="manual-result-card">
+              <div class="manual-result-badges">
+                <span class="manual-badge">{{ manualPanLabel(item.pan_type) }}</span>
+                <span class="manual-badge">{{ manualSourceLabel(item.source) }}</span>
+                <span v-if="item.resolution !== 'unknown'" class="manual-badge">{{ manualQualityLabel(item) }}</span>
+                <span v-if="item.has_chinese_subtitle" class="manual-badge success">中文字幕</span>
+              </div>
+              <strong class="manual-result-title">{{ item.display_name || item.title }}</strong>
+              <div v-if="item.meta" class="manual-result-meta">{{ item.meta }}</div>
+              <div class="manual-result-text">{{ item.text || item.title }}</div>
+              <div class="manual-result-actions">
+                <button type="button" class="manual-link-button" @click="copyManualResult(item)">复制链接</button>
+                <button
+                  v-if="['115', 'magnet'].includes(item.pan_type)"
+                  type="button"
+                  class="manual-action-button"
+                  @click="openManualProcessDialog(item)"
+                >{{ item.pan_type === 'magnet' ? '离线到115' : '转存' }}</button>
+              </div>
+            </article>
+          </div>
+          <div v-else-if="manualSearched && !manualSearching" class="manual-empty-state">
+            {{ manualResults.length ? '当前筛选条件下没有资源，可切换筛选查看' : '所有可用来源均未找到符合条件的资源' }}
+          </div>
         </div>
-        <ManualSearch v-else :key="manualSearchKey" :plugin-id="PID" :api="props.api" />
         <div class="frontend-build-info text-caption text-medium-emphasis mt-2">
           前端构建 {{ frontendBuildId }} · {{ frontendBuildTime }}
         </div>
       </v-card-text>
     </v-card>
 
+    <v-dialog v-model="manualProcessDialog" max-width="520" persistent>
+      <v-card>
+        <v-card-title>确认正式操作</v-card-title>
+        <v-card-text>
+          <div class="text-body-2 mb-3">请选择对应的 MoviePilot 订阅。提交前仍会执行规则和媒体身份确认。</div>
+          <v-select
+            v-model="manualSubscribeId"
+            :items="manualSubscriptions"
+            item-title="label"
+            item-value="id"
+            label="MoviePilot 订阅"
+            variant="outlined"
+            density="comfortable"
+            hide-details
+          />
+        </v-card-text>
+        <v-card-actions class="px-6 pb-4">
+          <v-spacer />
+          <v-btn variant="text" :disabled="!!manualTransferring" @click="closeManualProcessDialog">取消</v-btn>
+          <v-btn color="primary" variant="flat" :disabled="!manualSubscribeId" :loading="!!manualTransferring" @click="submitManualResult">确认提交</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <v-snackbar v-model="snack" :color="snackColor" :timeout="2500" location="top">{{ snackText }}</v-snackbar>
   </div>
 </template>
 
 <script setup>
-import { computed, getCurrentInstance, onErrorCaptured, onMounted, onUnmounted, reactive, ref } from 'vue'
-import ManualSearch from './ManualSearch.vue'
+import { computed, getCurrentInstance, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 
-const FRONTEND_VERSION = '4.8.11'
-const FRONTEND_BUILD_ID = typeof __TG115_BUILD_ID__ === 'string' ? __TG115_BUILD_ID__ : 'v4.8.11'
+const FRONTEND_VERSION = '4.8.12'
+const FRONTEND_BUILD_ID = typeof __TG115_BUILD_ID__ === 'string' ? __TG115_BUILD_ID__ : 'v4.8.12'
 const FRONTEND_BUILD_TIME = typeof __TG115_BUILD_TIME__ === 'string' ? __TG115_BUILD_TIME__ : 'unknown'
 
 const props = defineProps({
@@ -304,35 +393,9 @@ const props = defineProps({
 })
 const emit = defineEmits(['close', 'back'])
 const instance = getCurrentInstance()
-const manualSearchKey = ref(0)
-const manualSearchError = ref(false)
-const fallbackKeyword = ref('')
-const fallbackSearching = ref(false)
-const fallbackMessage = ref('')
-const fallbackResults = ref([])
 const frontendVersion = FRONTEND_VERSION
 const frontendBuildId = FRONTEND_BUILD_ID
 const frontendBuildTime = FRONTEND_BUILD_TIME
-
-onErrorCaptured((_error, child) => {
-  const name = child?.type?.name || child?.type?.__name || ''
-  if (String(name).includes('ManualSearch')) {
-    manualSearchError.value = true
-    return false
-  }
-  return true
-})
-
-function reloadManualSearch() {
-  manualSearchError.value = false
-  manualSearchKey.value += 1
-}
-
-function normalizeFallbackResult(item, index) {
-  const value = item && typeof item === 'object' && !Array.isArray(item) ? item : {}
-  const title = String(value.display_name || value.title || '未命名资源').slice(0, 300)
-  return { result_id: `fallback-${index}`, title }
-}
 
 function unwrapApiResponse(response) {
   let value = response
@@ -345,24 +408,226 @@ function unwrapApiResponse(response) {
   return value
 }
 
-async function fallbackSearch() {
-  const value = String(fallbackKeyword.value || '').trim()
-  if (!value) { fallbackMessage.value = '请输入搜索关键字'; return }
-  if (!props.api?.get) { fallbackMessage.value = '搜索 API 未就绪'; return }
-  fallbackSearching.value = true
-  fallbackMessage.value = ''
+const MANUAL_CACHE_KEY = 'TgSearch115:manual-search:v2'
+const MANUAL_SOURCE_FILTERS = [
+  { title: '全部', value: 'all' }, { title: 'TG', value: 'tg' },
+  { title: '观影', value: 'site' }, { title: 'PanSou', value: 'pansou' },
+  { title: '聚影', value: 'juying' },
+]
+const MANUAL_RESOURCE_FILTERS = [
+  { title: '全部', value: 'all' }, { title: '磁力', value: 'magnet' }, { title: '网盘', value: 'pan' },
+]
+const MANUAL_MAGNET_FILTERS = [
+  { title: '全部', value: 'all' }, { title: '720P', value: '720p' },
+  { title: '1080P', value: '1080p' }, { title: '中字1080P', value: 'chs1080p' },
+  { title: '4K', value: '4k' }, { title: '中字4K', value: 'chs4k' },
+  { title: '原盘', value: 'remux' }, { title: '未知', value: 'unknown' },
+]
+const MANUAL_PAN_FILTERS = [
+  { title: '全部', value: 'all' }, { title: '迅雷网盘', value: 'xunlei' },
+  { title: '百度网盘', value: 'baidu' }, { title: '夸克网盘', value: 'quark' },
+  { title: '天翼网盘', value: 'cloud189' }, { title: '115网盘', value: '115' },
+  { title: 'UC网盘', value: 'uc' }, { title: '阿里网盘', value: 'aliyun' },
+  { title: '123网盘', value: '123' }, { title: '其他', value: 'other' },
+]
+const manualKeyword = ref('')
+const manualSource = ref('all')
+const manualResourceType = ref('all')
+const manualDetailFilter = ref('all')
+const manualSearching = ref(false)
+const manualSearched = ref(false)
+const manualResults = ref([])
+const manualSourceStatus = ref({})
+const manualSourceStats = ref({})
+const manualMessage = ref('')
+const manualOk = ref(false)
+const manualProcessDialog = ref(false)
+const manualSelectedResult = ref(null)
+const manualSubscriptions = ref([])
+const manualSubscribeId = ref(null)
+const manualTransferring = ref('')
+const manualCacheAvailable = ref(true)
+const manualDetailFilters = computed(() => manualResourceType.value === 'magnet' ? MANUAL_MAGNET_FILTERS : MANUAL_PAN_FILTERS)
+const manualFilteredResults = computed(() => {
   try {
-    const data = unwrapApiResponse(await props.api.get(`plugin/${PID.value}/search?keyword=${encodeURIComponent(value)}&source=all`))
-    const sourceItems = Array.isArray(data?.items) ? data.items : Array.isArray(data?.results) ? data.results : []
-    fallbackResults.value = sourceItems.map(normalizeFallbackResult)
-    fallbackMessage.value = data?.success === false ? '搜索失败，可重试' : `找到 ${fallbackResults.value.length} 条资源`
-  } catch (error) {
-    fallbackResults.value = []
-    fallbackMessage.value = safeRequestError(error, '搜索请求失败')
-  } finally {
-    fallbackSearching.value = false
+    return manualResults.value.filter((item) => {
+      if (manualResourceType.value === 'magnet' && item.resource_kind !== 'magnet') return false
+      if (manualResourceType.value === 'pan' && item.resource_kind !== 'pan') return false
+      if (manualDetailFilter.value === 'all') return true
+      if (manualResourceType.value === 'magnet') return item.quality_class === manualDetailFilter.value
+      if (manualResourceType.value === 'pan') return item.pan_type === manualDetailFilter.value
+      return true
+    })
+  } catch {
+    return []
+  }
+})
+const manualSourceSummary = computed(() => {
+  try {
+    return Object.entries(manualSourceStatus.value || {}).map(([name, state]) => {
+      const label = manualSourceLabel(name)
+      if (state?.status === 'success' || state?.status === 'partial_success') return `${label} ${Number(state.count || 0)} 条`
+      if (state?.status === 'disabled') return `${label} 已关闭`
+      return `${label} ${String(state?.message || '请求失败')}`
+    }).join(' · ')
+  } catch {
+    return ''
+  }
+})
+
+function manualSafeText(value, fallback = '') {
+  if (value === null || value === undefined) return fallback
+  try { return String(value) } catch { return fallback }
+}
+
+function normalizeManualResult(value, index) {
+  const item = value && typeof value === 'object' && !Array.isArray(value) ? value : { title: manualSafeText(value) }
+  const panType = manualSafeText(item.pan_type, 'other').toLowerCase() || 'other'
+  const resourceKind = ['magnet', 'pan'].includes(item.resource_kind) ? item.resource_kind : panType === 'magnet' ? 'magnet' : 'pan'
+  const title = manualSafeText(item.title || item.display_name, '未命名资源').slice(0, 500)
+  const resolution = manualSafeText(item.resolution, 'unknown').toLowerCase() || 'unknown'
+  const qualityClass = manualSafeText(item.quality_class, 'unknown').toLowerCase() || 'unknown'
+  return {
+    result_id: `manual-${index}-${manualSafeText(item.source, 'unknown')}-${panType}`,
+    title,
+    display_name: manualSafeText(item.display_name || title, title).slice(0, 500),
+    source: manualSafeText(item.source, 'unknown'),
+    upstream_source: manualSafeText(item.upstream_source),
+    pan_type: panType,
+    resource_kind: resourceKind,
+    text: manualSafeText(item.text || title, title).slice(0, 2000),
+    meta: manualSafeText(item.meta).slice(0, 500),
+    resolution,
+    quality_class: qualityClass,
+    has_chinese_subtitle: item.has_chinese_subtitle === true,
+    receive_code: manualSafeText(item.receive_code).slice(0, 16),
+    share_url: manualSafeText(item.share_url),
   }
 }
+
+function manualSessionStore() {
+  if (!manualCacheAvailable.value) return null
+  try { return window.sessionStorage } catch { manualCacheAvailable.value = false; return null }
+}
+function persistManualSession() {
+  if (!manualSearched.value) return
+  try {
+    manualSessionStore()?.setItem(MANUAL_CACHE_KEY, JSON.stringify({
+      keyword: manualKeyword.value, source: manualSource.value,
+      resourceType: manualResourceType.value, detailFilter: manualDetailFilter.value,
+      results: manualResults.value.slice(0, 500), sourceStatus: manualSourceStatus.value,
+      sourceStats: manualSourceStats.value, message: manualMessage.value, ok: manualOk.value,
+    }))
+  } catch { manualCacheAvailable.value = false }
+}
+function restoreManualSession() {
+  try {
+    const raw = manualSessionStore()?.getItem(MANUAL_CACHE_KEY)
+    if (!raw) return
+    const cached = JSON.parse(raw)
+    if (!cached || !Array.isArray(cached.results)) return
+    manualKeyword.value = manualSafeText(cached.keyword)
+    manualSource.value = manualSafeText(cached.source, 'all')
+    manualResourceType.value = manualSafeText(cached.resourceType, 'all')
+    manualDetailFilter.value = manualSafeText(cached.detailFilter, 'all')
+    manualResults.value = cached.results.slice(0, 500).map(normalizeManualResult)
+    manualSourceStatus.value = cached.sourceStatus && typeof cached.sourceStatus === 'object' ? cached.sourceStatus : {}
+    manualSourceStats.value = cached.sourceStats && typeof cached.sourceStats === 'object' ? cached.sourceStats : {}
+    manualMessage.value = manualSafeText(cached.message)
+    manualOk.value = cached.ok === true
+    manualSearched.value = true
+  } catch {
+    try { manualSessionStore()?.removeItem(MANUAL_CACHE_KEY) } catch { manualCacheAvailable.value = false }
+  }
+}
+function setManualResourceType(value) {
+  manualResourceType.value = value
+  manualDetailFilter.value = 'all'
+}
+
+async function runManualSearch() {
+  const value = manualSafeText(manualKeyword.value).trim()
+  if (!value) { manualMessage.value = '请输入搜索关键字'; manualOk.value = false; return }
+  if (!props.api?.get) { manualMessage.value = '搜索 API 未就绪'; manualOk.value = false; return }
+  manualSearching.value = true
+  manualSearched.value = true
+  manualMessage.value = ''
+  manualResults.value = []
+  manualSourceStatus.value = {}
+  manualSourceStats.value = {}
+  try {
+    const data = unwrapApiResponse(await props.api.get(`plugin/${PID.value}/search?keyword=${encodeURIComponent(value)}&source=${manualSource.value}`))
+    if (!data || typeof data !== 'object') throw new TypeError('invalid-response')
+    const sourceItems = Array.isArray(data.items) ? data.items : Array.isArray(data.results) ? data.results : Array.isArray(data.resources) ? data.resources : []
+    manualResults.value = sourceItems.map(normalizeManualResult)
+    manualSourceStatus.value = data.source_status && typeof data.source_status === 'object' ? data.source_status : {}
+    manualSourceStats.value = data.source_stats && typeof data.source_stats === 'object' ? data.source_stats : {}
+    manualOk.value = data.success !== false
+    manualMessage.value = manualSafeText(data.warning || data.message || (manualOk.value ? `找到 ${manualResults.value.length} 条资源` : '搜索失败，可重试'))
+  } catch (error) {
+    manualResults.value = []
+    manualOk.value = false
+    manualMessage.value = safeRequestError(error, '搜索请求失败，可重试')
+  } finally {
+    manualSearching.value = false
+    persistManualSession()
+  }
+}
+
+function manualSourceLabel(value) { return ({ tg: 'TG', site: '观影', pansou: 'PanSou', juying: '聚影' })[value] || value || '未知' }
+function manualPanLabel(value) { return ({ '115': '115网盘', quark: '夸克网盘', baidu: '百度网盘', aliyun: '阿里网盘', xunlei: '迅雷网盘', cloud189: '天翼网盘', uc: 'UC网盘', '123': '123网盘', magnet: '磁力' })[value] || '其他' }
+function manualQualityLabel(item) { return ({ '4k': '4K', '1080p': '1080P', '720p': '720P' })[item?.resolution] || '未知' }
+function manualFullUrl(item) {
+  let url = manualSafeText(item?.share_url)
+  if (item?.pan_type === '115' && item?.receive_code && !/[?&](password|receive_code|pwd)=/.test(url)) url += `${url.includes('?') ? '&' : '?'}password=${item.receive_code}`
+  return url
+}
+async function copyManualResult(item) {
+  try { await navigator.clipboard.writeText(manualFullUrl(item)); showSnack('已复制链接', 'success') }
+  catch { showSnack('复制失败，请手动复制', 'error') }
+}
+async function loadManualSubscriptions() {
+  if (!props.api?.get) return
+  try {
+    const data = unwrapApiResponse(await props.api.get(`plugin/${PID.value}/manual/subscriptions`))
+    manualSubscriptions.value = Array.isArray(data?.items) ? data.items : []
+  } catch { manualSubscriptions.value = [] }
+}
+async function openManualProcessDialog(item) {
+  manualSelectedResult.value = item
+  manualSubscribeId.value = null
+  if (!manualSubscriptions.value.length) await loadManualSubscriptions()
+  manualProcessDialog.value = true
+}
+function closeManualProcessDialog() {
+  manualProcessDialog.value = false
+  manualSelectedResult.value = null
+  manualSubscribeId.value = null
+}
+async function submitManualResult() {
+  const item = manualSelectedResult.value
+  if (!item || !manualSubscribeId.value || !props.api?.post) return
+  manualTransferring.value = item.result_id
+  try {
+    const data = unwrapApiResponse(await props.api.post(`plugin/${PID.value}/manual/process`, {
+      subscribe_id: manualSubscribeId.value,
+      confirm: true,
+      candidate: {
+        share_url: manualFullUrl(item), receive_code: item.receive_code || '',
+        title: item.title || item.display_name || '', text: item.text || '',
+        pan_type: item.pan_type || '', source: item.source || '',
+      },
+    }))
+    const success = data?.success === true || data?.code === 0
+    showSnack(manualSafeText(data?.message, success ? '任务提交成功' : '提交失败'), success ? 'success' : 'error')
+    if (success) closeManualProcessDialog()
+  } catch (error) {
+    showSnack(safeRequestError(error, '提交请求失败，可重试'), 'error')
+  } finally { manualTransferring.value = '' }
+}
+
+watch([manualSource, manualResourceType, manualDetailFilter], persistManualSession)
+restoreManualSession()
 
 function closePage() {
   try {
@@ -636,13 +901,32 @@ onUnmounted(() => {
   height: auto;
   overflow: visible;
 }
-.manual-search-fallback { display:block; width:100%; min-width:0; min-height:190px; }
-.fallback-label { display:block; margin-bottom:8px; font-size:.875rem; }
-.fallback-toolbar { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:8px; width:100%; }
-.fallback-input { display:block; width:100%; min-width:0; min-height:44px; padding:8px 12px; border:1px solid currentColor; border-radius:6px; background:transparent; color:inherit; }
-.fallback-button { min-height:44px; padding:8px 20px; border:0; border-radius:6px; background:rgb(var(--v-theme-primary)); color:rgb(var(--v-theme-on-primary)); cursor:pointer; }
-.fallback-button:disabled { opacity:.6; cursor:default; }
-.fallback-results { margin:14px 0 0; padding-left:22px; }
+.manual-search-shell { display:block; visibility:visible; width:100%; min-width:0; min-height:220px; height:auto; overflow:visible; }
+.manual-input-label { display:block; margin:10px 0 6px; font-size:.875rem; }
+.manual-search-toolbar { display:grid; grid-template-columns:minmax(0, 1fr) auto; gap:8px; width:100%; min-width:0; }
+.manual-search-input { display:block; width:100%; min-width:0; min-height:44px; padding:8px 12px; border:1px solid rgba(var(--v-border-color),.8); border-radius:6px; background:transparent; color:inherit; }
+.manual-search-button,.manual-action-button { min-height:44px; padding:8px 20px; border:0; border-radius:6px; background:rgb(var(--v-theme-primary)); color:rgb(var(--v-theme-on-primary)); cursor:pointer; }
+.manual-search-button:disabled,.manual-action-button:disabled { opacity:.6; cursor:default; }
+.manual-filter-row { display:flex; align-items:center; gap:8px; min-width:0; flex-wrap:wrap; }
+.manual-filter-label { flex:0 0 auto; font-size:.75rem; color:rgba(var(--v-theme-on-surface),.62); }
+.manual-button-group { display:flex; flex-wrap:wrap; gap:4px; min-width:0; }
+.manual-filter-button,.manual-link-button { min-height:32px; padding:5px 10px; border:1px solid rgba(var(--v-border-color),.7); border-radius:5px; background:transparent; color:inherit; cursor:pointer; }
+.manual-filter-button.active { border-color:rgb(var(--v-theme-primary)); background:rgba(var(--v-theme-primary),.13); color:rgb(var(--v-theme-primary)); }
+.manual-count,.manual-badge { font-size:.72rem; padding:2px 7px; border-radius:10px; background:rgba(var(--v-theme-primary),.12); }
+.manual-badge.success { color:rgb(var(--v-theme-success)); background:rgba(var(--v-theme-success),.12); }
+.manual-source-summary,.manual-message { margin-top:10px; padding:8px 10px; border-radius:6px; font-size:.8rem; }
+.manual-source-summary { border:1px solid rgba(var(--v-border-color),.6); }
+.manual-message.success { color:rgb(var(--v-theme-success)); }
+.manual-message.error { color:rgb(var(--v-theme-error)); }
+.manual-loading,.manual-empty-state { padding:28px 12px; text-align:center; color:rgba(var(--v-theme-on-surface),.62); }
+.manual-result-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:10px; margin-top:12px; }
+.manual-result-card { display:flex; flex-direction:column; gap:7px; min-width:0; padding:12px; border:1px solid rgba(var(--v-border-color),.7); border-radius:8px; }
+.manual-result-badges,.manual-result-actions { display:flex; flex-wrap:wrap; align-items:center; gap:5px; }
+.manual-result-title,.manual-result-meta,.manual-result-text { overflow-wrap:anywhere; }
+.manual-result-meta { color:rgb(var(--v-theme-primary)); font-size:.76rem; }
+.manual-result-text { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; font-size:.78rem; color:rgba(var(--v-theme-on-surface),.66); }
+.manual-result-actions { justify-content:space-between; margin-top:auto; padding-top:5px; }
+.manual-link-button { border:0; }
 .frontend-build-info { overflow-wrap:anywhere; }
 .result-card {
   min-height: 180px;
@@ -690,8 +974,9 @@ onUnmounted(() => {
 }
 @media (max-width: 600px) {
   .manual-search-body { min-height:280px; padding:16px; }
-  .fallback-toolbar { grid-template-columns:minmax(0, 1fr); }
-  .fallback-button { width:100%; }
+  .manual-search-toolbar { grid-template-columns:minmax(0, 1fr); }
+  .manual-search-button { width:100%; }
+  .manual-result-grid { grid-template-columns:minmax(0,1fr); }
   .filter-row { flex-wrap:wrap; }
   .filter-toggle { max-width:100%; }
 }
