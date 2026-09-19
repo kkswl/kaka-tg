@@ -249,7 +249,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.8.13"
+    plugin_version = "4.8.15"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -300,8 +300,8 @@ class TgSearch115(_PluginBase):
     _jitter_minutes = 10
     _source_item_delay_min = 5.0
     _source_item_delay_max = 10.0
-    _source_request_timeout_seconds = 30.0
-    _auto_search_budget_seconds = 180.0
+    _source_request_timeout_seconds = 60.0
+    _auto_search_budget_seconds = 300.0
     _cms_timeout_hours = 12
     _magnet_download_mode = "direct_115"
     _direct_timeout_hours = 12
@@ -332,6 +332,17 @@ class TgSearch115(_PluginBase):
             config = self.get_data(CONFIG_KEY) or {}
         if not isinstance(config, dict):
             config = {}
+        # v4.8.13/v4.8.15: 移除历史版本引入的过激默认值，让新默认值（更宽松）自动生效。
+        # 只移除与任一历史默认值相等的字段，保留用户有意自定义的值。
+        _legacy_old_defaults = {
+            "auto_search_budget_seconds": (60, 180),
+            "source_request_timeout_seconds": (20, 30),
+            "source_failure_threshold": (3,),
+            "source_cooldown_minutes": (60,),
+        }
+        for _key, _old_vals in _legacy_old_defaults.items():
+            if config.get(_key) in _old_vals:
+                config.pop(_key, None)
         # Persist a complete migrated shape, not merely runtime fallbacks.  This
         # lets a host/API read the same timeout controls that are active after
         # upgrades, while preserving all existing user-provided values.
@@ -397,10 +408,10 @@ class TgSearch115(_PluginBase):
             self._safe_float(config.get("source_item_delay_max"), 10.0),
         )
         self._source_request_timeout_seconds = min(
-            90.0, max(5.0, self._safe_float(config.get("source_request_timeout_seconds"), 30.0))
+            120.0, max(5.0, self._safe_float(config.get("source_request_timeout_seconds"), 60.0))
         )
         self._auto_search_budget_seconds = min(
-            300.0, max(15.0, self._safe_float(config.get("auto_search_budget_seconds"), 180.0))
+            600.0, max(15.0, self._safe_float(config.get("auto_search_budget_seconds"), 300.0))
         )
         cache_hours = min(6, max(1, self._safe_int(config.get("search_cache_hours"), 2)))
         failure_threshold = min(10, max(1, self._safe_int(config.get("source_failure_threshold"), 5)))
@@ -4150,8 +4161,8 @@ class TgSearch115(_PluginBase):
             "jitter_minutes": 10,
             "source_item_delay_min": 5,
             "source_item_delay_max": 10,
-            "source_request_timeout_seconds": 30,
-            "auto_search_budget_seconds": 180,
+            "source_request_timeout_seconds": 60,
+            "auto_search_budget_seconds": 300,
             "search_cache_hours": 2,
             "source_failure_threshold": 5,
             "source_cooldown_minutes": 5,

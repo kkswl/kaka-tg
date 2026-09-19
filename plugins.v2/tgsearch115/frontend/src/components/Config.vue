@@ -68,7 +68,6 @@
     <v-card variant="outlined" rounded="lg" class="tg115-card">
       <v-tabs v-model="activeTab" color="primary" density="comfortable" class="px-2">
         <v-tab value="transfer" prepend-icon="mdi-cloud-download-outline">手动转存</v-tab>
-        <v-tab value="search" prepend-icon="mdi-magnify">手动搜索</v-tab>
         <v-tab value="channel" prepend-icon="mdi-bullhorn-outline">TG 频道模块</v-tab>
         <v-tab value="site" prepend-icon="mdi-movie-search-outline">观影</v-tab>
         <v-tab value="pansou" prepend-icon="mdi-database-search-outline">PanSou</v-tab>
@@ -112,86 +111,6 @@
             class="mt-3"
             :text="transferResult.message"
           />
-        </v-window-item>
-
-        <!-- ====== Tab：手动搜索 ====== -->
-        <v-window-item value="search" class="pa-4">
-          <div class="section-label mb-2">手动搜索（TG 频道 + 观影）</div>
-          <ManualSearch :plugin-id="props.pluginId" :api="props.api" />
-          <div v-if="false">
-          <div class="d-flex align-center ga-2 mb-3">
-            <span class="text-caption text-medium-emphasis">来源</span>
-            <v-btn-toggle v-model="searchSource" mandatory color="primary" density="compact" divided>
-              <v-btn value="all" size="small">全部</v-btn>
-              <v-btn value="tg" size="small">TG</v-btn>
-              <v-btn value="site" size="small">观影</v-btn>
-              <v-btn value="juying" size="small">聚影</v-btn>
-            </v-btn-toggle>
-          </div>
-          <div class="d-flex ga-2 mb-3">
-            <v-text-field
-              v-model="searchKeyword"
-              label="搜索关键字（影片名 + 年份）"
-              variant="outlined"
-              density="comfortable"
-              hide-details
-              @keyup.enter="doSearch"
-            />
-            <v-btn color="primary" variant="flat" :loading="searchLoading" prepend-icon="mdi-magnify" @click="doSearch">搜索</v-btn>
-          </div>
-          <div class="filter-row mb-2">
-            <span class="filter-label">资源</span>
-            <v-btn-toggle v-model="resourceFilter" mandatory color="primary" density="compact" divided class="filter-toggle">
-              <v-btn v-for="item in RESOURCE_FILTERS" :key="item.value" :value="item.value" size="small">{{ item.title }}</v-btn>
-            </v-btn-toggle>
-          </div>
-          <div class="filter-row mb-3">
-            <span class="filter-label">画质</span>
-            <v-btn-toggle v-model="qualityFilter" mandatory color="primary" density="compact" divided class="filter-toggle">
-              <v-btn v-for="item in QUALITY_FILTERS" :key="item.value" :value="item.value" size="small">{{ item.title }}</v-btn>
-            </v-btn-toggle>
-            <v-chip v-if="searchResults.length" size="x-small" variant="tonal" color="primary">
-              {{ filteredSearchResults.length }}/{{ searchResults.length }} 条
-            </v-chip>
-          </div>
-          <div v-if="searchLoading" class="empty-state">
-            <v-progress-circular indeterminate size="40" width="3" color="primary" class="mb-3" />
-            <div class="text-body-2">正在搜索...</div>
-          </div>
-          <div v-else-if="filteredSearchResults.length" class="channel-list">
-            <v-card v-for="(r, i) in filteredSearchResults.slice(0, displayLimit)" :key="r.share_url || i" variant="outlined" rounded="lg" class="channel-item mb-2">
-              <div class="px-3 pt-2 pb-1">
-                <div class="d-flex align-start">
-                  <v-icon icon="mdi-file-video-outline" :color="r.pan_type === '115' ? 'success' : 'primary'" class="mr-3 mt-1" />
-                  <div class="channel-meta flex-grow-1">
-                    <div class="d-flex align-center flex-wrap ga-1">
-                      <span class="text-body-2 font-weight-medium">{{ r.display_name || r.title }}</span>
-                      <v-chip size="x-small" :color="panColor(r.pan_type)" variant="tonal" label>{{ panLabel(r.pan_type) }}</v-chip>
-                    </div>
-                    <div class="text-caption text-medium-emphasis mt-1" style="white-space: pre-wrap; max-height: 4.5em; overflow: hidden;">{{ r.text || r.title }}</div>
-                    <div class="text-caption text-medium-emphasis mt-1">{{ r.channel }}<span v-if="r.pub_date"> · {{ r.pub_date }}</span></div>
-                  </div>
-                  <div class="d-flex flex-column align-end ml-2 mt-1">
-                    <v-btn v-if="r.pan_type === '115'" color="success" variant="tonal" size="small" prepend-icon="mdi-cloud-download" :loading="transferringIndex === i" @click="transferFromSearch(r, i)">转存</v-btn>
-                    <v-btn v-else-if="r.pan_type === 'magnet'" color="deep-purple" variant="tonal" size="small" prepend-icon="mdi-magnet-on" :loading="transferringIndex === i" @click="transferFromSearch(r, i)">离线到115</v-btn>
-                    <v-btn v-else variant="text" size="small" prepend-icon="mdi-content-copy" @click="copyLink(r)">复制链接</v-btn>
-                  </div>
-                </div>
-              </div>
-            </v-card>
-          </div>
-          <div v-if="filteredSearchResults.length > displayLimit" class="text-center mt-3 mb-2">
-            <v-btn variant="text" color="primary" size="small" @click="loadMoreResults">
-              加载更多
-              <v-icon icon="mdi-chevron-right" size="small" class="ml-1" style="transform: rotate(90deg);" />
-            </v-btn>
-          </div>
-          <div v-else-if="searched && !searchLoading" class="empty-state">
-            <v-icon icon="mdi-magnify-close" size="48" class="mb-2" />
-            <div class="text-body-2">未找到资源</div>
-            <div class="text-caption text-medium-emphasis mt-1">提示：TG 用片名搜全历史；观影需在「插件设置」配置 app_auth</div>
-          </div>
-          </div>
         </v-window-item>
 
         <!-- ====== Tab 2：TG 频道模块 ====== -->
@@ -331,8 +250,8 @@
             <v-col cols="6" md="4"><v-text-field v-model="config.tg_page_delay_max" label="TG 最大间隔（秒）" type="number" step="0.1" min="0.2" variant="outlined" density="compact" hide-details /></v-col>
             <v-col cols="6" md="3"><v-text-field v-model="config.source_item_delay_min" label="订阅最小间隔（秒）" type="number" min="0" variant="outlined" density="compact" hide-details /></v-col>
             <v-col cols="6" md="3"><v-text-field v-model="config.source_item_delay_max" label="订阅最大间隔（秒）" type="number" min="0" variant="outlined" density="compact" hide-details /></v-col>
-            <v-col cols="6" md="3"><v-text-field v-model="config.source_request_timeout_seconds" label="单来源超时（秒）" type="number" min="5" max="60" variant="outlined" density="compact" hide-details /></v-col>
-            <v-col cols="6" md="3"><v-text-field v-model="config.auto_search_budget_seconds" label="单订阅搜索预算（秒）" type="number" min="15" max="180" variant="outlined" density="compact" hide-details /></v-col>
+            <v-col cols="6" md="3"><v-text-field v-model="config.source_request_timeout_seconds" label="单来源超时（秒）" type="number" min="5" max="120" variant="outlined" density="compact" hide-details /></v-col>
+            <v-col cols="6" md="3"><v-text-field v-model="config.auto_search_budget_seconds" label="单订阅搜索预算（秒）" type="number" min="15" max="600" variant="outlined" density="compact" hide-details /></v-col>
             <v-col cols="6" md="3"><v-text-field v-model="config.source_failure_threshold" label="熔断失败次数" type="number" min="1" max="10" variant="outlined" density="compact" hide-details /></v-col>
             <v-col cols="6" md="3"><v-select v-model="config.source_cooldown_minutes" :items="cooldownOptions" label="来源冷却" variant="outlined" density="compact" hide-details /></v-col>
             <v-col cols="12" md="6" class="config-switch-row"><span class="text-body-2">转存成功通知</span><v-switch v-model="config.notify_success" color="primary" hide-details density="compact" /></v-col>
@@ -629,8 +548,8 @@ const DEFAULTS = {
   jitter_minutes: 10,
   source_item_delay_min: 5,
   source_item_delay_max: 10,
-  source_request_timeout_seconds: 20,
-  auto_search_budget_seconds: 60,
+  source_request_timeout_seconds: 60,
+  auto_search_budget_seconds: 300,
   search_cache_hours: 2,
   source_failure_threshold: 5,
   source_cooldown_minutes: 5,

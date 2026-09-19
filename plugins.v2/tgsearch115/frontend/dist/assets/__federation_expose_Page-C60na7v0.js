@@ -159,7 +159,7 @@ const _sfc_main = {
   emits: ["close", "back"],
   setup(__props, { emit: __emit }) {
     const FRONTEND_BUILD_ID = "v4.8.12-inline-manual-search" ;
-    const FRONTEND_BUILD_TIME = "2026-09-12T11:27:24.475Z" ;
+    const FRONTEND_BUILD_TIME = "2026-09-19T09:02:45.667Z" ;
     const props = __props;
     const emit = __emit;
     const instance = getCurrentInstance();
