@@ -249,7 +249,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.8.12"
+    plugin_version = "4.8.13"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -300,8 +300,8 @@ class TgSearch115(_PluginBase):
     _jitter_minutes = 10
     _source_item_delay_min = 5.0
     _source_item_delay_max = 10.0
-    _source_request_timeout_seconds = 20.0
-    _auto_search_budget_seconds = 60.0
+    _source_request_timeout_seconds = 30.0
+    _auto_search_budget_seconds = 180.0
     _cms_timeout_hours = 12
     _magnet_download_mode = "direct_115"
     _direct_timeout_hours = 12
@@ -397,10 +397,10 @@ class TgSearch115(_PluginBase):
             self._safe_float(config.get("source_item_delay_max"), 10.0),
         )
         self._source_request_timeout_seconds = min(
-            60.0, max(5.0, self._safe_float(config.get("source_request_timeout_seconds"), 20.0))
+            90.0, max(5.0, self._safe_float(config.get("source_request_timeout_seconds"), 30.0))
         )
         self._auto_search_budget_seconds = min(
-            180.0, max(15.0, self._safe_float(config.get("auto_search_budget_seconds"), 60.0))
+            300.0, max(15.0, self._safe_float(config.get("auto_search_budget_seconds"), 180.0))
         )
         cache_hours = min(6, max(1, self._safe_int(config.get("search_cache_hours"), 2)))
         failure_threshold = min(10, max(1, self._safe_int(config.get("source_failure_threshold"), 5)))
@@ -1816,8 +1816,8 @@ class TgSearch115(_PluginBase):
                         source_report.mark(source, "timeout")
                     if self._source_health:
                         self._source_health.record(source, "timeout", elapsed, len(source_hits))
-                    if self._source_breaker:
-                        self._source_breaker.failure(source, "request timeout")
+                    # 超时不触发熔断器：PanSou/TG 等来源响应慢是常态，
+                    # 只有 403/429 限流才应触发冷却，避免正常慢请求导致来源被长期封禁
                     logger.warning(
                         "【TG115】%s 请求超过 %.0f 秒，已释放订阅队列%s",
                         source, call_timeout,
@@ -4150,11 +4150,11 @@ class TgSearch115(_PluginBase):
             "jitter_minutes": 10,
             "source_item_delay_min": 5,
             "source_item_delay_max": 10,
-            "source_request_timeout_seconds": 20,
-            "auto_search_budget_seconds": 60,
+            "source_request_timeout_seconds": 30,
+            "auto_search_budget_seconds": 180,
             "search_cache_hours": 2,
-            "source_failure_threshold": 3,
-            "source_cooldown_minutes": 60,
+            "source_failure_threshold": 5,
+            "source_cooldown_minutes": 5,
             "tg_concurrency": 2,
             "tg_page_delay_min": 0.8,
             "tg_page_delay_max": 1.5,
