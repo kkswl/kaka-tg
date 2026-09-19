@@ -166,12 +166,18 @@ class PanSouClient:
             return []
 
     def _request(self, method: str, url: str, retry: bool = True, **kwargs):
-        """Retry only rate limiting and transient server failures."""
+        """Retry only rate limiting and transient server failures.
+
+        Gateway timeouts (504) fail fast: the upstream aggregator is slow,
+        so an immediate retry almost always times out again and only holds
+        the bounded source lock longer.
+        """
         last = None
         attempts = 3 if retry else 1
+        retryable = (429, 500, 502, 503)
         for attempt in range(attempts):
             last = self._client().request(method, url, headers=self._headers(), **kwargs)
-            if last.status_code not in (429, 500, 502, 503, 504) or attempt >= attempts - 1:
+            if last.status_code not in retryable or attempt >= attempts - 1:
                 return last
             retry_after = str(last.headers.get("Retry-After") or "").strip()
             delay = self._retry_delay(retry_after, attempt)

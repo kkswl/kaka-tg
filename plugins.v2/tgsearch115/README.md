@@ -169,3 +169,59 @@ tgsearch115/
 3. **资源站（可选）**：「插件设置」Tab 开启资源站，填入 `app_auth`（登录站点后从浏览器 Cookie 复制），点「测试连通」。
 4. 开启插件，新增一个订阅，观察日志（关键字 `【TG115】`）。
 5. 更新插件后若 UI 没变，**Ctrl+F5 强制刷新**或重启 MP（`remoteEntry.js` 无 cache-buster）。
+
+---
+
+## 八、常见问题排查
+
+### PanSou 搜不到资源（来源熔断 / 504）
+
+**现象**：日志中 pansou 的 `returned_count` 始终为 0，反复出现以下两类告警之一：
+
+```
+【TG115】PanSou HTTP 504，退避 1.0 秒后重试
+【TG115】pansou 来源熔断中，剩余 N 秒，本轮跳过
+【TG115】pansou 请求超过 60 秒，已释放订阅队列
+【TG115】pansou 上一请求仍在结束中，本轮跳过避免并发
+```
+
+**根因链**（2026-09-19 实际排查记录）：
+
+1. PanSou 聚合服务（默认 `http://192.168.1.15:8888`）偶发上游超时，`/api/search` 返回 **504**。
+2. `pansou_scraper.py` 旧版对 504 重试 3 次 + 退避，单次搜索最长占 60 秒，期间 `BoundedSourceRunner` 并发锁被占满，后续轮次报「上一请求仍在结束中，本轮跳过」。
+3. 连续失败达到阈值（默认 3 次）后，`SourceCircuitBreaker`（`runtime_control.py`）将 pansou 标记为熔断，冷却 **3600 秒（1 小时）**。冷却期内每一轮搜索直接 `allow()` 返回 False、跳过、不发请求——**即使 PanSou 服务早已恢复，插件仍在干等冷却到期**。
+
+**排查步骤**：
+
+1. **先确认 PanSou 服务本身是否正常**（这是根因排查的第一步）：
+   ```bash
+   curl -w "health: HTTP %{http_code}, %{time_total}s\n" --max-time 10 "http://192.168.1.15:8888/api/health"
+   curl -w "search: HTTP %{http_code}, %{time_total}s\n" --max-time 30 "http://192.168.1.15:8888/api/search?kw=test"
+   ```
+   - `/api/health` 返回 200 但 `/api/search` 30 秒无响应 → PanSou 上游聚合源卡死，**重启 PanSou 服务**即可。
+   - `/api/search` 秒回 200 + JSON → 服务正常，问题在插件侧熔断冷却（见下）。
+
+2. **PanSou 真实 API 对照**（PanSou 是 Vue SPA，无 openapi.json，接口写在前端 JS bundle 里）：
+   - 搜索：`GET /api/search`，参数 `kw`（关键词）+ `cloud_types`（逗号分隔，如 `115,magnet`）+ 可选 `refresh=true`
+   - 健康检查：`GET /api/health`
+   - 认证：`GET /api/auth/verify`（若 PanSou 开启了登录鉴权，需在插件配置 `pansou_token`）
+   - 插件调用方式见 `pansou_scraper.py` 的 `PanSouClient.search()`，默认 `cloud_types=115,magnet`，与 PanSou 真实接口一致。
+
+3. **解除熔断**：熔断状态只存内存，**重启 MoviePilot / 重新加载插件 / 保存一次插件设置**（触发 `init_plugin`）即可清零。
+
+**已实施的代码修复**（v4.8.x）：
+
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| 熔断自动恢复 | `__init__.py` 搜索主循环 `allow()` 跳过分支 | pansou 熔断时先做一次轻量 `health_check`（实测 0.02 秒）；服务已恢复则调 `success()` 自动解除熔断并继续本轮搜索，不再干等冷却到期。其他来源不受影响。 |
+| 504 fail-fast | `pansou_scraper.py` `_request()` | 504（网关超时）从可重试集合移除，现在只在 429/500/502/503 重试。504 立即返回失败，尽快释放并发锁、尽快记入熔断器，避免长时间占锁拖累后续轮次。 |
+
+**验证**：修复后触发搜索，预期日志出现 `PanSou 健康检查通过，已自动解除熔断，本轮恢复搜索`，随后 pansou 正常返回资源（`returned_count > 0`）。
+
+### 隐私说明：115 Cookie 不会被上传到第三方
+
+- 115 Cookie **只发给 `*.115.com` 官方域名**（转存 `share_snap`/`share_receive`、磁力离线 `clouddownload.115.com`），这是网盘功能必需的鉴权。
+- 资源站（`site_scraper.py`）使用**独立的 urllib + http.cookiejar** 会话，只带 `app_auth` + PoW cookie，**不携带 115 Cookie**。
+- CMS 客户端（`cms_client.py`）的 httpx client 不带任何 Cookie header，body 只含磁力链接。
+- 本地持久化的任务记录经 `cms_tasks.py` 的 `_safe_label()` 主动脱敏（URL/cookie/token/api_key/authorization → `[已脱敏]`）。
+- 配置升级迁移（`__init__.py` `init_plugin` 内 `_legacy_old_defaults`）是纯本地内存操作，只处理超时/限流配置键，**不发起网络请求、不碰 cookie 字段**。

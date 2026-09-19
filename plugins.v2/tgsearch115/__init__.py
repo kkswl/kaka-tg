@@ -249,7 +249,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.8.15"
+    plugin_version = "4.8.16"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -1794,10 +1794,25 @@ class TgSearch115(_PluginBase):
             allowed, cooldown_remaining = self._source_breaker.allow(source) \
                 if self._source_breaker else (True, 0)
             if not allowed:
-                if source_report:
-                    source_report.mark(source, "cooldown")
-                logger.warn(f"【TG115】{source} 来源熔断中，剩余 {cooldown_remaining} 秒，本轮跳过")
-                continue
+                if source == "pansou" and self._pansou_client:
+                    try:
+                        recovered, _ = self._pansou_client.health_check()
+                    except Exception:
+                        recovered = False
+                    if recovered:
+                        if self._source_breaker:
+                            self._source_breaker.success(source)
+                        logger.info("【TG115】PanSou 健康检查通过，已自动解除熔断，本轮恢复搜索")
+                    else:
+                        if source_report:
+                            source_report.mark(source, "cooldown")
+                        logger.warn(f"【TG115】{source} 来源熔断中，剩余 {cooldown_remaining} 秒，本轮跳过")
+                        continue
+                else:
+                    if source_report:
+                        source_report.mark(source, "cooldown")
+                    logger.warn(f"【TG115】{source} 来源熔断中，剩余 {cooldown_remaining} 秒，本轮跳过")
+                    continue
             try:
                 runner = self._source_runner or BoundedSourceRunner()
                 call_timeout = self._source_request_timeout_seconds
