@@ -249,7 +249,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.8.17"
+    plugin_version = "4.8.18"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -408,12 +408,6 @@ class TgSearch115(_PluginBase):
             self._source_item_delay_min,
             self._safe_float(config.get("source_item_delay_max"), 10.0),
         )
-        self._source_request_timeout_seconds = min(
-            315.0, max(5.0, self._safe_float(config.get("source_request_timeout_seconds"), 315.0))
-        )
-        self._auto_search_budget_seconds = min(
-            600.0, max(15.0, self._safe_float(config.get("auto_search_budget_seconds"), 330.0))
-        )
         cache_hours = min(6, max(1, self._safe_int(config.get("search_cache_hours"), 2)))
         failure_threshold = min(10, max(1, self._safe_int(config.get("source_failure_threshold"), 5)))
         cooldown_minutes = min(60, max(1, self._safe_int(config.get("source_cooldown_minutes"), 5)))
@@ -462,6 +456,12 @@ class TgSearch115(_PluginBase):
         self._pansou_url = str(config.get("pansou_url") or "http://192.168.1.15:8888").strip().rstrip("/")
         self._pansou_token = str(config.get("pansou_token") or "").strip()
         self._pansou_timeout = min(300.0, max(3.0, self._safe_float(config.get("pansou_timeout"), 300.0)))
+        self._source_request_timeout_seconds = min(
+            600.0, max(5.0, self._pansou_timeout + 15.0)
+        )
+        self._auto_search_budget_seconds = min(
+            600.0, max(15.0, self._pansou_timeout + 30.0)
+        )
         self._pansou_refresh = self._to_bool(config.get("pansou_refresh"), False)
         self._pansou_max_results = min(100, max(1, self._safe_int(config.get("pansou_max_results"), 100)))
         self._pansou_cloud_types = self._parse_string_list(config.get("pansou_cloud_types"), ["115", "magnet"])
@@ -1817,11 +1817,6 @@ class TgSearch115(_PluginBase):
             try:
                 runner = self._source_runner or BoundedSourceRunner()
                 call_timeout = self._source_request_timeout_seconds
-                # PanSou has its own short 429/5xx retry.  Give the LAN
-                # aggregator one bounded retry window instead of ending it at
-                # its base HTTP timeout.
-                if source == "pansou":
-                    call_timeout = max(call_timeout, min(45.0, self._pansou_timeout + 25.0))
                 if deadline_remaining is not None:
                     call_timeout = min(call_timeout, max(0.1, deadline_remaining))
                 call_status, source_hits, elapsed, call_error = runner.run(

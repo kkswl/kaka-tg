@@ -60,6 +60,14 @@ class ConfigDefaultsTest(unittest.TestCase):
         self.assertIn('"source_request_timeout_seconds": (20, 30, 60)', init)
         self.assertIn('"pansou_timeout": (20, 120)', init)
 
+    def test_apply_config_derives_timeouts_from_pansou_timeout(self):
+        source = PLUGIN_PATH.read_text(encoding="utf-8")
+        apply = source[source.index("def _apply_config"):source.index("def get_state")]
+        self.assertIn("self._pansou_timeout + 15.0", apply)
+        self.assertIn("self._pansou_timeout + 30.0", apply)
+        self.assertNotIn('config.get("source_request_timeout_seconds")', apply)
+        self.assertNotIn('config.get("auto_search_budget_seconds")', apply)
+
     def test_startup_persists_a_merged_config_for_legacy_users(self):
         source = PLUGIN_PATH.read_text(encoding="utf-8")
         init = source[source.index("def init_plugin"):source.index("def _save_diagnostics")]

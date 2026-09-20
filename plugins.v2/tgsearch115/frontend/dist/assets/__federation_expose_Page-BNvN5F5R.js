@@ -147,7 +147,7 @@ const _hoisted_65 = {
 const _hoisted_66 = { class: "frontend-build-info text-caption text-medium-emphasis mt-2" };
 const {computed,getCurrentInstance,onMounted,onUnmounted,reactive,ref,watch} = await importShared('vue');
 
-const FRONTEND_VERSION = "4.8.17";
+const FRONTEND_VERSION = "4.8.18";
 const MANUAL_CACHE_KEY = "TgSearch115:manual-search:v2";
 const FORCE_TIMELINE_CONFIRMATION = "强制清理诊断记录";
 const _sfc_main = {
@@ -158,8 +158,8 @@ const _sfc_main = {
   },
   emits: ["close", "back"],
   setup(__props, { emit: __emit }) {
-    const FRONTEND_BUILD_ID = "v4.8.17-pansou-timeout-alignment" ;
-    const FRONTEND_BUILD_TIME = "2026-09-20T07:09:10.176Z" ;
+    const FRONTEND_BUILD_ID = "v4.8.18-single-timeout-field" ;
+    const FRONTEND_BUILD_TIME = "2026-09-20T08:31:42.341Z" ;
     const props = __props;
     const emit = __emit;
     const instance = getCurrentInstance();
@@ -1594,6 +1594,6 @@ const _sfc_main = {
     };
   }
 };
-const Page = /* @__PURE__ */ _export_sfc(_sfc_main, [["__scopeId", "data-v-9b4c0fa8"]]);
+const Page = /* @__PURE__ */ _export_sfc(_sfc_main, [["__scopeId", "data-v-87fe23aa"]]);
 
 export { Page as default };
