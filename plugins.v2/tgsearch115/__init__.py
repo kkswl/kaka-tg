@@ -249,7 +249,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.8.18"
+    plugin_version = "4.8.19"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -1884,16 +1884,22 @@ class TgSearch115(_PluginBase):
                     if opened:
                         logger.warn(f"【TG115】{source} 连续失败达到阈值，已进入冷却")
                 elif source_error and not source_hits:
+                    is_transient = status is None
                     if self._source_health:
                         self._source_health.record(source, "timeout" if "timeout" in source_error.lower() else "failed", elapsed, 0)
                     if source_report:
                         source_report.mark(source, "error")
-                    opened = self._source_breaker.failure(source, source_error) \
-                        if self._source_breaker else False
-                    logger.warn(
-                        f"【TG115】{source} 搜索失败分类={source_error}，本轮未缓存空结果"
-                        f"{'，已进入冷却' if opened else ''}"
-                    )
+                    if is_transient:
+                        logger.warn(
+                            f"【TG115】{source} 搜索失败分类={source_error}（暂态错误，不触发冷却），本轮未缓存空结果"
+                        )
+                    else:
+                        opened = self._source_breaker.failure(source, source_error) \
+                            if self._source_breaker else False
+                        logger.warn(
+                            f"【TG115】{source} 搜索失败分类={source_error}，本轮未缓存空结果"
+                            f"{'，已进入冷却' if opened else ''}"
+                        )
                 elif self._source_breaker:
                     self._source_breaker.success(source)
                 if self._source_health and not (status in (403, 429) or (source_error and not source_hits)):
@@ -1906,12 +1912,19 @@ class TgSearch115(_PluginBase):
                     self._source_health.record(source, "timeout" if "timeout" in type(exc).__name__.lower() else "failed")
                 if source_report:
                     source_report.mark(source, "error")
-                opened = self._source_breaker.failure(source, str(exc)) \
-                    if self._source_breaker else False
-                logger.warn(
-                    f"【TG115】{source} 搜索异常，本轮跳过"
-                    f"{'并进入冷却' if opened else ''}: {exc}"
-                )
+                exc_name = type(exc).__name__.lower()
+                is_transient = any(k in exc_name for k in ("timeout", "connection", "network", "connect"))
+                if is_transient:
+                    logger.warn(
+                        f"【TG115】{source} 搜索异常（暂态，不触发冷却），本轮跳过: {exc}"
+                    )
+                else:
+                    opened = self._source_breaker.failure(source, str(exc)) \
+                        if self._source_breaker else False
+                    logger.warn(
+                        f"【TG115】{source} 搜索异常，本轮跳过"
+                        f"{'并进入冷却' if opened else ''}: {exc}"
+                    )
         return hits
 
     def _save_cms_tasks(self):
