@@ -249,7 +249,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.8.16"
+    plugin_version = "4.8.17"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -300,8 +300,8 @@ class TgSearch115(_PluginBase):
     _jitter_minutes = 10
     _source_item_delay_min = 5.0
     _source_item_delay_max = 10.0
-    _source_request_timeout_seconds = 60.0
-    _auto_search_budget_seconds = 300.0
+    _source_request_timeout_seconds = 315.0
+    _auto_search_budget_seconds = 330.0
     _cms_timeout_hours = 12
     _magnet_download_mode = "direct_115"
     _direct_timeout_hours = 12
@@ -335,8 +335,9 @@ class TgSearch115(_PluginBase):
         # v4.8.13/v4.8.15: 移除历史版本引入的过激默认值，让新默认值（更宽松）自动生效。
         # 只移除与任一历史默认值相等的字段，保留用户有意自定义的值。
         _legacy_old_defaults = {
-            "auto_search_budget_seconds": (60, 180),
-            "source_request_timeout_seconds": (20, 30),
+            "auto_search_budget_seconds": (60, 180, 300),
+            "source_request_timeout_seconds": (20, 30, 60),
+            "pansou_timeout": (20, 120),
             "source_failure_threshold": (3,),
             "source_cooldown_minutes": (60,),
         }
@@ -408,10 +409,10 @@ class TgSearch115(_PluginBase):
             self._safe_float(config.get("source_item_delay_max"), 10.0),
         )
         self._source_request_timeout_seconds = min(
-            120.0, max(5.0, self._safe_float(config.get("source_request_timeout_seconds"), 60.0))
+            315.0, max(5.0, self._safe_float(config.get("source_request_timeout_seconds"), 315.0))
         )
         self._auto_search_budget_seconds = min(
-            600.0, max(15.0, self._safe_float(config.get("auto_search_budget_seconds"), 300.0))
+            600.0, max(15.0, self._safe_float(config.get("auto_search_budget_seconds"), 330.0))
         )
         cache_hours = min(6, max(1, self._safe_int(config.get("search_cache_hours"), 2)))
         failure_threshold = min(10, max(1, self._safe_int(config.get("source_failure_threshold"), 5)))
@@ -460,7 +461,7 @@ class TgSearch115(_PluginBase):
         self._pansou_enabled = self._to_bool(config.get("pansou_enabled"), True)
         self._pansou_url = str(config.get("pansou_url") or "http://192.168.1.15:8888").strip().rstrip("/")
         self._pansou_token = str(config.get("pansou_token") or "").strip()
-        self._pansou_timeout = min(180.0, max(3.0, self._safe_float(config.get("pansou_timeout"), 20.0)))
+        self._pansou_timeout = min(300.0, max(3.0, self._safe_float(config.get("pansou_timeout"), 300.0)))
         self._pansou_refresh = self._to_bool(config.get("pansou_refresh"), False)
         self._pansou_max_results = min(100, max(1, self._safe_int(config.get("pansou_max_results"), 100)))
         self._pansou_cloud_types = self._parse_string_list(config.get("pansou_cloud_types"), ["115", "magnet"])
@@ -4176,8 +4177,8 @@ class TgSearch115(_PluginBase):
             "jitter_minutes": 10,
             "source_item_delay_min": 5,
             "source_item_delay_max": 10,
-            "source_request_timeout_seconds": 60,
-            "auto_search_budget_seconds": 300,
+            "source_request_timeout_seconds": 315,
+            "auto_search_budget_seconds": 330,
             "search_cache_hours": 2,
             "source_failure_threshold": 5,
             "source_cooldown_minutes": 5,
@@ -4213,7 +4214,7 @@ class TgSearch115(_PluginBase):
             "pansou_url": "http://192.168.1.15:8888",
             "pansou_token": "",
             "pansou_proxy": "",
-            "pansou_timeout": 20,
+            "pansou_timeout": 300,
             "pansou_refresh": False,
             "pansou_cloud_types": ["115", "magnet"],
             "pansou_max_results": 100,

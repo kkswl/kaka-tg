@@ -250,7 +250,7 @@
             <v-col cols="6" md="4"><v-text-field v-model="config.tg_page_delay_max" label="TG 最大间隔（秒）" type="number" step="0.1" min="0.2" variant="outlined" density="compact" hide-details /></v-col>
             <v-col cols="6" md="3"><v-text-field v-model="config.source_item_delay_min" label="订阅最小间隔（秒）" type="number" min="0" variant="outlined" density="compact" hide-details /></v-col>
             <v-col cols="6" md="3"><v-text-field v-model="config.source_item_delay_max" label="订阅最大间隔（秒）" type="number" min="0" variant="outlined" density="compact" hide-details /></v-col>
-            <v-col cols="6" md="3"><v-text-field v-model="config.source_request_timeout_seconds" label="单来源超时（秒）" type="number" min="5" max="120" variant="outlined" density="compact" hide-details /></v-col>
+            <v-col cols="6" md="3"><v-text-field v-model="config.source_request_timeout_seconds" label="单来源超时（秒）" type="number" min="5" max="315" variant="outlined" density="compact" hide-details /></v-col>
             <v-col cols="6" md="3"><v-text-field v-model="config.auto_search_budget_seconds" label="单订阅搜索预算（秒）" type="number" min="15" max="600" variant="outlined" density="compact" hide-details /></v-col>
             <v-col cols="6" md="3"><v-text-field v-model="config.source_failure_threshold" label="熔断失败次数" type="number" min="1" max="10" variant="outlined" density="compact" hide-details /></v-col>
             <v-col cols="6" md="3"><v-select v-model="config.source_cooldown_minutes" :items="cooldownOptions" label="来源冷却" variant="outlined" density="compact" hide-details /></v-col>
@@ -316,7 +316,7 @@
               <v-text-field v-model="config.pansou_url" label="PanSou 服务地址" placeholder="http://192.168.1.15:8888" variant="outlined" density="compact" hide-details />
             </v-col>
             <v-col cols="12" md="4">
-              <v-text-field v-model="config.pansou_timeout" label="请求超时（秒）" type="number" min="3" max="180" variant="outlined" density="compact" hide-details />
+              <v-text-field v-model="config.pansou_timeout" label="请求超时（秒）" type="number" min="3" max="300" variant="outlined" density="compact" hide-details />
             </v-col>
             <v-col cols="12" md="4">
               <v-text-field v-model="config.pansou_proxy" label="PanSou 专用代理（可选）" placeholder="留空直连；填 mp 使用全局代理" variant="outlined" density="compact" hide-details />
@@ -548,8 +548,8 @@ const DEFAULTS = {
   jitter_minutes: 10,
   source_item_delay_min: 5,
   source_item_delay_max: 10,
-  source_request_timeout_seconds: 60,
-  auto_search_budget_seconds: 300,
+  source_request_timeout_seconds: 315,
+  auto_search_budget_seconds: 330,
   search_cache_hours: 2,
   source_failure_threshold: 5,
   source_cooldown_minutes: 5,
@@ -585,7 +585,7 @@ const DEFAULTS = {
   pansou_url: 'http://192.168.1.15:8888',
   pansou_token: '',
   pansou_proxy: '',
-  pansou_timeout: 20,
+  pansou_timeout: 300,
   pansou_refresh: false,
   pansou_cloud_types: ['115', 'magnet'],
   pansou_max_results: 100,

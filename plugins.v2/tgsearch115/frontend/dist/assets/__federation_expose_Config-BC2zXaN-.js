@@ -132,8 +132,8 @@ const DEFAULTS = {
   jitter_minutes: 10,
   source_item_delay_min: 5,
   source_item_delay_max: 10,
-  source_request_timeout_seconds: 60,
-  auto_search_budget_seconds: 300,
+  source_request_timeout_seconds: 315,
+  auto_search_budget_seconds: 330,
   search_cache_hours: 2,
   source_failure_threshold: 5,
   source_cooldown_minutes: 5,
@@ -169,7 +169,7 @@ const DEFAULTS = {
   pansou_url: 'http://192.168.1.15:8888',
   pansou_token: '',
   pansou_proxy: '',
-  pansou_timeout: 20,
+  pansou_timeout: 300,
   pansou_refresh: false,
   pansou_cloud_types: ['115', 'magnet'],
   pansou_max_results: 100,
@@ -1861,7 +1861,7 @@ return (_ctx, _cache) => {
                           label: "单来源超时（秒）",
                           type: "number",
                           min: "5",
-                          max: "120",
+                          max: "315",
                           variant: "outlined",
                           density: "compact",
                           "hide-details": ""
@@ -2201,7 +2201,7 @@ return (_ctx, _cache) => {
                           label: "请求超时（秒）",
                           type: "number",
                           min: "3",
-                          max: "180",
+                          max: "300",
                           variant: "outlined",
                           density: "compact",
                           "hide-details": ""
@@ -2888,6 +2888,6 @@ return (_ctx, _cache) => {
 }
 
 };
-const Config = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-475bc376"]]);
+const Config = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-4bf0eab2"]]);
 
 export { Config as default };
