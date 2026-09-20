@@ -167,7 +167,7 @@ const DEFAULTS = {
   pansou_url: 'http://192.168.1.15:8888',
   pansou_token: '',
   pansou_proxy: '',
-  pansou_timeout: 300,
+  pansou_timeout: 60,
   pansou_refresh: false,
   pansou_cloud_types: ['115', 'magnet'],
   pansou_max_results: 100,
@@ -2164,7 +2164,7 @@ return (_ctx, _cache) => {
                           max: "300",
                           variant: "outlined",
                           density: "compact",
-                          hint: "默认300秒，单来源超时与搜索预算据此自动派生",
+                          hint: "默认60秒。建议 PanSou 服务端 ASYNC_RESPONSE_TIMEOUT 设为 30 秒（一次性返回完整结果，不等缓存），插件该值需大于服务端设的值并留余量；若频繁 504 请检查服务端是否被改为 300",
                           "persistent-hint": ""
                         }, null, 8, ["modelValue"])
                       ]),
@@ -2849,6 +2849,6 @@ return (_ctx, _cache) => {
 }
 
 };
-const Config = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-29260667"]]);
+const Config = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-e7480a93"]]);
 
 export { Config as default };

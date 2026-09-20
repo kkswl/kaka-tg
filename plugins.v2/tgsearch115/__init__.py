@@ -249,7 +249,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.8.20"
+    plugin_version = "4.8.22"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -300,8 +300,8 @@ class TgSearch115(_PluginBase):
     _jitter_minutes = 10
     _source_item_delay_min = 5.0
     _source_item_delay_max = 10.0
-    _source_request_timeout_seconds = 315.0
-    _auto_search_budget_seconds = 330.0
+    _source_request_timeout_seconds = 75.0
+    _auto_search_budget_seconds = 90.0
     _cms_timeout_hours = 12
     _magnet_download_mode = "direct_115"
     _direct_timeout_hours = 12
@@ -337,7 +337,7 @@ class TgSearch115(_PluginBase):
         _legacy_old_defaults = {
             "auto_search_budget_seconds": (60, 180, 300),
             "source_request_timeout_seconds": (20, 30, 60),
-            "pansou_timeout": (20, 120),
+            "pansou_timeout": (20, 120, 300),
             "source_failure_threshold": (3,),
             "source_cooldown_minutes": (60,),
         }
@@ -455,7 +455,20 @@ class TgSearch115(_PluginBase):
         self._pansou_enabled = self._to_bool(config.get("pansou_enabled"), True)
         self._pansou_url = str(config.get("pansou_url") or "http://192.168.1.15:8888").strip().rstrip("/")
         self._pansou_token = str(config.get("pansou_token") or "").strip()
-        self._pansou_timeout = min(300.0, max(3.0, self._safe_float(config.get("pansou_timeout"), 300.0)))
+        self._pansou_timeout = min(300.0, max(3.0, self._safe_float(config.get("pansou_timeout"), 60.0)))
+        # PanSou 服务端双级超时：ASYNC_RESPONSE_TIMEOUT 控制 HTTP 响应最大等待时间，
+        # PLUGIN_TIMEOUT 控制后台继续抓取写入缓存的时间。要一次性拿到完整结果，
+        # 应将服务端 ASYNC_RESPONSE_TIMEOUT 设为 30 秒（等于 PLUGIN_TIMEOUT），
+        # 这样 PanSou 会等所有 87 个插件完成后一次性返回，而非 4 秒返回部分结果靠缓存。
+        # 插件 pansou_timeout 需大于 ASYNC_RESPONSE_TIMEOUT 留出网络余量，默认 60 秒。
+        # 若服务端 ASYNC_RESPONSE_TIMEOUT 被改为 300，PanSou 会等超慢插件导致 504。
+        if self._pansou_timeout > 120.0:
+            logger.warning(
+                "【TG115】PanSou 搜索等待时间 %.0f 秒偏大，"
+                "若频繁 504 请检查 PanSou 服务端 ASYNC_RESPONSE_TIMEOUT 是否被改为 "
+                "300（建议设为 30 秒以一次性返回完整结果，PLUGIN_TIMEOUT 保持 30 秒）",
+                self._pansou_timeout,
+            )
         self._source_request_timeout_seconds = min(
             600.0, max(5.0, self._pansou_timeout + 15.0)
         )
@@ -1071,8 +1084,10 @@ class TgSearch115(_PluginBase):
         source_raw = Counter()
         source_relevance_rejected = Counter()
         keywords = self._build_keywords(subscribe, mediainfo, target_season)
-        search_deadline = time.monotonic() + self._auto_search_budget_seconds
-        result["search_budget_seconds"] = self._auto_search_budget_seconds
+        keyword_count = max(1, len(keywords))
+        search_budget = min(1800.0, self._auto_search_budget_seconds * keyword_count)
+        search_deadline = time.monotonic() + search_budget
+        result["search_budget_seconds"] = search_budget
         result["search_timed_out"] = False
         pending_base_keywords = {
             keyword.casefold() for keyword in keywords
@@ -1756,7 +1771,7 @@ class TgSearch115(_PluginBase):
             if deadline_remaining is not None and deadline_remaining <= 0:
                 if source_report:
                     source_report.mark(source, "timeout")
-                logger.warning("【TG115】%s 来源未开始：本轮搜索总时限已到", source)
+                logger.warning("【TG115】%s 来源未开始：本轮总时限已到", source)
                 break
             cache_keyword = site_keyword if source == "site" else keyword
             cache_key = source_cache_key(
@@ -4166,8 +4181,8 @@ class TgSearch115(_PluginBase):
             "jitter_minutes": 10,
             "source_item_delay_min": 5,
             "source_item_delay_max": 10,
-            "source_request_timeout_seconds": 315,
-            "auto_search_budget_seconds": 330,
+            "source_request_timeout_seconds": 75,
+            "auto_search_budget_seconds": 90,
             "search_cache_hours": 2,
             "source_failure_threshold": 5,
             "source_cooldown_minutes": 5,
@@ -4203,7 +4218,7 @@ class TgSearch115(_PluginBase):
             "pansou_url": "http://192.168.1.15:8888",
             "pansou_token": "",
             "pansou_proxy": "",
-            "pansou_timeout": 300,
+            "pansou_timeout": 60,
             "pansou_refresh": False,
             "pansou_cloud_types": ["115", "magnet"],
             "pansou_max_results": 100,

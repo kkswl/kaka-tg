@@ -314,7 +314,7 @@
               <v-text-field v-model="config.pansou_url" label="PanSou 服务地址" placeholder="http://192.168.1.15:8888" variant="outlined" density="compact" hide-details />
             </v-col>
             <v-col cols="12" md="4">
-              <v-text-field v-model="config.pansou_timeout" label="PanSou 搜索等待时间（秒）" type="number" min="3" max="300" variant="outlined" density="compact" hint="默认300秒，单来源超时与搜索预算据此自动派生" persistent-hint />
+              <v-text-field v-model="config.pansou_timeout" label="PanSou 搜索等待时间（秒）" type="number" min="3" max="300" variant="outlined" density="compact" hint="默认60秒。建议 PanSou 服务端 ASYNC_RESPONSE_TIMEOUT 设为 30 秒（一次性返回完整结果，不等缓存），插件该值需大于服务端设的值并留余量；若频繁 504 请检查服务端是否被改为 300" persistent-hint />
             </v-col>
             <v-col cols="12" md="4">
               <v-text-field v-model="config.pansou_proxy" label="PanSou 专用代理（可选）" placeholder="留空直连；填 mp 使用全局代理" variant="outlined" density="compact" hide-details />
@@ -581,7 +581,7 @@ const DEFAULTS = {
   pansou_url: 'http://192.168.1.15:8888',
   pansou_token: '',
   pansou_proxy: '',
-  pansou_timeout: 300,
+  pansou_timeout: 60,
   pansou_refresh: false,
   pansou_cloud_types: ['115', 'magnet'],
   pansou_max_results: 100,

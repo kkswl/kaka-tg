@@ -292,4 +292,6 @@ class PanSouClient:
             return f"HTTP {status_code} 服务端错误"
         if isinstance(error, TimeoutError) or "timeout" in error.__class__.__name__.lower():
             return "请求超时"
+        if isinstance(error, BaseException):
+            return f"网络请求失败({error.__class__.__name__})"
         return "网络请求失败"

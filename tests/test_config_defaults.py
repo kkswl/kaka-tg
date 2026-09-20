@@ -28,8 +28,8 @@ class ConfigDefaultsTest(unittest.TestCase):
         self.assertTrue(defaults["periodic_enabled"])
         self.assertEqual(2, defaults["period_hours"])
         self.assertEqual(10, defaults["jitter_minutes"])
-        self.assertEqual(315, defaults["source_request_timeout_seconds"])
-        self.assertEqual(330, defaults["auto_search_budget_seconds"])
+        self.assertEqual(75, defaults["source_request_timeout_seconds"])
+        self.assertEqual(90, defaults["auto_search_budget_seconds"])
         self.assertEqual(2, defaults["tg_concurrency"])
         self.assertNotIn("cms_url", defaults)
         self.assertNotIn("cms_token", defaults)
@@ -41,7 +41,7 @@ class ConfigDefaultsTest(unittest.TestCase):
         self.assertTrue(defaults["tg_search_enabled"])
         self.assertEqual("http://192.168.1.15:8888", defaults["pansou_url"])
         self.assertEqual("", defaults["pansou_proxy"])
-        self.assertEqual(300, defaults["pansou_timeout"])
+        self.assertEqual(60, defaults["pansou_timeout"])
         self.assertEqual(["115", "magnet"], defaults["pansou_cloud_types"])
         self.assertEqual(100, defaults["pansou_max_results"])
         self.assertTrue(defaults["magnet_failover_enabled"])
@@ -58,7 +58,7 @@ class ConfigDefaultsTest(unittest.TestCase):
         init = source[source.index("def init_plugin"):source.index("def _save_diagnostics")]
         self.assertIn('"auto_search_budget_seconds": (60, 180, 300)', init)
         self.assertIn('"source_request_timeout_seconds": (20, 30, 60)', init)
-        self.assertIn('"pansou_timeout": (20, 120)', init)
+        self.assertIn('"pansou_timeout": (20, 120, 300)', init)
 
     def test_apply_config_derives_timeouts_from_pansou_timeout(self):
         source = PLUGIN_PATH.read_text(encoding="utf-8")
