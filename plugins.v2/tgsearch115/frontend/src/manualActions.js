@@ -10,6 +10,25 @@ export function isCopyableResourceUrl(value) {
   }
 }
 
+export function getResourceLink(resource) {
+  if (!resource || typeof resource !== 'object') return ''
+  const candidates = [
+    resource.share_url,
+    resource.resource_url,
+    resource.magnet,
+    resource.download_url,
+    resource.enclosure,
+    resource.page_url,
+    resource.url,
+    resource.link,
+  ]
+  for (const candidate of candidates) {
+    const text = String(candidate || '').trim()
+    if (isCopyableResourceUrl(text)) return text
+  }
+  return ''
+}
+
 export function fallbackCopyText(text, documentRef = globalThis.document) {
   if (!documentRef?.createElement || !documentRef?.body?.appendChild) return false
   const textarea = documentRef.createElement('textarea')
@@ -17,6 +36,8 @@ export function fallbackCopyText(text, documentRef = globalThis.document) {
   textarea.setAttribute('readonly', '')
   textarea.style.position = 'fixed'
   textarea.style.left = '-9999px'
+  textarea.style.top = '0'
+  textarea.style.fontSize = '12pt'
   textarea.style.opacity = '0'
   textarea.style.pointerEvents = 'none'
   documentRef.body.appendChild(textarea)
@@ -37,6 +58,10 @@ export function fallbackCopyText(text, documentRef = globalThis.document) {
 export async function copyTextWithFallback(text, options = {}) {
   const navigatorRef = options.navigatorRef ?? globalThis.navigator
   const documentRef = options.documentRef ?? globalThis.document
+  const isSecureContext = options.isSecureContext ?? globalThis.isSecureContext === true
+  // HTTP/local-IP pages must keep the user click synchronous for execCommand;
+  // waiting for a rejected Clipboard promise can lose that browser gesture.
+  if (!isSecureContext) return fallbackCopyText(text, documentRef)
   if (navigatorRef?.clipboard?.writeText) {
     try {
       await navigatorRef.clipboard.writeText(text)
@@ -46,6 +71,34 @@ export async function copyTextWithFallback(text, options = {}) {
     }
   }
   return fallbackCopyText(text, documentRef)
+}
+
+export function openResourceLink(url, options = {}) {
+  const text = String(url || '').trim()
+  if (!isCopyableResourceUrl(text)) return false
+  const windowRef = options.windowRef ?? globalThis.window
+  const documentRef = options.documentRef ?? globalThis.document
+  if (/^magnet:\?/i.test(text)) {
+    if (!documentRef?.createElement || !documentRef?.body?.appendChild) return false
+    const anchor = documentRef.createElement('a')
+    anchor.href = text
+    anchor.style.display = 'none'
+    documentRef.body.appendChild(anchor)
+    try {
+      anchor.click()
+      return true
+    } catch {
+      return false
+    } finally {
+      try { anchor.remove() } catch { documentRef.body.removeChild?.(anchor) }
+    }
+  }
+  const opened = windowRef?.open?.(text, '_blank', 'noopener,noreferrer')
+  if (opened) {
+    try { opened.opener = null } catch { /* Cross-window assignment is best effort. */ }
+    return true
+  }
+  return false
 }
 
 export function buildManualTransferPayload(shareUrl, target, useDefault = true) {

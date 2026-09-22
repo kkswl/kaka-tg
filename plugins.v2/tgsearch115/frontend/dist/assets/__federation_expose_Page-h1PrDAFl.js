@@ -13,6 +13,25 @@ function isCopyableResourceUrl(value) {
   }
 }
 
+function getResourceLink(resource) {
+  if (!resource || typeof resource !== 'object') return ''
+  const candidates = [
+    resource.share_url,
+    resource.resource_url,
+    resource.magnet,
+    resource.download_url,
+    resource.enclosure,
+    resource.page_url,
+    resource.url,
+    resource.link,
+  ];
+  for (const candidate of candidates) {
+    const text = String(candidate || '').trim();
+    if (isCopyableResourceUrl(text)) return text
+  }
+  return ''
+}
+
 function fallbackCopyText(text, documentRef = globalThis.document) {
   if (!documentRef?.createElement || !documentRef?.body?.appendChild) return false
   const textarea = documentRef.createElement('textarea');
@@ -20,6 +39,8 @@ function fallbackCopyText(text, documentRef = globalThis.document) {
   textarea.setAttribute('readonly', '');
   textarea.style.position = 'fixed';
   textarea.style.left = '-9999px';
+  textarea.style.top = '0';
+  textarea.style.fontSize = '12pt';
   textarea.style.opacity = '0';
   textarea.style.pointerEvents = 'none';
   documentRef.body.appendChild(textarea);
@@ -40,6 +61,10 @@ function fallbackCopyText(text, documentRef = globalThis.document) {
 async function copyTextWithFallback(text, options = {}) {
   const navigatorRef = options.navigatorRef ?? globalThis.navigator;
   const documentRef = options.documentRef ?? globalThis.document;
+  const isSecureContext = options.isSecureContext ?? globalThis.isSecureContext === true;
+  // HTTP/local-IP pages must keep the user click synchronous for execCommand;
+  // waiting for a rejected Clipboard promise can lose that browser gesture.
+  if (!isSecureContext) return fallbackCopyText(text, documentRef)
   if (navigatorRef?.clipboard?.writeText) {
     try {
       await navigatorRef.clipboard.writeText(text);
@@ -49,6 +74,34 @@ async function copyTextWithFallback(text, options = {}) {
     }
   }
   return fallbackCopyText(text, documentRef)
+}
+
+function openResourceLink(url, options = {}) {
+  const text = String(url || '').trim();
+  if (!isCopyableResourceUrl(text)) return false
+  const windowRef = options.windowRef ?? globalThis.window;
+  const documentRef = options.documentRef ?? globalThis.document;
+  if (/^magnet:\?/i.test(text)) {
+    if (!documentRef?.createElement || !documentRef?.body?.appendChild) return false
+    const anchor = documentRef.createElement('a');
+    anchor.href = text;
+    anchor.style.display = 'none';
+    documentRef.body.appendChild(anchor);
+    try {
+      anchor.click();
+      return true
+    } catch {
+      return false
+    } finally {
+      try { anchor.remove(); } catch { documentRef.body.removeChild?.(anchor); }
+    }
+  }
+  const opened = windowRef?.open?.(text, '_blank', 'noopener,noreferrer');
+  if (opened) {
+    try { opened.opener = null; } catch { /* Cross-window assignment is best effort. */ }
+    return true
+  }
+  return false
 }
 
 function buildManualTransferPayload(shareUrl, target, useDefault = true) {
@@ -196,40 +249,41 @@ const _hoisted_61 = { class: "manual-result-text" };
 const _hoisted_62 = { class: "manual-result-actions" };
 const _hoisted_63 = ["onClick"];
 const _hoisted_64 = ["onClick"];
-const _hoisted_65 = {
+const _hoisted_65 = ["onClick"];
+const _hoisted_66 = {
   key: 5,
   class: "manual-empty-state"
 };
-const _hoisted_66 = { class: "frontend-build-info text-caption text-medium-emphasis mt-2" };
-const _hoisted_67 = {
+const _hoisted_67 = { class: "frontend-build-info text-caption text-medium-emphasis mt-2" };
+const _hoisted_68 = {
   key: 0,
   class: "manual-default-target"
 };
-const _hoisted_68 = {
+const _hoisted_69 = {
   key: 1,
   class: "manual-directory-toolbar"
 };
-const _hoisted_69 = ["disabled"];
 const _hoisted_70 = ["disabled"];
-const _hoisted_71 = { class: "text-caption text-medium-emphasis" };
-const _hoisted_72 = ["disabled"];
-const _hoisted_73 = {
+const _hoisted_71 = ["disabled"];
+const _hoisted_72 = { class: "text-caption text-medium-emphasis" };
+const _hoisted_73 = ["disabled"];
+const _hoisted_74 = {
   key: 2,
   class: "manual-loading",
   role: "status"
 };
-const _hoisted_74 = {
+const _hoisted_75 = {
   key: 3,
   class: "manual-directory-list"
 };
-const _hoisted_75 = ["onClick"];
-const _hoisted_76 = {
+const _hoisted_76 = ["onClick"];
+const _hoisted_77 = {
   key: 4,
   class: "manual-empty-state"
 };
-const _hoisted_77 = { class: "text-caption text-medium-emphasis" };
+const _hoisted_78 = { class: "text-caption text-medium-emphasis" };
 const {computed,getCurrentInstance,onMounted,onUnmounted,reactive,ref,watch} = await importShared('vue');
-const FRONTEND_VERSION = "4.8.24";
+const FRONTEND_VERSION = "4.8.25";
 const MANUAL_CACHE_KEY = "TgSearch115:manual-search:v2";
 const FORCE_TIMELINE_CONFIRMATION = "强制清理诊断记录";
 const _sfc_main = {
@@ -240,8 +294,8 @@ const _sfc_main = {
   },
   emits: ["close", "back"],
   setup(__props, { emit: __emit }) {
-    const FRONTEND_BUILD_ID = "v4.8.24-default-manual-target" ;
-    const FRONTEND_BUILD_TIME = "2026-09-22T08:27:57.891Z" ;
+    const FRONTEND_BUILD_ID = "v4.8.25-link-actions" ;
+    const FRONTEND_BUILD_TIME = "2026-09-22T22:59:31.469Z" ;
     const props = __props;
     const emit = __emit;
     const instance = getCurrentInstance();
@@ -376,7 +430,7 @@ const _sfc_main = {
         quality_class: qualityClass,
         has_chinese_subtitle: item.has_chinese_subtitle === true,
         receive_code: manualSafeText(item.receive_code).slice(0, 16),
-        share_url: manualSafeText(item.share_url)
+        share_url: getResourceLink(item)
       };
     }
     function manualSessionStore() {
@@ -480,7 +534,7 @@ const _sfc_main = {
       return { "4k": "4K", "1080p": "1080P", "720p": "720P" }[item?.resolution] || "未知";
     }
     function manualFullUrl(item) {
-      let url = manualSafeText(item?.share_url);
+      let url = getResourceLink(item);
       if (item?.pan_type === "115" && item?.receive_code && !/[?&](password|receive_code|pwd)=/.test(url)) url += `${url.includes("?") ? "&" : "?"}password=${item.receive_code}`;
       return url;
     }
@@ -496,6 +550,14 @@ const _sfc_main = {
       } catch {
         showSnack("复制失败，请手动复制", "error");
       }
+    }
+    function openManualResult(item) {
+      const url = manualFullUrl(item).trim();
+      if (!isCopyableResourceUrl(url)) {
+        showSnack("该资源没有有效链接", "warning");
+        return;
+      }
+      if (!openResourceLink(url)) showSnack("链接无法打开，请检查浏览器弹窗或磁力关联设置", "warning");
     }
     async function loadManualTransferDirectories(cid) {
       if (!props.api?.get) {
@@ -1683,18 +1745,23 @@ const _sfc_main = {
                             class: "manual-link-button",
                             onClick: ($event) => copyManualResult(item)
                           }, "复制链接", 8, _hoisted_63),
+                          _createElementVNode("button", {
+                            type: "button",
+                            class: "manual-link-button",
+                            onClick: ($event) => openManualResult(item)
+                          }, "打开链接", 8, _hoisted_64),
                           ["115", "magnet"].includes(item.pan_type) ? (_openBlock(), _createElementBlock("button", {
                             key: 0,
                             type: "button",
                             class: "manual-action-button",
                             onClick: ($event) => item.pan_type === "115" ? openManualTransferDialog(item) : openManualProcessDialog(item)
-                          }, _toDisplayString(item.pan_type === "magnet" ? "离线到115" : "转存"), 9, _hoisted_64)) : _createCommentVNode("", true)
+                          }, _toDisplayString(item.pan_type === "magnet" ? "离线到115" : "转存"), 9, _hoisted_65)) : _createCommentVNode("", true)
                         ])
                       ]);
                     }), 128))
-                  ])) : manualSearched.value && !manualSearching.value ? (_openBlock(), _createElementBlock("div", _hoisted_65, _toDisplayString(manualResults.value.length ? "当前筛选条件下没有资源，可切换筛选查看" : "所有可用来源均未找到符合条件的资源"), 1)) : _createCommentVNode("", true)
+                  ])) : manualSearched.value && !manualSearching.value ? (_openBlock(), _createElementBlock("div", _hoisted_66, _toDisplayString(manualResults.value.length ? "当前筛选条件下没有资源，可切换筛选查看" : "所有可用来源均未找到符合条件的资源"), 1)) : _createCommentVNode("", true)
                 ]),
-                _createElementVNode("div", _hoisted_66, " 前端构建 " + _toDisplayString(_unref(frontendBuildId)) + " · " + _toDisplayString(_unref(frontendBuildTime)), 1)
+                _createElementVNode("div", _hoisted_67, " 前端构建 " + _toDisplayString(_unref(frontendBuildId)) + " · " + _toDisplayString(_unref(frontendBuildTime)), 1)
               ]),
               _: 1
             })
@@ -1789,52 +1856,52 @@ const _sfc_main = {
                 _createVNode(_component_v_divider),
                 _createVNode(_component_v_card_text, { class: "manual-directory-body" }, {
                   default: _withCtx(() => [
-                    manualTransferUseDefault.value ? (_openBlock(), _createElementBlock("div", _hoisted_67, [
+                    manualTransferUseDefault.value ? (_openBlock(), _createElementBlock("div", _hoisted_68, [
                       _cache[57] || (_cache[57] = _createElementVNode("div", null, "将使用插件设置中绑定的 115 默认目录。", -1)),
                       _createElementVNode("button", {
                         type: "button",
                         class: "manual-link-button",
                         onClick: chooseManualTransferDirectory
                       }, "选择其他目录")
-                    ])) : (_openBlock(), _createElementBlock("div", _hoisted_68, [
+                    ])) : (_openBlock(), _createElementBlock("div", _hoisted_69, [
                       _createElementVNode("button", {
                         type: "button",
                         class: "manual-link-button",
                         disabled: manualTransferLoading.value,
                         onClick: useManualTransferDefault
-                      }, "使用默认目录", 8, _hoisted_69),
+                      }, "使用默认目录", 8, _hoisted_70),
                       _createElementVNode("button", {
                         type: "button",
                         class: "manual-link-button",
                         disabled: manualTransferLoading.value,
                         onClick: navigateManualTransferRoot
-                      }, "根目录", 8, _hoisted_70),
-                      _createElementVNode("span", _hoisted_71, _toDisplayString(manualTransferPathText.value), 1),
+                      }, "根目录", 8, _hoisted_71),
+                      _createElementVNode("span", _hoisted_72, _toDisplayString(manualTransferPathText.value), 1),
                       manualTransferPath.value.length > 1 ? (_openBlock(), _createElementBlock("button", {
                         key: 0,
                         type: "button",
                         class: "manual-link-button",
                         disabled: manualTransferLoading.value,
                         onClick: navigateManualTransferUp
-                      }, "上一级", 8, _hoisted_72)) : _createCommentVNode("", true)
+                      }, "上一级", 8, _hoisted_73)) : _createCommentVNode("", true)
                     ])),
-                    !manualTransferUseDefault.value && manualTransferLoading.value ? (_openBlock(), _createElementBlock("div", _hoisted_73, "目录加载中…")) : !manualTransferUseDefault.value && manualTransferDirectories.value.length ? (_openBlock(), _createElementBlock("div", _hoisted_74, [
+                    !manualTransferUseDefault.value && manualTransferLoading.value ? (_openBlock(), _createElementBlock("div", _hoisted_74, "目录加载中…")) : !manualTransferUseDefault.value && manualTransferDirectories.value.length ? (_openBlock(), _createElementBlock("div", _hoisted_75, [
                       (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(manualTransferDirectories.value, (directory) => {
                         return _openBlock(), _createElementBlock("button", {
                           key: directory.cid,
                           type: "button",
                           class: "manual-directory-item",
                           onClick: ($event) => navigateManualTransferInto(directory)
-                        }, "📁 " + _toDisplayString(directory.name), 9, _hoisted_75);
+                        }, "📁 " + _toDisplayString(directory.name), 9, _hoisted_76);
                       }), 128))
-                    ])) : !manualTransferUseDefault.value ? (_openBlock(), _createElementBlock("div", _hoisted_76, "当前目录没有子目录，可直接转存到这里")) : _createCommentVNode("", true)
+                    ])) : !manualTransferUseDefault.value ? (_openBlock(), _createElementBlock("div", _hoisted_77, "当前目录没有子目录，可直接转存到这里")) : _createCommentVNode("", true)
                   ]),
                   _: 1
                 }),
                 _createVNode(_component_v_divider),
                 _createVNode(_component_v_card_actions, { class: "px-4 py-3" }, {
                   default: _withCtx(() => [
-                    _createElementVNode("span", _hoisted_77, "目标：" + _toDisplayString(manualTransferUseDefault.value ? "绑定的默认目录" : manualTransferPathText.value), 1),
+                    _createElementVNode("span", _hoisted_78, "目标：" + _toDisplayString(manualTransferUseDefault.value ? "绑定的默认目录" : manualTransferPathText.value), 1),
                     _createVNode(_component_v_spacer),
                     _createVNode(_component_v_btn, {
                       variant: "text",
@@ -1882,6 +1949,6 @@ const _sfc_main = {
     };
   }
 };
-const Page = /* @__PURE__ */ _export_sfc(_sfc_main, [["__scopeId", "data-v-ff245c54"]]);
+const Page = /* @__PURE__ */ _export_sfc(_sfc_main, [["__scopeId", "data-v-614fdd6d"]]);
 
 export { Page as default };

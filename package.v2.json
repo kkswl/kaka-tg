@@ -3,10 +3,11 @@
     "name": "拦截mp订阅",
     "description": "聚合 TG、观影、PanSou 与聚影资源，经 MoviePilot 规则和精确媒体身份确认后按来源顺序转存；完整磁力统一使用插件内置 115 离线，115 分享继续使用插件内置 115 转存。",
     "labels": "订阅,Telegram,115网盘",
-    "version": "4.8.24",
+    "version": "4.8.25",
     "author": "MoviePilot User",
     "level": 2,
     "history": {
+      "v4.8.25": "修复手动结果复制与打开：局域网 HTTP 页面先同步走 textarea 回退保留用户手势；兼容 share_url、magnet、download_url、enclosure、page_url、url、link 等真实资源字段，并新增安全的打开链接按钮。",
       "v4.8.24": "手动 115 转存默认使用插件绑定目录，无需额外选择；用户仍可切换目录浏览并指定其他目标 cid。",
       "v4.8.23": "手动 115 转存改为只选择目标目录，不再要求订阅；使用独立 POST 接口且不触碰订阅/自动任务。复制链接增加 Clipboard API 与临时 textarea 回退，兼容局域网 HTTP 页面。",
       "v4.8.22": "修复 PanSou 超时根因：撤销 v4.8.21 的 blocked_sources 阻断逻辑（用户反馈应解决超因而非阻断）；PanSou 搜索等待时间默认值从 300 秒降为 60 秒（留足余量接收 PanSou 完整结果），配置迁移覆盖旧默认值 300 自动生效；推荐 PanSou 服务端 ASYNC_RESPONSE_TIMEOUT 设为 30 秒（等于 PLUGIN_TIMEOUT，一次性返回完整结果而非 4 秒返回部分结果靠缓存）；当 pansou_timeout>120 秒时输出警告日志。根因是 v4.8.17 把 PanSou 服务端 ASYNC_RESPONSE_TIMEOUT 从默认 4 秒改成 300 秒，导致 PanSou 等超慢插件才返回，引发 504。",

@@ -333,6 +333,7 @@
               <div class="manual-result-text">{{ item.text || item.title }}</div>
               <div class="manual-result-actions">
                 <button type="button" class="manual-link-button" @click="copyManualResult(item)">复制链接</button>
+                <button type="button" class="manual-link-button" @click="openManualResult(item)">打开链接</button>
                 <button
                   v-if="['115', 'magnet'].includes(item.pan_type)"
                   type="button"
@@ -427,10 +428,16 @@
 
 <script setup>
 import { computed, getCurrentInstance, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { buildManualTransferPayload, copyTextWithFallback, isCopyableResourceUrl } from '../manualActions.js'
+import {
+  buildManualTransferPayload,
+  copyTextWithFallback,
+  getResourceLink,
+  isCopyableResourceUrl,
+  openResourceLink,
+} from '../manualActions.js'
 
-const FRONTEND_VERSION = '4.8.24'
-const FRONTEND_BUILD_ID = typeof __TG115_BUILD_ID__ === 'string' ? __TG115_BUILD_ID__ : 'v4.8.24'
+const FRONTEND_VERSION = '4.8.25'
+const FRONTEND_BUILD_ID = typeof __TG115_BUILD_ID__ === 'string' ? __TG115_BUILD_ID__ : 'v4.8.25'
 const FRONTEND_BUILD_TIME = typeof __TG115_BUILD_TIME__ === 'string' ? __TG115_BUILD_TIME__ : 'unknown'
 
 const props = defineProps({
@@ -558,7 +565,7 @@ function normalizeManualResult(value, index) {
     quality_class: qualityClass,
     has_chinese_subtitle: item.has_chinese_subtitle === true,
     receive_code: manualSafeText(item.receive_code).slice(0, 16),
-    share_url: manualSafeText(item.share_url),
+    share_url: getResourceLink(item),
   }
 }
 
@@ -635,7 +642,7 @@ function manualSourceLabel(value) { return ({ tg: 'TG', site: '观影', pansou: 
 function manualPanLabel(value) { return ({ '115': '115网盘', quark: '夸克网盘', baidu: '百度网盘', aliyun: '阿里网盘', xunlei: '迅雷网盘', cloud189: '天翼网盘', uc: 'UC网盘', '123': '123网盘', magnet: '磁力' })[value] || '其他' }
 function manualQualityLabel(item) { return ({ '4k': '4K', '1080p': '1080P', '720p': '720P' })[item?.resolution] || '未知' }
 function manualFullUrl(item) {
-  let url = manualSafeText(item?.share_url)
+  let url = getResourceLink(item)
   if (item?.pan_type === '115' && item?.receive_code && !/[?&](password|receive_code|pwd)=/.test(url)) url += `${url.includes('?') ? '&' : '?'}password=${item.receive_code}`
   return url
 }
@@ -651,6 +658,14 @@ async function copyManualResult(item) {
   } catch {
     showSnack('复制失败，请手动复制', 'error')
   }
+}
+function openManualResult(item) {
+  const url = manualFullUrl(item).trim()
+  if (!isCopyableResourceUrl(url)) {
+    showSnack('该资源没有有效链接', 'warning')
+    return
+  }
+  if (!openResourceLink(url)) showSnack('链接无法打开，请检查浏览器弹窗或磁力关联设置', 'warning')
 }
 
 async function loadManualTransferDirectories(cid) {
@@ -1091,7 +1106,7 @@ onUnmounted(() => {
 .manual-result-title,.manual-result-meta,.manual-result-text { overflow-wrap:anywhere; }
 .manual-result-meta { color:rgb(var(--v-theme-primary)); font-size:.76rem; }
 .manual-result-text { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; font-size:.78rem; color:rgba(var(--v-theme-on-surface),.66); }
-.manual-result-actions { justify-content:space-between; margin-top:auto; padding-top:5px; }
+.manual-result-actions { justify-content:flex-start; gap:6px; flex-wrap:wrap; margin-top:auto; padding-top:5px; }
 .manual-link-button { border:0; }
 .manual-directory-body { max-height:55vh; overflow-y:auto; padding:10px 14px; }
 .manual-directory-toolbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }

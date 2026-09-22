@@ -58,12 +58,15 @@ class ManualVerifiedProcessContractTest(unittest.TestCase):
     def test_copy_link_has_clipboard_fallback_and_validates_complete_url(self):
         source = MANUAL.read_text(encoding="utf-8")
         self.assertIn("copyTextWithFallback", source)
+        self.assertIn("getResourceLink", source)
+        self.assertIn("openResourceLink", source)
         self.assertIn("isCopyableResourceUrl", source)
         copy = source[source.index("async function copyManualResult"):source.index("async function loadManualTransferDirectories")]
         self.assertIn("manualFullUrl(item).trim()", copy)
         self.assertIn("链接已复制", copy)
         self.assertIn("复制失败，请手动复制", copy)
         self.assertIn("该资源没有有效链接", copy)
+        self.assertIn(">打开链接</button>", source)
 
     def test_backend_rechecks_rules_and_media_identity_before_side_effects(self):
         source = PLUGIN.read_text(encoding="utf-8")

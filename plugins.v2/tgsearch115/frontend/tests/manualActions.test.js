@@ -5,7 +5,9 @@ import {
   buildManualTransferPayload,
   copyTextWithFallback,
   fallbackCopyText,
+  getResourceLink,
   isCopyableResourceUrl,
+  openResourceLink,
 } from '../src/manualActions.js'
 
 function fakeDocument({ copied = true } = {}) {
@@ -36,9 +38,23 @@ test('uses Clipboard API first and preserves the complete URL', async () => {
   const ok = await copyTextWithFallback(url, {
     navigatorRef: { clipboard: { writeText: async (value) => calls.push(value) } },
     documentRef: null,
+    isSecureContext: true,
   })
   assert.equal(ok, true)
   assert.deepEqual(calls, [url])
+})
+
+test('uses the synchronous fallback first on an insecure local HTTP page', async () => {
+  const { document, state } = fakeDocument()
+  let clipboardCalled = false
+  const ok = await copyTextWithFallback('magnet:?xt=urn:btih:0123456789abcdef', {
+    navigatorRef: { clipboard: { writeText: async () => { clipboardCalled = true } } },
+    documentRef: document,
+    isSecureContext: false,
+  })
+  assert.equal(ok, true)
+  assert.equal(clipboardCalled, false)
+  assert.equal(state.selected, true)
 })
 
 test('falls back to a temporary textarea when Clipboard API rejects', async () => {
@@ -47,12 +63,32 @@ test('falls back to a temporary textarea when Clipboard API rejects', async () =
   const ok = await copyTextWithFallback(url, {
     navigatorRef: { clipboard: { writeText: async () => { throw new Error('denied') } } },
     documentRef: document,
+    isSecureContext: true,
   })
   assert.equal(ok, true)
   assert.equal(state.value, url)
   assert.equal(state.appended, 1)
   assert.equal(state.removed, 1)
   assert.equal(state.selected, true)
+})
+
+test('selects complete links from all supported result fields', () => {
+  const magnet = 'magnet:?xt=urn:btih:0123456789abcdef'
+  assert.equal(getResourceLink({ title: 'ignored', magnet }), magnet)
+  assert.equal(getResourceLink({ download_url: 'https://115.com/s/example?password=abcd' }), 'https://115.com/s/example?password=abcd')
+  assert.equal(getResourceLink({ url: 'not a link' }), '')
+})
+
+test('opens web links in a protected new tab and magnet links through an anchor', () => {
+  const opened = []
+  assert.equal(openResourceLink('https://115.com/s/example', { windowRef: { open: (...args) => { opened.push(args); return {} } } }), true)
+  assert.deepEqual(opened[0], ['https://115.com/s/example', '_blank', 'noopener,noreferrer'])
+  const state = { appended: 0, removed: 0, clicked: false }
+  const anchor = { style: {}, click() { state.clicked = true }, remove() { state.removed += 1 } }
+  const document = { body: { appendChild() { state.appended += 1 } }, createElement() { return anchor } }
+  assert.equal(openResourceLink('magnet:?xt=urn:btih:0123456789abcdef', { documentRef: document }), true)
+  assert.equal(state.clicked, true)
+  assert.equal(state.removed, 1)
 })
 
 test('fallback reports failure and still removes its temporary node', () => {
