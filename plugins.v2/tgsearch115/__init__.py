@@ -249,7 +249,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.8.22"
+    plugin_version = "4.8.23"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -624,6 +624,14 @@ class TgSearch115(_PluginBase):
                 "auth": "bear",
                 "summary": "手动转存 115 分享链接",
                 "description": "GET /transfer?share_url=&target=，target 留空用默认目录",
+            },
+            {
+                "path": "/manual/transfer",
+                "endpoint": self.__manual_transfer_api,
+                "methods": ["POST"],
+                "auth": "bear",
+                "summary": "不绑定订阅的手动 115 转存",
+                "description": "POST /manual/transfer，body: {confirm, share_url, target}",
             },
             {
                 "path": "/manual/subscriptions",
@@ -3225,6 +3233,56 @@ class TgSearch115(_PluginBase):
             return JSONResponse({"status": 0, "msg": "等待扫码", "login_ok": False})
 
     # ---------------------------- 手动转存 / 手动搜索 API ----------------------------
+    def __manual_transfer_api(self, payload: dict = Body(default=None)):  # noqa: B008
+        """Transfer a selected 115 share to a user-selected directory only.
+
+        This endpoint is deliberately isolated from subscriptions, automatic
+        processing and the offline task ledger.
+        """
+        from starlette.responses import JSONResponse
+
+        payload = payload if isinstance(payload, dict) else {}
+        if payload.get("confirm") is not True:
+            return JSONResponse(
+                {"success": False, "message": "手动转存必须显式确认"},
+                status_code=400,
+            )
+        share_url = str(payload.get("share_url") or "").strip()
+        target = str(payload.get("target") or "").strip()
+        if not share_url:
+            return JSONResponse(
+                {"success": False, "message": "资源缺少有效的 115 分享链接"},
+                status_code=400,
+            )
+        if not target:
+            return JSONResponse(
+                {"success": False, "message": "请选择 115 目标目录"},
+                status_code=400,
+            )
+        if not self._transfer or not self._p115_cookie:
+            return JSONResponse(
+                {"success": False, "message": "未配置 115 Cookie，请先扫码登录"},
+                status_code=400,
+            )
+        try:
+            ok, message, _data = self._transfer.transfer(share_url, target)
+            safe_message = str(message or ("转存成功" if ok else "转存失败"))[:500]
+            logger.info("【TG115】独立手动 115 转存完成 ok=%s", bool(ok))
+            return JSONResponse(
+                {"success": bool(ok), "message": safe_message},
+                status_code=200 if ok else 502,
+            )
+        except Exception as exc:  # noqa: BLE001 - third-party 115 client errors are not stable
+            error_category = type(exc).__name__
+            logger.error("【TG115】独立手动 115 转存异常 type=%s", error_category)
+            return JSONResponse(
+                {
+                    "success": False,
+                    "message": f"手动转存服务异常（{error_category}）",
+                },
+                status_code=500,
+            )
+
     def __manual_subscriptions_api(self):
         """Return only non-secret subscription labels for manual verification."""
         from starlette.responses import JSONResponse

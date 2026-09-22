@@ -3,10 +3,11 @@
     "name": "拦截mp订阅",
     "description": "聚合 TG、观影、PanSou 与聚影资源，经 MoviePilot 规则和精确媒体身份确认后按来源顺序转存；完整磁力统一使用插件内置 115 离线，115 分享继续使用插件内置 115 转存。",
     "labels": "订阅,Telegram,115网盘",
-    "version": "4.8.22",
+    "version": "4.8.23",
     "author": "MoviePilot User",
     "level": 2,
     "history": {
+      "v4.8.23": "手动 115 转存改为只选择目标目录，不再要求订阅；使用独立 POST 接口且不触碰订阅/自动任务。复制链接增加 Clipboard API 与临时 textarea 回退，兼容局域网 HTTP 页面。",
       "v4.8.22": "修复 PanSou 超时根因：撤销 v4.8.21 的 blocked_sources 阻断逻辑（用户反馈应解决超因而非阻断）；PanSou 搜索等待时间默认值从 300 秒降为 60 秒（留足余量接收 PanSou 完整结果），配置迁移覆盖旧默认值 300 自动生效；推荐 PanSou 服务端 ASYNC_RESPONSE_TIMEOUT 设为 30 秒（等于 PLUGIN_TIMEOUT，一次性返回完整结果而非 4 秒返回部分结果靠缓存）；当 pansou_timeout>120 秒时输出警告日志。根因是 v4.8.17 把 PanSou 服务端 ASYNC_RESPONSE_TIMEOUT 从默认 4 秒改成 300 秒，导致 PanSou 等超慢插件才返回，引发 504。",
       "v4.8.21": "修复多关键字搜索预算耗尽导致 PanSou 无法搜索：搜索预算改为按关键字数量动态计算（每关键字 pansou_timeout+30 秒，上限 1800 秒），一个关键字 PanSou 超时不再耗尽全部预算；来源超时或忙碌后自动加入阻塞集合，剩余关键字直接跳过该来源避免 BoundedSourceRunner 锁等待；pansou_scraper safe_error 记录实际异常类型（如 ConnectError），便于排查连接级失败。",
       "v4.8.20": "进一步放宽熔断器策略：只有 403/429 限流才触发来源冷却，网络请求失败、请求超时、5xx 服务端错误、所有异常均不触发熔断器，只记录健康状态和日志。避免任何非限流错误导致 PanSou/TG 被短期封禁，确保来源在下次搜索时立即可用。",

@@ -11,7 +11,19 @@ PAGE = ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" /
 
 
 class ManualVerifiedProcessContractTest(unittest.TestCase):
-    def test_frontend_requires_subscription_and_uses_verified_endpoint(self):
+    def test_115_manual_transfer_selects_directory_without_subscription(self):
+        source = MANUAL.read_text(encoding="utf-8")
+        self.assertIn("item.pan_type === '115' ? openManualTransferDialog(item) : openManualProcessDialog(item)", source)
+        self.assertIn("选择 115 转存目录", source)
+        self.assertIn("转存到此目录", source)
+        transfer = source[source.index("async function submitManualTransfer"):source.index("async function loadManualSubscriptions")]
+        self.assertIn("/manual/transfer", transfer)
+        self.assertIn("share_url: shareUrl", transfer)
+        self.assertIn("target,", transfer)
+        self.assertNotIn("subscribe_id", transfer)
+        self.assertNotIn("manualSubscribeId", transfer)
+
+    def test_subscription_verified_flow_is_preserved_for_magnet_action(self):
         source = MANUAL.read_text(encoding="utf-8")
         self.assertIn("manualSubscribeId", source)
         self.assertIn("/manual/subscriptions", source)
@@ -20,6 +32,35 @@ class ManualVerifiedProcessContractTest(unittest.TestCase):
         self.assertIn("confirm: true", transfer)
         self.assertNotIn("/magnet/offline", transfer)
         self.assertNotIn("/transfer?", transfer)
+
+    def test_manual_transfer_backend_is_post_only_and_subscription_independent(self):
+        source = PLUGIN.read_text(encoding="utf-8")
+        self.assertIn('"path": "/manual/transfer"', source)
+        route_start = source.index('"path": "/manual/transfer"')
+        route_end = source.index("},", route_start)
+        self.assertIn('"methods": ["POST"]', source[route_start:route_end])
+        start = source.index("    def __manual_transfer_api")
+        end = source.index("    def __manual_subscriptions_api", start)
+        method = source[start:end]
+        self.assertIn('payload.get("confirm") is not True', method)
+        self.assertIn('payload.get("share_url")', method)
+        self.assertIn('payload.get("target")', method)
+        self.assertIn("self._transfer.transfer(share_url, target)", method)
+        for forbidden in (
+            "SubscribeOper", "subscribe_id", "_finish_subscribe", "_cms_tasks",
+            "_magnet_queues", "_submit_magnet_to_115",
+        ):
+            self.assertNotIn(forbidden, method)
+
+    def test_copy_link_has_clipboard_fallback_and_validates_complete_url(self):
+        source = MANUAL.read_text(encoding="utf-8")
+        self.assertIn("copyTextWithFallback", source)
+        self.assertIn("isCopyableResourceUrl", source)
+        copy = source[source.index("async function copyManualResult"):source.index("async function loadManualTransferDirectories")]
+        self.assertIn("manualFullUrl(item).trim()", copy)
+        self.assertIn("链接已复制", copy)
+        self.assertIn("复制失败，请手动复制", copy)
+        self.assertIn("该资源没有有效链接", copy)
 
     def test_backend_rechecks_rules_and_media_identity_before_side_effects(self):
         source = PLUGIN.read_text(encoding="utf-8")
