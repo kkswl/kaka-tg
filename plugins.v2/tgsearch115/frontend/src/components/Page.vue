@@ -333,11 +333,12 @@
               <div class="manual-result-text">{{ item.text || item.title }}</div>
               <div class="manual-result-actions">
                 <button type="button" class="manual-link-button" @click="copyManualResult(item)">复制链接</button>
+                <button type="button" class="manual-link-button" @click="openManualResult(item)">打开链接</button>
                 <button
                   v-if="['115', 'magnet'].includes(item.pan_type)"
                   type="button"
                   class="manual-action-button"
-                  @click="openManualProcessDialog(item)"
+                  @click="item.pan_type === '115' ? openManualTransferDialog(item) : openManualProcessDialog(item)"
                 >{{ item.pan_type === 'magnet' ? '离线到115' : '转存' }}</button>
               </div>
             </article>
@@ -372,6 +373,42 @@
           <v-spacer />
           <v-btn variant="text" :disabled="!!manualTransferring" @click="closeManualProcessDialog">取消</v-btn>
           <v-btn color="primary" variant="flat" :disabled="!manualSubscribeId" :loading="!!manualTransferring" @click="submitManualResult">确认提交</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <v-dialog v-model="manualTransferDialog" max-width="560" persistent>
+      <v-card rounded="lg">
+        <v-card-title class="d-flex align-center px-4 py-3">
+          <v-icon icon="mdi-folder-open" class="mr-2" />选择 115 转存目录
+        </v-card-title>
+        <v-divider />
+        <v-card-text class="px-2 py-2" style="max-height: 55vh; overflow-y: auto;">
+          <div class="d-flex align-center px-2 py-1 flex-wrap">
+            <v-btn variant="text" size="small" prepend-icon="mdi-home" :disabled="manualTransferLoading" @click="navigateManualTransferRoot">根目录</v-btn>
+            <template v-for="(part, index) in manualTransferPath.slice(1)" :key="part.cid">
+              <v-icon size="small" class="mx-1">mdi-chevron-right</v-icon>
+              <span class="text-caption">{{ part.name }}</span>
+            </template>
+            <v-spacer />
+            <v-btn v-if="manualTransferPath.length > 1" variant="text" size="small" prepend-icon="mdi-arrow-left" :disabled="manualTransferLoading" @click="navigateManualTransferUp">上一级</v-btn>
+          </div>
+          <v-progress-circular v-if="manualTransferLoading" indeterminate size="20" width="2" class="ma-4" />
+          <v-list v-else density="compact" nav>
+            <v-list-item v-for="directory in manualTransferDirectories" :key="directory.cid" @click="navigateManualTransferInto(directory)">
+              <template #prepend><v-icon icon="mdi-folder" color="amber-darken-2" /></template>
+              <v-list-item-title>{{ directory.name }}</v-list-item-title>
+              <template #append><v-icon icon="mdi-chevron-right" /></template>
+            </v-list-item>
+          </v-list>
+          <div v-if="!manualTransferLoading && !manualTransferDirectories.length" class="manual-empty-state">当前目录没有子目录</div>
+        </v-card-text>
+        <v-divider />
+        <v-card-actions class="px-4 py-3">
+          <span class="text-caption text-medium-emphasis text-truncate" style="max-width: 58%;">转存到：{{ manualTransferPathText }}</span>
+          <v-spacer />
+          <v-btn variant="text" :disabled="manualTransferSubmitting" @click="closeManualTransferDialog">取消</v-btn>
+          <v-btn color="primary" variant="flat" :loading="manualTransferSubmitting" @click="submitManualTransfer">转存到此目录</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -446,8 +483,18 @@ const manualSelectedResult = ref(null)
 const manualSubscriptions = ref([])
 const manualSubscribeId = ref(null)
 const manualTransferring = ref('')
+const manualTransferDialog = ref(false)
+const manualTransferResult = ref(null)
+const manualTransferPath = ref([{ cid: '0', name: '根目录' }])
+const manualTransferDirectories = ref([])
+const manualTransferLoading = ref(false)
+const manualTransferSubmitting = ref(false)
 const manualCacheAvailable = ref(true)
 const manualDetailFilters = computed(() => manualResourceType.value === 'magnet' ? MANUAL_MAGNET_FILTERS : MANUAL_PAN_FILTERS)
+const manualTransferPathText = computed(() => {
+  const names = manualTransferPath.value.slice(1).map((part) => part.name)
+  return names.length ? `/${names.join('/')}` : '/'
+})
 const manualFilteredResults = computed(() => {
   try {
     return manualResults.value.filter((item) => {
@@ -582,10 +629,128 @@ function manualFullUrl(item) {
   if (item?.pan_type === '115' && item?.receive_code && !/[?&](password|receive_code|pwd)=/.test(url)) url += `${url.includes('?') ? '&' : '?'}password=${item.receive_code}`
   return url
 }
+
+function fallbackCopyText(text) {
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', '')
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  textarea.style.pointerEvents = 'none'
+  document.body.appendChild(textarea)
+  textarea.focus()
+  textarea.select()
+  textarea.setSelectionRange(0, text.length)
+  try {
+    if (!document.execCommand('copy')) throw new Error('copy command failed')
+  } finally {
+    document.body.removeChild(textarea)
+  }
+}
+
+async function copyText(text) {
+  if (navigator.clipboard?.writeText && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text)
+      return
+    } catch {}
+  }
+  fallbackCopyText(text)
+}
+
 async function copyManualResult(item) {
-  try { await navigator.clipboard.writeText(manualFullUrl(item)); showSnack('已复制链接', 'success') }
+  const url = manualFullUrl(item).trim()
+  if (!url) {
+    showSnack('该资源没有可复制的链接', 'warning')
+    return
+  }
+  try { await copyText(url); showSnack('链接已复制', 'success') }
   catch { showSnack('复制失败，请手动复制', 'error') }
 }
+
+function openManualResult(item) {
+  const url = manualFullUrl(item).trim()
+  if (!url) {
+    showSnack('该资源没有可打开的链接', 'warning')
+    return
+  }
+  const opened = window.open(url, '_blank', 'noopener,noreferrer')
+  if (opened) opened.opener = null
+  else showSnack('链接无法打开，请检查浏览器的弹窗拦截设置', 'warning')
+}
+
+async function loadManualTransferDirectories(cid) {
+  if (!props.api?.get) {
+    showSnack('目录服务不可用', 'error')
+    return
+  }
+  manualTransferLoading.value = true
+  manualTransferDirectories.value = []
+  try {
+    const data = unwrapApiResponse(await props.api.get(`plugin/${PID.value}/dirs?cid=${encodeURIComponent(cid)}`))
+    if (data?.success) manualTransferDirectories.value = Array.isArray(data.dirs) ? data.dirs : []
+    else showSnack(manualSafeText(data?.message, '获取目录失败'), 'error')
+  } catch (error) {
+    showSnack(safeRequestError(error, '获取目录失败'), 'error')
+  } finally {
+    manualTransferLoading.value = false
+  }
+}
+
+async function openManualTransferDialog(item) {
+  if (!manualFullUrl(item).trim()) {
+    showSnack('该资源没有可转存的链接', 'warning')
+    return
+  }
+  manualTransferResult.value = item
+  manualTransferPath.value = [{ cid: '0', name: '根目录' }]
+  manualTransferDialog.value = true
+  await loadManualTransferDirectories('0')
+}
+
+function closeManualTransferDialog() {
+  if (manualTransferSubmitting.value) return
+  manualTransferDialog.value = false
+  manualTransferResult.value = null
+  manualTransferDirectories.value = []
+}
+
+async function navigateManualTransferInto(directory) {
+  manualTransferPath.value.push({ cid: directory.cid, name: directory.name })
+  await loadManualTransferDirectories(directory.cid)
+}
+
+async function navigateManualTransferUp() {
+  if (manualTransferPath.value.length > 1) manualTransferPath.value.pop()
+  await loadManualTransferDirectories(manualTransferPath.value.at(-1).cid)
+}
+
+async function navigateManualTransferRoot() {
+  manualTransferPath.value = [{ cid: '0', name: '根目录' }]
+  await loadManualTransferDirectories('0')
+}
+
+async function submitManualTransfer() {
+  const item = manualTransferResult.value
+  if (!item || !props.api?.get) return
+  manualTransferSubmitting.value = true
+  try {
+    const target = manualTransferPath.value.at(-1).cid
+    const shareUrl = manualFullUrl(item)
+    const data = unwrapApiResponse(await props.api.get(`plugin/${PID.value}/transfer?share_url=${encodeURIComponent(shareUrl)}&target=${encodeURIComponent(target)}`))
+    const success = data?.success === true || data?.code === 0
+    showSnack(manualSafeText(data?.message, success ? '转存成功' : '转存失败'), success ? 'success' : 'error')
+    if (success) {
+      manualTransferSubmitting.value = false
+      closeManualTransferDialog()
+    }
+  } catch (error) {
+    showSnack(safeRequestError(error, '转存请求失败，请重试'), 'error')
+  } finally {
+    manualTransferSubmitting.value = false
+  }
+}
+
 async function loadManualSubscriptions() {
   if (!props.api?.get) return
   try {
