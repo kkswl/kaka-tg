@@ -11,16 +11,7 @@ PAGE = ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" /
 
 
 class ManualVerifiedProcessContractTest(unittest.TestCase):
-    def test_115_manual_transfer_uses_direct_endpoint_without_subscription(self):
-        source = MANUAL.read_text(encoding="utf-8")
-        self.assertIn("item.pan_type === '115' ? openManualTransferDialog(item) : openManualProcessDialog(item)", source)
-        transfer = source[source.index("async function submitManualTransfer"):source.index("async function loadManualSubscriptions")]
-        self.assertIn("/transfer?share_url=", transfer)
-        self.assertIn("&target=", transfer)
-        self.assertNotIn("subscribe_id", transfer)
-        self.assertNotIn("/manual/process", transfer)
-
-    def test_subscription_verified_flow_remains_for_magnet_actions(self):
+    def test_frontend_requires_subscription_and_uses_verified_endpoint(self):
         source = MANUAL.read_text(encoding="utf-8")
         self.assertIn("manualSubscribeId", source)
         self.assertIn("/manual/subscriptions", source)
@@ -28,23 +19,7 @@ class ManualVerifiedProcessContractTest(unittest.TestCase):
         transfer = source[source.index("async function submitManualResult"):source.index("watch([manualSource")]
         self.assertIn("confirm: true", transfer)
         self.assertNotIn("/magnet/offline", transfer)
-
-    def test_copy_link_has_clipboard_and_http_fallback(self):
-        source = MANUAL.read_text(encoding="utf-8")
-        copy = source[source.index("function fallbackCopyText"):source.index("async function loadManualTransferDirectories")]
-        self.assertIn("navigator.clipboard?.writeText", copy)
-        self.assertIn("window.isSecureContext", copy)
-        self.assertIn("document.execCommand('copy')", copy)
-        self.assertIn("该资源没有可复制的链接", copy)
-        self.assertIn("链接已复制", copy)
-
-    def test_manual_result_can_open_its_real_link_in_a_new_window(self):
-        source = MANUAL.read_text(encoding="utf-8")
-        self.assertIn('>打开链接</button>', source)
-        open_method = source[source.index("function openManualResult"):source.index("async function loadManualTransferDirectories")]
-        self.assertIn("manualFullUrl(item).trim()", open_method)
-        self.assertIn("window.open(url, '_blank', 'noopener,noreferrer')", open_method)
-        self.assertIn("opened.opener = null", open_method)
+        self.assertNotIn("/transfer?", transfer)
 
     def test_backend_rechecks_rules_and_media_identity_before_side_effects(self):
         source = PLUGIN.read_text(encoding="utf-8")
