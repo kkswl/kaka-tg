@@ -47,3 +47,9 @@ export async function copyTextWithFallback(text, options = {}) {
   }
   return fallbackCopyText(text, documentRef)
 }
+
+export function buildManualTransferPayload(shareUrl, target, useDefault = true) {
+  const payload = { confirm: true, share_url: String(shareUrl || '').trim() }
+  if (!useDefault) payload.target = String(target || '0').trim() || '0'
+  return payload
+}

@@ -379,11 +379,16 @@
     <v-dialog v-model="manualTransferDialog" max-width="560" persistent>
       <v-card rounded="lg">
         <v-card-title class="d-flex align-center px-4 py-3">
-          <v-icon icon="mdi-folder-open" class="mr-2" />选择 115 转存目录
+          <v-icon icon="mdi-folder-open" class="mr-2" />转存到 115
         </v-card-title>
         <v-divider />
         <v-card-text class="manual-directory-body">
-          <div class="manual-directory-toolbar">
+          <div v-if="manualTransferUseDefault" class="manual-default-target">
+            <div>将使用插件设置中绑定的 115 默认目录。</div>
+            <button type="button" class="manual-link-button" @click="chooseManualTransferDirectory">选择其他目录</button>
+          </div>
+          <div v-else class="manual-directory-toolbar">
+            <button type="button" class="manual-link-button" :disabled="manualTransferLoading" @click="useManualTransferDefault">使用默认目录</button>
             <button type="button" class="manual-link-button" :disabled="manualTransferLoading" @click="navigateManualTransferRoot">根目录</button>
             <span class="text-caption text-medium-emphasis">{{ manualTransferPathText }}</span>
             <button
@@ -394,8 +399,8 @@
               @click="navigateManualTransferUp"
             >上一级</button>
           </div>
-          <div v-if="manualTransferLoading" class="manual-loading" role="status">目录加载中…</div>
-          <div v-else-if="manualTransferDirectories.length" class="manual-directory-list">
+          <div v-if="!manualTransferUseDefault && manualTransferLoading" class="manual-loading" role="status">目录加载中…</div>
+          <div v-else-if="!manualTransferUseDefault && manualTransferDirectories.length" class="manual-directory-list">
             <button
               v-for="directory in manualTransferDirectories"
               :key="directory.cid"
@@ -404,14 +409,14 @@
               @click="navigateManualTransferInto(directory)"
             >📁 {{ directory.name }}</button>
           </div>
-          <div v-else class="manual-empty-state">当前目录没有子目录，可直接转存到这里</div>
+          <div v-else-if="!manualTransferUseDefault" class="manual-empty-state">当前目录没有子目录，可直接转存到这里</div>
         </v-card-text>
         <v-divider />
         <v-card-actions class="px-4 py-3">
-          <span class="text-caption text-medium-emphasis">目标：{{ manualTransferPathText }}</span>
+          <span class="text-caption text-medium-emphasis">目标：{{ manualTransferUseDefault ? '绑定的默认目录' : manualTransferPathText }}</span>
           <v-spacer />
           <v-btn variant="text" :disabled="manualTransferSubmitting" @click="closeManualTransferDialog">取消</v-btn>
-          <v-btn color="primary" variant="flat" :loading="manualTransferSubmitting" @click="submitManualTransfer">转存到此目录</v-btn>
+          <v-btn color="primary" variant="flat" :loading="manualTransferSubmitting" @click="submitManualTransfer">{{ manualTransferUseDefault ? '转存到默认目录' : '转存到此目录' }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -422,10 +427,10 @@
 
 <script setup>
 import { computed, getCurrentInstance, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { copyTextWithFallback, isCopyableResourceUrl } from '../manualActions.js'
+import { buildManualTransferPayload, copyTextWithFallback, isCopyableResourceUrl } from '../manualActions.js'
 
-const FRONTEND_VERSION = '4.8.23'
-const FRONTEND_BUILD_ID = typeof __TG115_BUILD_ID__ === 'string' ? __TG115_BUILD_ID__ : 'v4.8.23'
+const FRONTEND_VERSION = '4.8.24'
+const FRONTEND_BUILD_ID = typeof __TG115_BUILD_ID__ === 'string' ? __TG115_BUILD_ID__ : 'v4.8.24'
 const FRONTEND_BUILD_TIME = typeof __TG115_BUILD_TIME__ === 'string' ? __TG115_BUILD_TIME__ : 'unknown'
 
 const props = defineProps({
@@ -493,6 +498,7 @@ const manualTransferPath = ref([{ cid: '0', name: '根目录' }])
 const manualTransferDirectories = ref([])
 const manualTransferLoading = ref(false)
 const manualTransferSubmitting = ref(false)
+const manualTransferUseDefault = ref(true)
 const manualCacheAvailable = ref(true)
 const manualDetailFilters = computed(() => manualResourceType.value === 'magnet' ? MANUAL_MAGNET_FILTERS : MANUAL_PAN_FILTERS)
 const manualTransferPathText = computed(() => {
@@ -675,8 +681,9 @@ async function openManualTransferDialog(item) {
   }
   manualTransferResult.value = item
   manualTransferPath.value = [{ cid: '0', name: '根目录' }]
+  manualTransferUseDefault.value = true
+  manualTransferDirectories.value = []
   manualTransferDialog.value = true
-  await loadManualTransferDirectories('0')
 }
 
 function closeManualTransferDialog() {
@@ -692,6 +699,17 @@ async function navigateManualTransferInto(directory) {
   if (!cid || !name) return
   manualTransferPath.value.push({ cid, name })
   await loadManualTransferDirectories(cid)
+}
+
+async function chooseManualTransferDirectory() {
+  manualTransferUseDefault.value = false
+  manualTransferPath.value = [{ cid: '0', name: '根目录' }]
+  await loadManualTransferDirectories('0')
+}
+
+function useManualTransferDefault() {
+  manualTransferUseDefault.value = true
+  manualTransferDirectories.value = []
 }
 
 async function navigateManualTransferUp() {
@@ -714,12 +732,12 @@ async function submitManualTransfer() {
   }
   manualTransferSubmitting.value = true
   try {
-    const target = manualTransferPath.value.at(-1)?.cid || '0'
-    const response = await props.api.post(`plugin/${PID.value}/manual/transfer`, {
-      confirm: true,
-      share_url: shareUrl,
-      target,
-    })
+    const payload = buildManualTransferPayload(
+      shareUrl,
+      manualTransferPath.value.at(-1)?.cid || '0',
+      manualTransferUseDefault.value,
+    )
+    const response = await props.api.post(`plugin/${PID.value}/manual/transfer`, payload)
     const data = unwrapApiResponse(response)
     const success = data?.success === true
     showSnack(manualSafeText(data?.message, success ? '转存成功' : '转存失败'), success ? 'success' : 'error')
@@ -1077,6 +1095,7 @@ onUnmounted(() => {
 .manual-link-button { border:0; }
 .manual-directory-body { max-height:55vh; overflow-y:auto; padding:10px 14px; }
 .manual-directory-toolbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.manual-default-target { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; min-height:48px; }
 .manual-directory-list { display:grid; gap:5px; margin-top:8px; }
 .manual-directory-item { width:100%; min-height:40px; padding:8px 10px; border:0; border-radius:6px; background:transparent; color:inherit; text-align:left; cursor:pointer; }
 .manual-directory-item:hover,.manual-directory-item:focus-visible { background:rgba(var(--v-theme-primary),.1); outline:none; }

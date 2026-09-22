@@ -11,15 +11,17 @@ PAGE = ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" /
 
 
 class ManualVerifiedProcessContractTest(unittest.TestCase):
-    def test_115_manual_transfer_selects_directory_without_subscription(self):
+    def test_115_manual_transfer_uses_default_or_selected_directory_without_subscription(self):
         source = MANUAL.read_text(encoding="utf-8")
         self.assertIn("item.pan_type === '115' ? openManualTransferDialog(item) : openManualProcessDialog(item)", source)
-        self.assertIn("选择 115 转存目录", source)
+        self.assertIn("绑定的默认目录", source)
+        self.assertIn("转存到默认目录", source)
+        self.assertIn("选择其他目录", source)
         self.assertIn("转存到此目录", source)
         transfer = source[source.index("async function submitManualTransfer"):source.index("async function loadManualSubscriptions")]
         self.assertIn("/manual/transfer", transfer)
-        self.assertIn("share_url: shareUrl", transfer)
-        self.assertIn("target,", transfer)
+        self.assertIn("buildManualTransferPayload(", transfer)
+        self.assertIn("shareUrl,", transfer)
         self.assertNotIn("subscribe_id", transfer)
         self.assertNotIn("manualSubscribeId", transfer)
 
@@ -46,6 +48,7 @@ class ManualVerifiedProcessContractTest(unittest.TestCase):
         self.assertIn('payload.get("share_url")', method)
         self.assertIn('payload.get("target")', method)
         self.assertIn("self._transfer.transfer(share_url, target)", method)
+        self.assertNotIn("请选择 115 目标目录", method)
         for forbidden in (
             "SubscribeOper", "subscribe_id", "_finish_subscribe", "_cms_tasks",
             "_magnet_queues", "_submit_magnet_to_115",

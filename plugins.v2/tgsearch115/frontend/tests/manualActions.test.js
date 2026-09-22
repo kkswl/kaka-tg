@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { copyTextWithFallback, fallbackCopyText, isCopyableResourceUrl } from '../src/manualActions.js'
+import {
+  buildManualTransferPayload,
+  copyTextWithFallback,
+  fallbackCopyText,
+  isCopyableResourceUrl,
+} from '../src/manualActions.js'
 
 function fakeDocument({ copied = true } = {}) {
   const state = { appended: 0, removed: 0, selected: false, value: '' }
@@ -61,4 +66,17 @@ test('accepts complete web and magnet links but rejects empty or display text', 
   assert.equal(isCopyableResourceUrl('magnet:?xt=urn:btih:0123456789abcdef'), true)
   assert.equal(isCopyableResourceUrl(''), false)
   assert.equal(isCopyableResourceUrl('影片标题'), false)
+})
+
+test('omits target for the bound default directory and includes an explicitly selected cid', () => {
+  const url = 'https://115.com/s/example?password=abcd'
+  assert.deepEqual(buildManualTransferPayload(url, '123', true), {
+    confirm: true,
+    share_url: url,
+  })
+  assert.deepEqual(buildManualTransferPayload(url, '123', false), {
+    confirm: true,
+    share_url: url,
+    target: '123',
+  })
 })

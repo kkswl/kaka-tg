@@ -51,6 +51,12 @@ async function copyTextWithFallback(text, options = {}) {
   return fallbackCopyText(text, documentRef)
 }
 
+function buildManualTransferPayload(shareUrl, target, useDefault = true) {
+  const payload = { confirm: true, share_url: String(shareUrl || '').trim() };
+  if (!useDefault) payload.target = String(target).trim() || '0';
+  return payload
+}
+
 const {resolveComponent:_resolveComponent,createVNode:_createVNode,toDisplayString:_toDisplayString,createElementVNode:_createElementVNode,createTextVNode:_createTextVNode,withCtx:_withCtx,withModifiers:_withModifiers,withKeys:_withKeys,normalizeClass:_normalizeClass,openBlock:_openBlock,createElementBlock:_createElementBlock,createCommentVNode:_createCommentVNode,renderList:_renderList,Fragment:_Fragment,createBlock:_createBlock,vShow:_vShow,withDirectives:_withDirectives,unref:_unref,vModelText:_vModelText} = await importShared('vue');
 
 const _hoisted_1 = { class: "tg115-page" };
@@ -195,27 +201,35 @@ const _hoisted_65 = {
   class: "manual-empty-state"
 };
 const _hoisted_66 = { class: "frontend-build-info text-caption text-medium-emphasis mt-2" };
-const _hoisted_67 = { class: "manual-directory-toolbar" };
-const _hoisted_68 = ["disabled"];
-const _hoisted_69 = { class: "text-caption text-medium-emphasis" };
-const _hoisted_70 = ["disabled"];
-const _hoisted_71 = {
+const _hoisted_67 = {
   key: 0,
+  class: "manual-default-target"
+};
+const _hoisted_68 = {
+  key: 1,
+  class: "manual-directory-toolbar"
+};
+const _hoisted_69 = ["disabled"];
+const _hoisted_70 = ["disabled"];
+const _hoisted_71 = { class: "text-caption text-medium-emphasis" };
+const _hoisted_72 = ["disabled"];
+const _hoisted_73 = {
+  key: 2,
   class: "manual-loading",
   role: "status"
 };
-const _hoisted_72 = {
-  key: 1,
+const _hoisted_74 = {
+  key: 3,
   class: "manual-directory-list"
 };
-const _hoisted_73 = ["onClick"];
-const _hoisted_74 = {
-  key: 2,
+const _hoisted_75 = ["onClick"];
+const _hoisted_76 = {
+  key: 4,
   class: "manual-empty-state"
 };
-const _hoisted_75 = { class: "text-caption text-medium-emphasis" };
+const _hoisted_77 = { class: "text-caption text-medium-emphasis" };
 const {computed,getCurrentInstance,onMounted,onUnmounted,reactive,ref,watch} = await importShared('vue');
-const FRONTEND_VERSION = "4.8.23";
+const FRONTEND_VERSION = "4.8.24";
 const MANUAL_CACHE_KEY = "TgSearch115:manual-search:v2";
 const FORCE_TIMELINE_CONFIRMATION = "强制清理诊断记录";
 const _sfc_main = {
@@ -226,8 +240,8 @@ const _sfc_main = {
   },
   emits: ["close", "back"],
   setup(__props, { emit: __emit }) {
-    const FRONTEND_BUILD_ID = "v4.8.23-manual-transfer-copy" ;
-    const FRONTEND_BUILD_TIME = "2026-09-22T07:58:21.807Z" ;
+    const FRONTEND_BUILD_ID = "v4.8.24-default-manual-target" ;
+    const FRONTEND_BUILD_TIME = "2026-09-22T08:27:57.891Z" ;
     const props = __props;
     const emit = __emit;
     const instance = getCurrentInstance();
@@ -300,6 +314,7 @@ const _sfc_main = {
     const manualTransferDirectories = ref([]);
     const manualTransferLoading = ref(false);
     const manualTransferSubmitting = ref(false);
+    const manualTransferUseDefault = ref(true);
     const manualCacheAvailable = ref(true);
     const manualDetailFilters = computed(() => manualResourceType.value === "magnet" ? MANUAL_MAGNET_FILTERS : MANUAL_PAN_FILTERS);
     const manualTransferPathText = computed(() => {
@@ -509,8 +524,9 @@ const _sfc_main = {
       }
       manualTransferResult.value = item;
       manualTransferPath.value = [{ cid: "0", name: "根目录" }];
+      manualTransferUseDefault.value = true;
+      manualTransferDirectories.value = [];
       manualTransferDialog.value = true;
-      await loadManualTransferDirectories("0");
     }
     function closeManualTransferDialog() {
       if (manualTransferSubmitting.value) return;
@@ -524,6 +540,15 @@ const _sfc_main = {
       if (!cid || !name) return;
       manualTransferPath.value.push({ cid, name });
       await loadManualTransferDirectories(cid);
+    }
+    async function chooseManualTransferDirectory() {
+      manualTransferUseDefault.value = false;
+      manualTransferPath.value = [{ cid: "0", name: "根目录" }];
+      await loadManualTransferDirectories("0");
+    }
+    function useManualTransferDefault() {
+      manualTransferUseDefault.value = true;
+      manualTransferDirectories.value = [];
     }
     async function navigateManualTransferUp() {
       if (manualTransferPath.value.length > 1) manualTransferPath.value.pop();
@@ -543,12 +568,12 @@ const _sfc_main = {
       }
       manualTransferSubmitting.value = true;
       try {
-        const target = manualTransferPath.value.at(-1)?.cid || "0";
-        const response = await props.api.post(`plugin/${PID.value}/manual/transfer`, {
-          confirm: true,
-          share_url: shareUrl,
-          target
-        });
+        const payload = buildManualTransferPayload(
+          shareUrl,
+          manualTransferPath.value.at(-1)?.cid || "0",
+          manualTransferUseDefault.value
+        );
+        const response = await props.api.post(`plugin/${PID.value}/manual/transfer`, payload);
         const data = unwrapApiResponse(response);
         const success = data?.success === true;
         showSnack(manualSafeText(data?.message, success ? "转存成功" : "转存失败"), success ? "success" : "error");
@@ -1757,53 +1782,66 @@ const _sfc_main = {
                       icon: "mdi-folder-open",
                       class: "mr-2"
                     }),
-                    _cache[56] || (_cache[56] = _createTextVNode("选择 115 转存目录 ", -1))
+                    _cache[56] || (_cache[56] = _createTextVNode("转存到 115 ", -1))
                   ]),
                   _: 1
                 }),
                 _createVNode(_component_v_divider),
                 _createVNode(_component_v_card_text, { class: "manual-directory-body" }, {
                   default: _withCtx(() => [
-                    _createElementVNode("div", _hoisted_67, [
+                    manualTransferUseDefault.value ? (_openBlock(), _createElementBlock("div", _hoisted_67, [
+                      _cache[57] || (_cache[57] = _createElementVNode("div", null, "将使用插件设置中绑定的 115 默认目录。", -1)),
+                      _createElementVNode("button", {
+                        type: "button",
+                        class: "manual-link-button",
+                        onClick: chooseManualTransferDirectory
+                      }, "选择其他目录")
+                    ])) : (_openBlock(), _createElementBlock("div", _hoisted_68, [
+                      _createElementVNode("button", {
+                        type: "button",
+                        class: "manual-link-button",
+                        disabled: manualTransferLoading.value,
+                        onClick: useManualTransferDefault
+                      }, "使用默认目录", 8, _hoisted_69),
                       _createElementVNode("button", {
                         type: "button",
                         class: "manual-link-button",
                         disabled: manualTransferLoading.value,
                         onClick: navigateManualTransferRoot
-                      }, "根目录", 8, _hoisted_68),
-                      _createElementVNode("span", _hoisted_69, _toDisplayString(manualTransferPathText.value), 1),
+                      }, "根目录", 8, _hoisted_70),
+                      _createElementVNode("span", _hoisted_71, _toDisplayString(manualTransferPathText.value), 1),
                       manualTransferPath.value.length > 1 ? (_openBlock(), _createElementBlock("button", {
                         key: 0,
                         type: "button",
                         class: "manual-link-button",
                         disabled: manualTransferLoading.value,
                         onClick: navigateManualTransferUp
-                      }, "上一级", 8, _hoisted_70)) : _createCommentVNode("", true)
-                    ]),
-                    manualTransferLoading.value ? (_openBlock(), _createElementBlock("div", _hoisted_71, "目录加载中…")) : manualTransferDirectories.value.length ? (_openBlock(), _createElementBlock("div", _hoisted_72, [
+                      }, "上一级", 8, _hoisted_72)) : _createCommentVNode("", true)
+                    ])),
+                    !manualTransferUseDefault.value && manualTransferLoading.value ? (_openBlock(), _createElementBlock("div", _hoisted_73, "目录加载中…")) : !manualTransferUseDefault.value && manualTransferDirectories.value.length ? (_openBlock(), _createElementBlock("div", _hoisted_74, [
                       (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(manualTransferDirectories.value, (directory) => {
                         return _openBlock(), _createElementBlock("button", {
                           key: directory.cid,
                           type: "button",
                           class: "manual-directory-item",
                           onClick: ($event) => navigateManualTransferInto(directory)
-                        }, "📁 " + _toDisplayString(directory.name), 9, _hoisted_73);
+                        }, "📁 " + _toDisplayString(directory.name), 9, _hoisted_75);
                       }), 128))
-                    ])) : (_openBlock(), _createElementBlock("div", _hoisted_74, "当前目录没有子目录，可直接转存到这里"))
+                    ])) : !manualTransferUseDefault.value ? (_openBlock(), _createElementBlock("div", _hoisted_76, "当前目录没有子目录，可直接转存到这里")) : _createCommentVNode("", true)
                   ]),
                   _: 1
                 }),
                 _createVNode(_component_v_divider),
                 _createVNode(_component_v_card_actions, { class: "px-4 py-3" }, {
                   default: _withCtx(() => [
-                    _createElementVNode("span", _hoisted_75, "目标：" + _toDisplayString(manualTransferPathText.value), 1),
+                    _createElementVNode("span", _hoisted_77, "目标：" + _toDisplayString(manualTransferUseDefault.value ? "绑定的默认目录" : manualTransferPathText.value), 1),
                     _createVNode(_component_v_spacer),
                     _createVNode(_component_v_btn, {
                       variant: "text",
                       disabled: manualTransferSubmitting.value,
                       onClick: closeManualTransferDialog
                     }, {
-                      default: _withCtx(() => [..._cache[57] || (_cache[57] = [
+                      default: _withCtx(() => [..._cache[58] || (_cache[58] = [
                         _createTextVNode("取消", -1)
                       ])]),
                       _: 1
@@ -1814,9 +1852,9 @@ const _sfc_main = {
                       loading: manualTransferSubmitting.value,
                       onClick: submitManualTransfer
                     }, {
-                      default: _withCtx(() => [..._cache[58] || (_cache[58] = [
-                        _createTextVNode("转存到此目录", -1)
-                      ])]),
+                      default: _withCtx(() => [
+                        _createTextVNode(_toDisplayString(manualTransferUseDefault.value ? "转存到默认目录" : "转存到此目录"), 1)
+                      ]),
                       _: 1
                     }, 8, ["loading"])
                   ]),
@@ -1844,6 +1882,6 @@ const _sfc_main = {
     };
   }
 };
-const Page = /* @__PURE__ */ _export_sfc(_sfc_main, [["__scopeId", "data-v-04f79621"]]);
+const Page = /* @__PURE__ */ _export_sfc(_sfc_main, [["__scopeId", "data-v-ff245c54"]]);
 
 export { Page as default };

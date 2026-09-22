@@ -249,7 +249,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.8.23"
+    plugin_version = "4.8.24"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -631,7 +631,7 @@ class TgSearch115(_PluginBase):
                 "methods": ["POST"],
                 "auth": "bear",
                 "summary": "不绑定订阅的手动 115 转存",
-                "description": "POST /manual/transfer，body: {confirm, share_url, target}",
+                "description": "POST /manual/transfer，body: {confirm, share_url, target?}；target 留空使用绑定默认目录",
             },
             {
                 "path": "/manual/subscriptions",
@@ -3252,11 +3252,6 @@ class TgSearch115(_PluginBase):
         if not share_url:
             return JSONResponse(
                 {"success": False, "message": "资源缺少有效的 115 分享链接"},
-                status_code=400,
-            )
-        if not target:
-            return JSONResponse(
-                {"success": False, "message": "请选择 115 目标目录"},
                 status_code=400,
             )
         if not self._transfer or not self._p115_cookie:
