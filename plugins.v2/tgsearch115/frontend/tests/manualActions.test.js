@@ -159,6 +159,20 @@ test('fallback restores the MoviePilot scroll container as well as the window', 
   assert.equal(host.scrollLeft, 4)
 })
 
+test('fallback uses the clicked button ancestors when activeElement belongs elsewhere', () => {
+  const { document } = fakeDocument()
+  const host = { scrollLeft: 2, scrollTop: 180, parentElement: null }
+  const clickedButton = { scrollLeft: 0, scrollTop: 0, parentElement: host, focus() {} }
+  document.activeElement = { scrollLeft: 0, scrollTop: 0, parentElement: null }
+  document.execCommand = () => {
+    host.scrollTop = 9000
+    return true
+  }
+  assert.equal(fallbackCopyText('https://115.com/s/example', document, {}, clickedButton), true)
+  assert.equal(host.scrollTop, 180)
+  assert.equal(host.scrollLeft, 2)
+})
+
 test('accepts complete web and magnet links but rejects empty or display text', () => {
   assert.equal(isCopyableResourceUrl('https://115.com/s/example?password=abcd'), true)
   assert.equal(isCopyableResourceUrl('magnet:?xt=urn:btih:0123456789abcdef'), true)

@@ -87,7 +87,7 @@
           </v-card-item>
           <v-spacer />
           <v-card-actions>
-            <v-btn size="small" variant="text" prepend-icon="mdi-content-copy" @click="copy(r)">复制链接</v-btn>
+            <v-btn size="small" variant="text" prepend-icon="mdi-content-copy" @click="copy(r, $event)">复制链接</v-btn>
             <v-spacer />
             <v-btn
               v-if="['115', 'magnet'].includes(r.pan_type)"
@@ -137,6 +137,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { filterSearchResults, MAGNET_FILTERS, PAN_FILTERS } from '../searchFilters.js'
+import { copyTextWithFallback, isCopyableResourceUrl } from '../manualActions.js'
 
 const CACHE_KEY = 'TgSearch115:manual-search:v1'
 const MAX_CACHED_RESULTS = 500
@@ -344,9 +345,16 @@ async function search() {
     persistSession()
   }
 }
-async function copy(r) {
-  try { await navigator.clipboard.writeText(fullUrl(r)); notify('已复制链接') }
-  catch { notify('复制失败，请手动复制', 'error') }
+async function copy(r, event = null) {
+  const url = fullUrl(r).trim()
+  if (!isCopyableResourceUrl(url)) return notify('该资源没有有效链接', 'warning')
+  const anchorElement = event?.currentTarget || null
+  try {
+    const copied = await copyTextWithFallback(url, { anchorElement })
+    notify(copied ? '链接已复制' : '复制失败，请长按或手动复制', copied ? 'success' : 'error')
+  } catch {
+    notify('复制失败，请长按或手动复制', 'error')
+  }
 }
 async function openProcessDialog(r) {
   if (!props.api) return notify('API 未就绪', 'error')

@@ -66,10 +66,11 @@ class ManualVerifiedProcessContractTest(unittest.TestCase):
         self.assertIn("链接已复制", copy)
         self.assertIn("手动复制链接", source)
         self.assertIn("manualCopyDialog", copy)
-        self.assertIn("@pointerdown.stop.prevent=\"startManualCopy(item)\"", source)
+        self.assertIn('@click.stop.prevent="copyManualResult(item, $event)"', source)
+        self.assertNotIn("@pointerdown.stop.prevent", source)
         self.assertIn("该资源没有有效链接", copy)
         self.assertIn(">打开链接</button>", source)
-        self.assertIn('@click.stop.prevent="handleManualCopyClick(item)"', source)
+        self.assertIn("{ anchorElement }", copy)
 
     def test_manual_transfer_returns_only_safe_stage_diagnostics(self):
         source = PLUGIN.read_text(encoding="utf-8")

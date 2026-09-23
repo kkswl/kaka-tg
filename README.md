@@ -1,5 +1,13 @@
 # 拦截 MP 订阅（tgsearch115）
 
+## v4.8.30 手机/WebView 单击复制修复
+
+- 移除“复制链接”按钮的 `pointerdown.prevent` 与 `click` 双事件，统一在浏览器认可的单次 `click` 用户手势内调用 Clipboard API 和兼容复制，避免手机 WebView 因按钮未聚焦或手势类型不被认可而复制失败。
+- textarea 回退不再仅依赖 `document.activeElement` 猜测滚动容器；调用方直接传入真实点击按钮，记录并恢复其 MoviePilot 宿主滚动祖先、窗口位置和焦点。
+- 兼容复制节点保持在视口内且近乎透明，避免部分 iOS/WebView 拒绝选择远离视口的文本节点；同步恢复后再在下一动画帧复核滚动位置。
+- `Page.vue` 与备用 `ManualSearch.vue` 统一使用同一复制实现；复制不触发打开、搜索、转存或订阅操作。
+- 交付验证：Python 全量测试 281 项、前端 Node 测试 15 项通过；Python 编译、Vite 生产构建、JSON 解析、改动 Python 契约 Ruff 与 `git diff --check` 通过。未执行真实转存。
+
 ## v4.8.29 移动端复制滚动与手势修复
 
 - 修复手机端 MoviePilot 内嵌页面点击“复制链接”后跳到页面底部且复制失败的问题：除窗口位置外，同时保存并恢复触发按钮所在的宿主滚动容器位置。

@@ -38,7 +38,7 @@ export function getResourceLink(resource) {
   return ''
 }
 
-export function fallbackCopyText(text, documentRef = globalThis.document, windowRef = globalThis.window) {
+export function fallbackCopyText(text, documentRef = globalThis.document, windowRef = globalThis.window, anchorElement = null) {
   if (!documentRef?.createElement || !documentRef?.body?.appendChild) return false
   const scrollX = Number(windowRef?.scrollX) || 0
   const scrollY = Number(windowRef?.scrollY) || 0
@@ -46,33 +46,45 @@ export function fallbackCopyText(text, documentRef = globalThis.document, window
   // only window.scrollY is insufficient there: focusing a temporary textarea
   // can move the host container to its end on mobile WebViews.
   const scrollStates = []
-  let parent = documentRef.activeElement
-  while (parent) {
-    if (typeof parent.scrollTop === 'number') {
-      scrollStates.push({ element: parent, left: parent.scrollLeft || 0, top: parent.scrollTop || 0 })
+  const seen = new Set()
+  const rememberAncestors = (start) => {
+    let parent = start
+    while (parent) {
+      if (!seen.has(parent) && typeof parent.scrollTop === 'number') {
+        seen.add(parent)
+        scrollStates.push({ element: parent, left: parent.scrollLeft || 0, top: parent.scrollTop || 0 })
+      }
+      parent = parent.parentElement
     }
-    parent = parent.parentElement
   }
+  // pointerdown.prevent used to leave activeElement on an unrelated host
+  // control. The click handler now passes its real button so the actual
+  // MoviePilot scroll container is always recorded, even on mobile WebViews.
+  rememberAncestors(anchorElement)
+  rememberAncestors(documentRef.activeElement)
   const scrollingElement = documentRef.scrollingElement
-  if (scrollingElement && !scrollStates.some((state) => state.element === scrollingElement)) {
+  if (scrollingElement && !seen.has(scrollingElement)) {
     scrollStates.push({ element: scrollingElement, left: scrollingElement.scrollLeft || 0, top: scrollingElement.scrollTop || 0 })
   }
   const textarea = documentRef.createElement('textarea')
   textarea.value = text
   textarea.setAttribute('readonly', '')
   textarea.style.position = 'fixed'
-  textarea.style.left = '-10000px'
-  textarea.style.top = '-10000px'
+  // Keep the selectable node inside the viewport. iOS/WebView can refuse a
+  // selection on a control positioned thousands of pixels off-screen.
+  textarea.style.left = '0'
+  textarea.style.top = '0'
   textarea.style.width = '1px'
   textarea.style.height = '1px'
   textarea.style.overflow = 'hidden'
-  textarea.style.fontSize = '12pt'
-  textarea.style.opacity = '0'
+  textarea.style.fontSize = '16px'
+  textarea.style.opacity = '0.01'
+  textarea.style.zIndex = '-1'
   textarea.style.pointerEvents = 'none'
   documentRef.body.appendChild(textarea)
   let copied = false
   try {
-    textarea.focus()
+    try { textarea.focus({ preventScroll: true }) } catch { textarea.focus() }
     textarea.select()
     if (typeof textarea.setSelectionRange === 'function') textarea.setSelectionRange(0, text.length)
     copied = documentRef.execCommand?.('copy') === true
@@ -80,13 +92,22 @@ export function fallbackCopyText(text, documentRef = globalThis.document, window
     copied = false
   } finally {
     try { textarea.remove() } catch { documentRef.body.removeChild?.(textarea) }
-    for (const state of scrollStates) {
+    try { anchorElement?.focus?.({ preventScroll: true }) } catch { /* Focus restoration is best effort. */ }
+    const restoreScroll = () => {
+      for (const state of scrollStates) {
+        try {
+          state.element.scrollLeft = state.left
+          state.element.scrollTop = state.top
+        } catch { /* Container restoration is best effort. */ }
+      }
       try {
-        state.element.scrollLeft = state.left
-        state.element.scrollTop = state.top
-      } catch { /* Container restoration is best effort. */ }
+        windowRef?.scrollTo?.(scrollX, scrollY)
+      } catch { /* Scroll restoration is best effort. */ }
     }
-    try { windowRef?.scrollTo?.(scrollX, scrollY) } catch { /* Scroll restoration is best effort. */ }
+    restoreScroll()
+    // Some mobile WebViews apply focus scrolling after execCommand returns.
+    // Restore once more on the next frame without delaying the copy result.
+    try { windowRef?.requestAnimationFrame?.(restoreScroll) } catch { /* Best effort. */ }
   }
   return copied
 }
@@ -95,6 +116,7 @@ export async function copyTextWithFallback(text, options = {}) {
   const navigatorRef = options.navigatorRef ?? globalThis.navigator
   const documentRef = options.documentRef ?? globalThis.document
   const windowRef = options.windowRef ?? globalThis.window
+  const anchorElement = options.anchorElement ?? null
   const secureContext = options.isSecureContext ?? windowRef?.isSecureContext ?? false
   // Local-IP MoviePilot is HTTP. A WebView may expose Clipboard API but reject
   // it asynchronously after the user gesture has expired. Start that API
@@ -108,7 +130,7 @@ export async function copyTextWithFallback(text, options = {}) {
       clipboardPromise = null
     }
     if (!secureContext) {
-      const fallbackCopied = fallbackCopyText(text, documentRef, windowRef)
+      const fallbackCopied = fallbackCopyText(text, documentRef, windowRef, anchorElement)
       if (fallbackCopied) {
         Promise.resolve(clipboardPromise).catch(() => undefined)
         return true
@@ -121,7 +143,7 @@ export async function copyTextWithFallback(text, options = {}) {
       // Secure contexts only reach this fallback after clipboard rejection.
     }
   }
-  return fallbackCopyText(text, documentRef, windowRef)
+  return fallbackCopyText(text, documentRef, windowRef, anchorElement)
 }
 
 export function openResourceLink(url, options = {}) {

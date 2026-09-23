@@ -335,8 +335,7 @@
                 <button
                   type="button"
                   class="manual-link-button"
-                  @pointerdown.stop.prevent="startManualCopy(item)"
-                  @click.stop.prevent="handleManualCopyClick(item)"
+                  @click.stop.prevent="copyManualResult(item, $event)"
                 >复制链接</button>
                 <button type="button" class="manual-link-button" @click.stop.prevent="openManualResult(item)">打开链接</button>
                 <button
@@ -464,8 +463,8 @@ import {
   openResourceLink,
 } from '../manualActions.js'
 
-const FRONTEND_VERSION = '4.8.29'
-const FRONTEND_BUILD_ID = typeof __TG115_BUILD_ID__ === 'string' ? __TG115_BUILD_ID__ : 'v4.8.29'
+const FRONTEND_VERSION = '4.8.30'
+const FRONTEND_BUILD_ID = typeof __TG115_BUILD_ID__ === 'string' ? __TG115_BUILD_ID__ : 'v4.8.30'
 const FRONTEND_BUILD_TIME = typeof __TG115_BUILD_TIME__ === 'string' ? __TG115_BUILD_TIME__ : 'unknown'
 
 const props = defineProps({
@@ -538,7 +537,6 @@ const manualCacheAvailable = ref(true)
 const manualCopyDialog = ref(false)
 const manualCopyUrl = ref('')
 const manualCopyInput = ref(null)
-const manualPointerCopyActive = ref(false)
 const manualDetailFilters = computed(() => manualResourceType.value === 'magnet' ? MANUAL_MAGNET_FILTERS : MANUAL_PAN_FILTERS)
 const manualTransferPathText = computed(() => {
   const names = manualTransferPath.value.slice(1).map((part) => part.name)
@@ -678,14 +676,15 @@ function manualFullUrl(item) {
   if (item?.pan_type === '115' && item?.receive_code && !/[?&](password|receive_code|pwd)=/.test(url)) url += `${url.includes('?') ? '&' : '?'}password=${item.receive_code}`
   return url
 }
-async function copyManualResult(item) {
+async function copyManualResult(item, event = null) {
   const url = manualFullUrl(item).trim()
+  const anchorElement = event?.currentTarget || null
   if (!isCopyableResourceUrl(url)) {
     showSnack('该资源没有有效链接', 'warning')
     return false
   }
   try {
-    const copied = await copyTextWithFallback(url)
+    const copied = await copyTextWithFallback(url, { anchorElement })
     if (copied) {
       manualCopyDialog.value = false
       showSnack('链接已复制', 'success')
@@ -698,15 +697,6 @@ async function copyManualResult(item) {
   manualCopyDialog.value = true
   showSnack('复制失败，请长按或手动复制', 'warning')
   return false
-}
-function startManualCopy(item) {
-  manualPointerCopyActive.value = true
-  void copyManualResult(item)
-  window.setTimeout(() => { manualPointerCopyActive.value = false }, 450)
-}
-function handleManualCopyClick(item) {
-  if (manualPointerCopyActive.value) return
-  void copyManualResult(item)
 }
 async function selectManualCopyText() {
   await nextTick()

@@ -41,7 +41,7 @@ function getResourceLink(resource) {
   return ''
 }
 
-function fallbackCopyText(text, documentRef = globalThis.document, windowRef = globalThis.window) {
+function fallbackCopyText(text, documentRef = globalThis.document, windowRef = globalThis.window, anchorElement = null) {
   if (!documentRef?.createElement || !documentRef?.body?.appendChild) return false
   const scrollX = Number(windowRef?.scrollX) || 0;
   const scrollY = Number(windowRef?.scrollY) || 0;
@@ -49,33 +49,45 @@ function fallbackCopyText(text, documentRef = globalThis.document, windowRef = g
   // only window.scrollY is insufficient there: focusing a temporary textarea
   // can move the host container to its end on mobile WebViews.
   const scrollStates = [];
-  let parent = documentRef.activeElement;
-  while (parent) {
-    if (typeof parent.scrollTop === 'number') {
-      scrollStates.push({ element: parent, left: parent.scrollLeft || 0, top: parent.scrollTop || 0 });
+  const seen = new Set();
+  const rememberAncestors = (start) => {
+    let parent = start;
+    while (parent) {
+      if (!seen.has(parent) && typeof parent.scrollTop === 'number') {
+        seen.add(parent);
+        scrollStates.push({ element: parent, left: parent.scrollLeft || 0, top: parent.scrollTop || 0 });
+      }
+      parent = parent.parentElement;
     }
-    parent = parent.parentElement;
-  }
+  };
+  // pointerdown.prevent used to leave activeElement on an unrelated host
+  // control. The click handler now passes its real button so the actual
+  // MoviePilot scroll container is always recorded, even on mobile WebViews.
+  rememberAncestors(anchorElement);
+  rememberAncestors(documentRef.activeElement);
   const scrollingElement = documentRef.scrollingElement;
-  if (scrollingElement && !scrollStates.some((state) => state.element === scrollingElement)) {
+  if (scrollingElement && !seen.has(scrollingElement)) {
     scrollStates.push({ element: scrollingElement, left: scrollingElement.scrollLeft || 0, top: scrollingElement.scrollTop || 0 });
   }
   const textarea = documentRef.createElement('textarea');
   textarea.value = text;
   textarea.setAttribute('readonly', '');
   textarea.style.position = 'fixed';
-  textarea.style.left = '-10000px';
-  textarea.style.top = '-10000px';
+  // Keep the selectable node inside the viewport. iOS/WebView can refuse a
+  // selection on a control positioned thousands of pixels off-screen.
+  textarea.style.left = '0';
+  textarea.style.top = '0';
   textarea.style.width = '1px';
   textarea.style.height = '1px';
   textarea.style.overflow = 'hidden';
-  textarea.style.fontSize = '12pt';
-  textarea.style.opacity = '0';
+  textarea.style.fontSize = '16px';
+  textarea.style.opacity = '0.01';
+  textarea.style.zIndex = '-1';
   textarea.style.pointerEvents = 'none';
   documentRef.body.appendChild(textarea);
   let copied = false;
   try {
-    textarea.focus();
+    try { textarea.focus({ preventScroll: true }); } catch { textarea.focus(); }
     textarea.select();
     if (typeof textarea.setSelectionRange === 'function') textarea.setSelectionRange(0, text.length);
     copied = documentRef.execCommand?.('copy') === true;
@@ -83,13 +95,22 @@ function fallbackCopyText(text, documentRef = globalThis.document, windowRef = g
     copied = false;
   } finally {
     try { textarea.remove(); } catch { documentRef.body.removeChild?.(textarea); }
-    for (const state of scrollStates) {
+    try { anchorElement?.focus?.({ preventScroll: true }); } catch { /* Focus restoration is best effort. */ }
+    const restoreScroll = () => {
+      for (const state of scrollStates) {
+        try {
+          state.element.scrollLeft = state.left;
+          state.element.scrollTop = state.top;
+        } catch { /* Container restoration is best effort. */ }
+      }
       try {
-        state.element.scrollLeft = state.left;
-        state.element.scrollTop = state.top;
-      } catch { /* Container restoration is best effort. */ }
-    }
-    try { windowRef?.scrollTo?.(scrollX, scrollY); } catch { /* Scroll restoration is best effort. */ }
+        windowRef?.scrollTo?.(scrollX, scrollY);
+      } catch { /* Scroll restoration is best effort. */ }
+    };
+    restoreScroll();
+    // Some mobile WebViews apply focus scrolling after execCommand returns.
+    // Restore once more on the next frame without delaying the copy result.
+    try { windowRef?.requestAnimationFrame?.(restoreScroll); } catch { /* Best effort. */ }
   }
   return copied
 }
@@ -98,6 +119,7 @@ async function copyTextWithFallback(text, options = {}) {
   const navigatorRef = options.navigatorRef ?? globalThis.navigator;
   const documentRef = options.documentRef ?? globalThis.document;
   const windowRef = options.windowRef ?? globalThis.window;
+  const anchorElement = options.anchorElement ?? null;
   const secureContext = options.isSecureContext ?? windowRef?.isSecureContext ?? false;
   // Local-IP MoviePilot is HTTP. A WebView may expose Clipboard API but reject
   // it asynchronously after the user gesture has expired. Start that API
@@ -111,7 +133,7 @@ async function copyTextWithFallback(text, options = {}) {
       clipboardPromise = null;
     }
     if (!secureContext) {
-      const fallbackCopied = fallbackCopyText(text, documentRef, windowRef);
+      const fallbackCopied = fallbackCopyText(text, documentRef, windowRef, anchorElement);
       if (fallbackCopied) {
         Promise.resolve(clipboardPromise).catch(() => undefined);
         return true
@@ -124,7 +146,7 @@ async function copyTextWithFallback(text, options = {}) {
       // Secure contexts only reach this fallback after clipboard rejection.
     }
   }
-  return fallbackCopyText(text, documentRef, windowRef)
+  return fallbackCopyText(text, documentRef, windowRef, anchorElement)
 }
 
 function openResourceLink(url, options = {}) {
@@ -298,7 +320,7 @@ const _hoisted_60 = {
 };
 const _hoisted_61 = { class: "manual-result-text" };
 const _hoisted_62 = { class: "manual-result-actions" };
-const _hoisted_63 = ["onPointerdown", "onClick"];
+const _hoisted_63 = ["onClick"];
 const _hoisted_64 = ["onClick"];
 const _hoisted_65 = ["onClick"];
 const _hoisted_66 = {
@@ -335,7 +357,7 @@ const _hoisted_77 = {
 const _hoisted_78 = { class: "text-caption text-medium-emphasis" };
 const _hoisted_79 = ["value"];
 const {computed,getCurrentInstance,nextTick,onMounted,onUnmounted,reactive,ref,watch} = await importShared('vue');
-const FRONTEND_VERSION = "4.8.29";
+const FRONTEND_VERSION = "4.8.30";
 const MANUAL_CACHE_KEY = "TgSearch115:manual-search:v2";
 const FORCE_TIMELINE_CONFIRMATION = "强制清理诊断记录";
 const _sfc_main = {
@@ -346,8 +368,8 @@ const _sfc_main = {
   },
   emits: ["close", "back"],
   setup(__props, { emit: __emit }) {
-    const FRONTEND_BUILD_ID = "v4.8.29-local-copy-scroll" ;
-    const FRONTEND_BUILD_TIME = "2026-09-23T02:35:30.233Z" ;
+    const FRONTEND_BUILD_ID = "v4.8.30-mobile-click-copy" ;
+    const FRONTEND_BUILD_TIME = "2026-09-23T04:11:42.428Z" ;
     const props = __props;
     const emit = __emit;
     const instance = getCurrentInstance();
@@ -425,7 +447,6 @@ const _sfc_main = {
     const manualCopyDialog = ref(false);
     const manualCopyUrl = ref("");
     const manualCopyInput = ref(null);
-    const manualPointerCopyActive = ref(false);
     const manualDetailFilters = computed(() => manualResourceType.value === "magnet" ? MANUAL_MAGNET_FILTERS : MANUAL_PAN_FILTERS);
     const manualTransferPathText = computed(() => {
       const names = manualTransferPath.value.slice(1).map((part) => part.name);
@@ -594,14 +615,15 @@ const _sfc_main = {
       if (item?.pan_type === "115" && item?.receive_code && !/[?&](password|receive_code|pwd)=/.test(url)) url += `${url.includes("?") ? "&" : "?"}password=${item.receive_code}`;
       return url;
     }
-    async function copyManualResult(item) {
+    async function copyManualResult(item, event = null) {
       const url = manualFullUrl(item).trim();
+      const anchorElement = event?.currentTarget || null;
       if (!isCopyableResourceUrl(url)) {
         showSnack("该资源没有有效链接", "warning");
         return false;
       }
       try {
-        const copied = await copyTextWithFallback(url);
+        const copied = await copyTextWithFallback(url, { anchorElement });
         if (copied) {
           manualCopyDialog.value = false;
           showSnack("链接已复制", "success");
@@ -613,17 +635,6 @@ const _sfc_main = {
       manualCopyDialog.value = true;
       showSnack("复制失败，请长按或手动复制", "warning");
       return false;
-    }
-    function startManualCopy(item) {
-      manualPointerCopyActive.value = true;
-      void copyManualResult(item);
-      window.setTimeout(() => {
-        manualPointerCopyActive.value = false;
-      }, 450);
-    }
-    function handleManualCopyClick(item) {
-      if (manualPointerCopyActive.value) return;
-      void copyManualResult(item);
     }
     async function selectManualCopyText() {
       await nextTick();
@@ -1856,9 +1867,8 @@ const _sfc_main = {
                           _createElementVNode("button", {
                             type: "button",
                             class: "manual-link-button",
-                            onPointerdown: _withModifiers(($event) => startManualCopy(item), ["stop", "prevent"]),
-                            onClick: _withModifiers(($event) => handleManualCopyClick(item), ["stop", "prevent"])
-                          }, "复制链接", 40, _hoisted_63),
+                            onClick: _withModifiers(($event) => copyManualResult(item, $event), ["stop", "prevent"])
+                          }, "复制链接", 8, _hoisted_63),
                           _createElementVNode("button", {
                             type: "button",
                             class: "manual-link-button",
@@ -2132,6 +2142,6 @@ const _sfc_main = {
     };
   }
 };
-const Page = /* @__PURE__ */ _export_sfc(_sfc_main, [["__scopeId", "data-v-09b6b8e8"]]);
+const Page = /* @__PURE__ */ _export_sfc(_sfc_main, [["__scopeId", "data-v-86c7ffd0"]]);
 
 export { Page as default };
