@@ -430,7 +430,7 @@
       <v-card rounded="lg">
         <v-card-title>手动复制链接</v-card-title>
         <v-card-text>
-          <div class="text-body-2 mb-3">{{ manualCopyMessage }}</div>
+          <div class="text-body-2 mb-3">自动复制被当前浏览器拒绝。可长按或选择下面完整链接后手动复制。</div>
           <textarea
             ref="manualCopyInput"
             class="manual-copy-textarea"
@@ -457,15 +457,14 @@
 import { computed, getCurrentInstance, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import {
   buildManualTransferPayload,
-  copyTextResult,
   copyTextWithFallback,
   getResourceLink,
   isCopyableResourceUrl,
   openResourceLink,
 } from '../manualActions.js'
 
-const FRONTEND_VERSION = '4.8.31'
-const FRONTEND_BUILD_ID = typeof __TG115_BUILD_ID__ === 'string' ? __TG115_BUILD_ID__ : 'v4.8.31'
+const FRONTEND_VERSION = '4.8.32'
+const FRONTEND_BUILD_ID = typeof __TG115_BUILD_ID__ === 'string' ? __TG115_BUILD_ID__ : 'v4.8.32'
 const FRONTEND_BUILD_TIME = typeof __TG115_BUILD_TIME__ === 'string' ? __TG115_BUILD_TIME__ : 'unknown'
 
 const props = defineProps({
@@ -538,7 +537,6 @@ const manualCacheAvailable = ref(true)
 const manualCopyDialog = ref(false)
 const manualCopyUrl = ref('')
 const manualCopyInput = ref(null)
-const manualCopyMessage = ref('自动复制被当前浏览器拒绝。请选择下面完整链接后按 Ctrl+C。')
 const manualDetailFilters = computed(() => manualResourceType.value === 'magnet' ? MANUAL_MAGNET_FILTERS : MANUAL_PAN_FILTERS)
 const manualTransferPathText = computed(() => {
   const names = manualTransferPath.value.slice(1).map((part) => part.name)
@@ -686,28 +684,18 @@ async function copyManualResult(item, event = null) {
     return false
   }
   try {
-    const result = await copyTextResult(url, { anchorElement })
-    if (result.copied && result.verified) {
+    const copied = await copyTextWithFallback(url, { anchorElement })
+    if (copied) {
       manualCopyDialog.value = false
       showSnack('链接已复制', 'success')
       return true
     }
-    manualCopyUrl.value = url
-    manualCopyMessage.value = result.copied
-      ? '浏览器已尝试旧式复制，但当前 HTTP 页面无法验证 Windows 剪贴板。链接已全选；若粘贴无内容，请按 Ctrl+C。'
-      : '当前浏览器禁止网页写入剪贴板。链接已全选，请按 Ctrl+C。'
-    manualCopyDialog.value = true
-    await selectManualCopyText()
-    showSnack(result.copied ? '已尝试复制；请粘贴验证或按 Ctrl+C' : '请按 Ctrl+C 复制完整链接', 'warning')
-    return result.copied
   } catch {
     // Continue to a local, selectable fallback rather than failing silently.
   }
   manualCopyUrl.value = url
-  manualCopyMessage.value = '当前浏览器禁止网页写入剪贴板。链接已全选，请按 Ctrl+C。'
   manualCopyDialog.value = true
-  await selectManualCopyText()
-  showSnack('请按 Ctrl+C 复制完整链接', 'warning')
+  showSnack('复制失败，请长按或手动复制', 'warning')
   return false
 }
 async function selectManualCopyText() {

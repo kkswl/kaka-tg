@@ -1,12 +1,11 @@
 # 拦截 MP 订阅（tgsearch115）
 
-## v4.8.31 Windows HTTP 复制验证与可靠兜底
+## v4.8.32 紧急安全回退
 
-- 修正此前把旧式 `execCommand('copy')` 的布尔返回值直接当成“系统剪贴板已更新”的误判；现代 Clipboard API 成功才显示确定的“链接已复制”。
-- Windows 局域网 HTTP 页面改用可编辑 textarea 与 DOM Range 两条独立旧式复制路径，去掉可能被浏览器拒绝的 `readonly`、超远离屏位置和负层级节点。
-- 旧式复制无法读取剪贴板验证时，立即在当前位置显示完整链接并自动全选，明确提示按 `Ctrl+C`；不再假装成功，也不会把页面带到结果列表底部。
-- 修复 Clipboard API 同步抛错时错误执行 `await null` 并返回成功的逻辑漏洞。
-- 交付验证：Python 全量测试 281 项、前端 Node 测试 18 项通过；Python 编译、Vite 生产构建、JSON 解析、改动 Python 契约 Ruff 与 `git diff --check` 通过。未执行真实转存。
+- 完整撤销 v4.8.31 新增的 DOM Range 二次复制、自动全选弹窗和剪贴板验证实验，恢复到 v4.8.30 的复制实现基线。
+- 本次回退用于消除 Windows 网页点击“复制链接”后浏览器或电脑卡死的风险；不修改搜索、转存、订阅、任务账本或其它业务逻辑。
+- 版本号继续递增，确保 MoviePilot 能识别并安装该安全回退版本。
+- 回退验证：Python 全量测试 281 项、前端 Node 测试 15 项通过；Python 编译、Vite 生产构建、JSON/版本解析、改动 Python 契约 Ruff 与 `git diff --check` 通过。
 
 ## v4.8.30 手机/WebView 单击复制修复
 

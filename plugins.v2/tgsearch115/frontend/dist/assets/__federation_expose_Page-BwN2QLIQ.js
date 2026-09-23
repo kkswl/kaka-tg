@@ -71,8 +71,7 @@ function fallbackCopyText(text, documentRef = globalThis.document, windowRef = g
   }
   const textarea = documentRef.createElement('textarea');
   textarea.value = text;
-  textarea.setAttribute('inputmode', 'none');
-  textarea.setAttribute('aria-hidden', 'true');
+  textarea.setAttribute('readonly', '');
   textarea.style.position = 'fixed';
   // Keep the selectable node inside the viewport. iOS/WebView can refuse a
   // selection on a control positioned thousands of pixels off-screen.
@@ -83,46 +82,18 @@ function fallbackCopyText(text, documentRef = globalThis.document, windowRef = g
   textarea.style.overflow = 'hidden';
   textarea.style.fontSize = '16px';
   textarea.style.opacity = '0.01';
-  textarea.style.zIndex = '2147483647';
+  textarea.style.zIndex = '-1';
   textarea.style.pointerEvents = 'none';
   documentRef.body.appendChild(textarea);
-  let textareaCopied = false;
-  let rangeCopied = false;
-  let rangeNode = null;
-  let selection = null;
+  let copied = false;
   try {
     try { textarea.focus({ preventScroll: true }); } catch { textarea.focus(); }
     textarea.select();
     if (typeof textarea.setSelectionRange === 'function') textarea.setSelectionRange(0, text.length);
-    textareaCopied = documentRef.execCommand?.('copy') === true;
-
-    // Chromium variants can report success for a textarea selection without
-    // updating the Windows clipboard. Repeat with a DOM Range so the browser
-    // receives a second, independent selection shape containing the same URL.
-    if (typeof documentRef.createRange === 'function' && typeof windowRef?.getSelection === 'function') {
-      rangeNode = documentRef.createElement('span');
-      rangeNode.textContent = text;
-      rangeNode.style.position = 'fixed';
-      rangeNode.style.left = '0';
-      rangeNode.style.top = '0';
-      rangeNode.style.opacity = '0.01';
-      rangeNode.style.userSelect = 'text';
-      rangeNode.style.pointerEvents = 'none';
-      documentRef.body.appendChild(rangeNode);
-      const range = documentRef.createRange();
-      range.selectNodeContents(rangeNode);
-      selection = windowRef.getSelection();
-      selection?.removeAllRanges?.();
-      selection?.addRange?.(range);
-      rangeCopied = documentRef.execCommand?.('copy') === true;
-    }
+    copied = documentRef.execCommand?.('copy') === true;
   } catch {
-    // Preserve a successful textarea attempt if the Range path is unsupported.
+    copied = false;
   } finally {
-    try { selection?.removeAllRanges?.(); } catch { /* Selection cleanup is best effort. */ }
-    if (rangeNode) {
-      try { rangeNode.remove(); } catch { documentRef.body.removeChild?.(rangeNode); }
-    }
     try { textarea.remove(); } catch { documentRef.body.removeChild?.(textarea); }
     try { anchorElement?.focus?.({ preventScroll: true }); } catch { /* Focus restoration is best effort. */ }
     const restoreScroll = () => {
@@ -141,10 +112,10 @@ function fallbackCopyText(text, documentRef = globalThis.document, windowRef = g
     // Restore once more on the next frame without delaying the copy result.
     try { windowRef?.requestAnimationFrame?.(restoreScroll); } catch { /* Best effort. */ }
   }
-  return textareaCopied || rangeCopied
+  return copied
 }
 
-async function copyTextResult(text, options = {}) {
+async function copyTextWithFallback(text, options = {}) {
   const navigatorRef = options.navigatorRef ?? globalThis.navigator;
   const documentRef = options.documentRef ?? globalThis.document;
   const windowRef = options.windowRef ?? globalThis.window;
@@ -165,24 +136,17 @@ async function copyTextResult(text, options = {}) {
       const fallbackCopied = fallbackCopyText(text, documentRef, windowRef, anchorElement);
       if (fallbackCopied) {
         Promise.resolve(clipboardPromise).catch(() => undefined);
-        return { copied: true, verified: false, method: 'legacy' }
+        return true
       }
     }
-    if (clipboardPromise && typeof clipboardPromise.then === 'function') {
-      try {
-        await clipboardPromise;
-        return { copied: true, verified: true, method: 'clipboard' }
-      } catch {
-        // Secure contexts only reach this fallback after clipboard rejection.
-      }
+    try {
+      await clipboardPromise;
+      return true
+    } catch {
+      // Secure contexts only reach this fallback after clipboard rejection.
     }
   }
-  const copied = fallbackCopyText(text, documentRef, windowRef, anchorElement);
-  return { copied, verified: false, method: copied ? 'legacy' : 'manual' }
-}
-
-async function copyTextWithFallback(text, options = {}) {
-  return (await copyTextResult(text, options)).copied
+  return fallbackCopyText(text, documentRef, windowRef, anchorElement)
 }
 
 function openResourceLink(url, options = {}) {
@@ -391,10 +355,9 @@ const _hoisted_77 = {
   class: "manual-empty-state"
 };
 const _hoisted_78 = { class: "text-caption text-medium-emphasis" };
-const _hoisted_79 = { class: "text-body-2 mb-3" };
-const _hoisted_80 = ["value"];
+const _hoisted_79 = ["value"];
 const {computed,getCurrentInstance,nextTick,onMounted,onUnmounted,reactive,ref,watch} = await importShared('vue');
-const FRONTEND_VERSION = "4.8.31";
+const FRONTEND_VERSION = "4.8.32";
 const MANUAL_CACHE_KEY = "TgSearch115:manual-search:v2";
 const FORCE_TIMELINE_CONFIRMATION = "强制清理诊断记录";
 const _sfc_main = {
@@ -405,8 +368,8 @@ const _sfc_main = {
   },
   emits: ["close", "back"],
   setup(__props, { emit: __emit }) {
-    const FRONTEND_BUILD_ID = "v4.8.31-windows-copy-verification" ;
-    const FRONTEND_BUILD_TIME = "2026-09-23T05:12:37.570Z" ;
+    const FRONTEND_BUILD_ID = "v4.8.32-safe-copy-rollback" ;
+    const FRONTEND_BUILD_TIME = "2026-09-23T09:26:23.202Z" ;
     const props = __props;
     const emit = __emit;
     const instance = getCurrentInstance();
@@ -484,7 +447,6 @@ const _sfc_main = {
     const manualCopyDialog = ref(false);
     const manualCopyUrl = ref("");
     const manualCopyInput = ref(null);
-    const manualCopyMessage = ref("自动复制被当前浏览器拒绝。请选择下面完整链接后按 Ctrl+C。");
     const manualDetailFilters = computed(() => manualResourceType.value === "magnet" ? MANUAL_MAGNET_FILTERS : MANUAL_PAN_FILTERS);
     const manualTransferPathText = computed(() => {
       const names = manualTransferPath.value.slice(1).map((part) => part.name);
@@ -661,25 +623,17 @@ const _sfc_main = {
         return false;
       }
       try {
-        const result = await copyTextResult(url, { anchorElement });
-        if (result.copied && result.verified) {
+        const copied = await copyTextWithFallback(url, { anchorElement });
+        if (copied) {
           manualCopyDialog.value = false;
           showSnack("链接已复制", "success");
           return true;
         }
-        manualCopyUrl.value = url;
-        manualCopyMessage.value = result.copied ? "浏览器已尝试旧式复制，但当前 HTTP 页面无法验证 Windows 剪贴板。链接已全选；若粘贴无内容，请按 Ctrl+C。" : "当前浏览器禁止网页写入剪贴板。链接已全选，请按 Ctrl+C。";
-        manualCopyDialog.value = true;
-        await selectManualCopyText();
-        showSnack(result.copied ? "已尝试复制；请粘贴验证或按 Ctrl+C" : "请按 Ctrl+C 复制完整链接", "warning");
-        return result.copied;
       } catch {
       }
       manualCopyUrl.value = url;
-      manualCopyMessage.value = "当前浏览器禁止网页写入剪贴板。链接已全选，请按 Ctrl+C。";
       manualCopyDialog.value = true;
-      await selectManualCopyText();
-      showSnack("请按 Ctrl+C 复制完整链接", "warning");
+      showSnack("复制失败，请长按或手动复制", "warning");
       return false;
     }
     async function selectManualCopyText() {
@@ -2119,7 +2073,7 @@ const _sfc_main = {
                 }),
                 _createVNode(_component_v_card_text, null, {
                   default: _withCtx(() => [
-                    _createElementVNode("div", _hoisted_79, _toDisplayString(manualCopyMessage.value), 1),
+                    _cache[62] || (_cache[62] = _createElementVNode("div", { class: "text-body-2 mb-3" }, "自动复制被当前浏览器拒绝。可长按或选择下面完整链接后手动复制。", -1)),
                     _createElementVNode("textarea", {
                       ref_key: "manualCopyInput",
                       ref: manualCopyInput,
@@ -2128,7 +2082,7 @@ const _sfc_main = {
                       readonly: "",
                       "aria-label": "完整资源链接",
                       onFocus: selectManualCopyText
-                    }, null, 40, _hoisted_80)
+                    }, null, 40, _hoisted_79)
                   ]),
                   _: 1
                 }),
@@ -2139,7 +2093,7 @@ const _sfc_main = {
                       variant: "text",
                       onClick: selectManualCopyText
                     }, {
-                      default: _withCtx(() => [..._cache[62] || (_cache[62] = [
+                      default: _withCtx(() => [..._cache[63] || (_cache[63] = [
                         _createTextVNode("全选", -1)
                       ])]),
                       _: 1
@@ -2149,7 +2103,7 @@ const _sfc_main = {
                       variant: "flat",
                       onClick: retryManualCopy
                     }, {
-                      default: _withCtx(() => [..._cache[63] || (_cache[63] = [
+                      default: _withCtx(() => [..._cache[64] || (_cache[64] = [
                         _createTextVNode("再次复制", -1)
                       ])]),
                       _: 1
@@ -2158,7 +2112,7 @@ const _sfc_main = {
                       variant: "text",
                       onClick: _cache[12] || (_cache[12] = ($event) => manualCopyDialog.value = false)
                     }, {
-                      default: _withCtx(() => [..._cache[64] || (_cache[64] = [
+                      default: _withCtx(() => [..._cache[65] || (_cache[65] = [
                         _createTextVNode("关闭", -1)
                       ])]),
                       _: 1
@@ -2188,6 +2142,6 @@ const _sfc_main = {
     };
   }
 };
-const Page = /* @__PURE__ */ _export_sfc(_sfc_main, [["__scopeId", "data-v-d5a164b3"]]);
+const Page = /* @__PURE__ */ _export_sfc(_sfc_main, [["__scopeId", "data-v-57753af8"]]);
 
 export { Page as default };
