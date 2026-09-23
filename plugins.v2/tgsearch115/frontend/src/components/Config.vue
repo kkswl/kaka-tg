@@ -339,7 +339,7 @@
         <!-- ============ Tab：聚影 ============ -->
         <v-window-item value="juying" class="pa-4">
           <div class="section-label mb-2">聚影开发者 API</div>
-          <div class="text-caption text-medium-emphasis mb-3">官方 API 搜索（AppID+API Key 鉴权），稳定无 IP 封锁。非开发者用开发者的 AppID + 自己的 API Key</div>
+          <div class="text-caption text-medium-emphasis mb-3">官方只读开发者 API：模糊召回聚影站内资源，再由 MoviePilot 严格确认媒体身份。凭据仅由插件后端通过请求头发送</div>
           <v-row>
             <v-col cols="12" md="6" class="d-flex align-center">
               <div class="mr-2">
@@ -353,13 +353,13 @@
               <v-btn size="small" variant="outlined" prepend-icon="mdi-connection" :loading="juyingChecking" @click="checkJuying">测试连通</v-btn>
             </v-col>
             <v-col cols="12">
-              <v-text-field v-model="config.juying_domain" label="聚影站点域名" placeholder="https://juying.example.com" variant="outlined" density="compact" hide-details hint="聚影网站地址（带 https://，不带末尾/）" persistent-hint />
+              <v-text-field v-model="config.juying_domain" label="聚影站点域名" placeholder="https://www.jying.top" variant="outlined" density="compact" hide-details hint="默认使用聚影官方 HTTPS 域名；不填写接口路径" persistent-hint />
             </v-col>
             <v-col cols="12">
-              <v-text-field v-model="config.juying_app_id" label="AppID（开发者凭证）" variant="outlined" density="compact" hide-details hint="开发者 AppID；非开发者填开发者的 AppID" persistent-hint />
+              <v-text-field v-model="config.juying_app_id" label="AppID（开发者凭证）" type="password" autocomplete="off" variant="outlined" density="compact" hide-details hint="仅保存在 MoviePilot 插件配置中，不会写入测试 URL" persistent-hint />
             </v-col>
             <v-col cols="12">
-              <v-text-field v-model="config.juying_api_key" label="API Key（个人凭证）" variant="outlined" density="compact" hide-details hint="个人中心获取的 API Key" persistent-hint />
+              <v-text-field v-model="config.juying_api_key" label="API Key（个人凭证）" type="password" autocomplete="off" variant="outlined" density="compact" hide-details hint="个人中心管理的个人 API Key；只通过后端请求头发送" persistent-hint />
             </v-col>
             <v-col cols="12">
               <v-text-field v-model="config.juying_proxy" label="聚影专用代理（可选）" variant="outlined" density="compact" hide-details hint="留空默认直连；如需走特定代理请填URL；填 direct 强制直连不受MP全局代理影响" persistent-hint />
@@ -576,7 +576,7 @@ const DEFAULTS = {
   juying_enabled: false,
   juying_app_id: '',
   juying_api_key: '',
-  juying_domain: '',
+  juying_domain: 'https://www.jying.top',
   pansou_enabled: true,
   pansou_url: 'http://192.168.1.15:8888',
   pansou_token: '',
@@ -965,8 +965,11 @@ async function checkJuying() {
   const akey = (config.juying_api_key || '').trim()
   if (!aid || !akey) { snack('请先填 AppID 和 API Key', 'warning'); return }
   juyingChecking.value = true
-  const dom = encodeURIComponent((config.juying_domain || '').trim())
-  const res = await apiGet(`/check_juying?app_id=${encodeURIComponent(aid)}&api_key=${encodeURIComponent(akey)}${dom ? '&domain=' + dom : ''}`)
+  const res = await apiPost('/check_juying', {
+    app_id: aid,
+    api_key: akey,
+    domain: (config.juying_domain || '').trim(),
+  })
   juyingChecking.value = false
   snack((res && res.message) || '检查失败', (res && res.success) ? 'success' : 'error')
 }

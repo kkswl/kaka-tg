@@ -162,7 +162,7 @@ const DEFAULTS = {
   juying_enabled: false,
   juying_app_id: '',
   juying_api_key: '',
-  juying_domain: '',
+  juying_domain: 'https://www.jying.top',
   pansou_enabled: true,
   pansou_url: 'http://192.168.1.15:8888',
   pansou_token: '',
@@ -525,8 +525,11 @@ async function checkJuying() {
   const akey = (config.juying_api_key || '').trim();
   if (!aid || !akey) { snack('请先填 AppID 和 API Key', 'warning'); return }
   juyingChecking.value = true;
-  const dom = encodeURIComponent((config.juying_domain || '').trim());
-  const res = await apiGet(`/check_juying?app_id=${encodeURIComponent(aid)}&api_key=${encodeURIComponent(akey)}${dom ? '&domain=' + dom : ''}`);
+  const res = await apiPost('/check_juying', {
+    app_id: aid,
+    api_key: akey,
+    domain: (config.juying_domain || '').trim(),
+  });
   juyingChecking.value = false;
   snack((res && res.message) || '检查失败', (res && res.success) ? 'success' : 'error');
 }
@@ -2274,7 +2277,7 @@ return (_ctx, _cache) => {
             }, {
               default: _withCtx(() => [
                 _cache[126] || (_cache[126] = _createElementVNode("div", { class: "section-label mb-2" }, "聚影开发者 API", -1)),
-                _cache[127] || (_cache[127] = _createElementVNode("div", { class: "text-caption text-medium-emphasis mb-3" }, "官方 API 搜索（AppID+API Key 鉴权），稳定无 IP 封锁。非开发者用开发者的 AppID + 自己的 API Key", -1)),
+                _cache[127] || (_cache[127] = _createElementVNode("div", { class: "text-caption text-medium-emphasis mb-3" }, "官方只读开发者 API：模糊召回聚影站内资源，再由 MoviePilot 严格确认媒体身份。凭据仅由插件后端通过请求头发送", -1)),
                 _createVNode(_component_v_row, null, {
                   default: _withCtx(() => [
                     _createVNode(_component_v_col, {
@@ -2325,11 +2328,11 @@ return (_ctx, _cache) => {
                           modelValue: config.juying_domain,
                           "onUpdate:modelValue": _cache[56] || (_cache[56] = $event => ((config.juying_domain) = $event)),
                           label: "聚影站点域名",
-                          placeholder: "https://juying.example.com",
+                          placeholder: "https://www.jying.top",
                           variant: "outlined",
                           density: "compact",
                           "hide-details": "",
-                          hint: "聚影网站地址（带 https://，不带末尾/）",
+                          hint: "默认使用聚影官方 HTTPS 域名；不填写接口路径",
                           "persistent-hint": ""
                         }, null, 8, ["modelValue"])
                       ]),
@@ -2341,10 +2344,12 @@ return (_ctx, _cache) => {
                           modelValue: config.juying_app_id,
                           "onUpdate:modelValue": _cache[57] || (_cache[57] = $event => ((config.juying_app_id) = $event)),
                           label: "AppID（开发者凭证）",
+                          type: "password",
+                          autocomplete: "off",
                           variant: "outlined",
                           density: "compact",
                           "hide-details": "",
-                          hint: "开发者 AppID；非开发者填开发者的 AppID",
+                          hint: "仅保存在 MoviePilot 插件配置中，不会写入测试 URL",
                           "persistent-hint": ""
                         }, null, 8, ["modelValue"])
                       ]),
@@ -2356,10 +2361,12 @@ return (_ctx, _cache) => {
                           modelValue: config.juying_api_key,
                           "onUpdate:modelValue": _cache[58] || (_cache[58] = $event => ((config.juying_api_key) = $event)),
                           label: "API Key（个人凭证）",
+                          type: "password",
+                          autocomplete: "off",
                           variant: "outlined",
                           density: "compact",
                           "hide-details": "",
-                          hint: "个人中心获取的 API Key",
+                          hint: "个人中心管理的个人 API Key；只通过后端请求头发送",
                           "persistent-hint": ""
                         }, null, 8, ["modelValue"])
                       ]),
@@ -2849,6 +2856,6 @@ return (_ctx, _cache) => {
 }
 
 };
-const Config = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-e7480a93"]]);
+const Config = /*#__PURE__*/_export_sfc(_sfc_main, [['__scopeId',"data-v-6e3fc717"]]);
 
 export { Config as default };

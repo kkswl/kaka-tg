@@ -80,7 +80,7 @@ from app.schemas.types import EventType, MediaType, NotificationType, SystemConf
 from .p115_transfer import P115Transfer
 from .tg_scraper import TgChannelScraper, repair_mojibake
 from .site_scraper import FilejinScraper, SiteHit
-from .juying_scraper import JuyingApi
+from .juying_scraper import DEFAULT_JUYING_DOMAIN, JuyingApi
 from .pansou_scraper import PanSouClient
 from .identity_matcher import confirm_candidate_identity
 from .media_types import is_tv_media, subscription_notification_title, to_moviepilot_media_type
@@ -249,7 +249,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.8.33"
+    plugin_version = "4.8.34"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -534,11 +534,18 @@ class TgSearch115(_PluginBase):
         self._juying_enabled = self._to_bool(config.get("juying_enabled"), False)
         self._juying_app_id = config.get("juying_app_id") or ""
         self._juying_api_key = config.get("juying_api_key") or ""
-        self._juying_domain = (config.get("juying_domain") or "").strip()
+        self._juying_domain = (
+            config.get("juying_domain") or DEFAULT_JUYING_DOMAIN
+        ).strip()
         # 聚影也加专用代理机制，逻辑同观影
         jp = (config.get("juying_proxy") or "").strip()
         self._juying_proxy = None if jp == 'direct' else (jp or None)
-        if self._juying_enabled and self._juying_app_id and self._juying_api_key and self._juying_domain:
+        if (
+            self._juying_enabled
+            and self._juying_app_id
+            and self._juying_api_key
+            and self._juying_domain
+        ):
             self._juying_api = JuyingApi(
                 app_id=self._juying_app_id, api_key=self._juying_api_key,
                 domain=self._juying_domain, proxy=self._juying_proxy,
@@ -753,10 +760,10 @@ class TgSearch115(_PluginBase):
             {
                 "path": "/check_juying",
                 "endpoint": self.__check_juying_api,
-                "methods": ["GET"],
+                "methods": ["POST"],
                 "auth": "bear",
                 "summary": "检查聚影 API 鉴权",
-                "description": "用 AppID+API Key 试搜，验证聚影开发者接口是否可用",
+                "description": "凭据仅放请求体，执行一次只读最小搜索验证鉴权",
             },
             {
                 "path": "/check_pansou",
@@ -809,6 +816,9 @@ class TgSearch115(_PluginBase):
         pansou_client = getattr(self, "_pansou_client", None)
         if pansou_client:
             pansou_client.close()
+        juying_api = getattr(self, "_juying_api", None)
+        if juying_api:
+            juying_api.close()
         with self._lock:
             self._running_ids.clear()
 
@@ -1763,7 +1773,9 @@ class TgSearch115(_PluginBase):
             ))
         if self._juying_api:
             source_calls.append((
-                "juying", lambda: self._juying_api.search(keyword, year=year),
+                "juying", lambda: self._juying_api.search(
+                    keyword, year=year, media_type=media_type
+                ),
                 self._juying_api, year,
             ))
 
@@ -3559,6 +3571,33 @@ class TgSearch115(_PluginBase):
                 "identity_checked": self._pansou_identity_checked,
                 "safe_candidates": self._pansou_safe_candidates,
             },
+            "juying": {
+                "enabled": bool(self._juying_api),
+                "auth_valid": bool(
+                    getattr(self._juying_api, "app_auth_valid", True)
+                ) if self._juying_api else False,
+                "last_error": str(
+                    getattr(self._juying_api, "last_error", "") or ""
+                ) if self._juying_api else "",
+                "last_error_status": getattr(
+                    self._juying_api, "last_error_status", None
+                ) if self._juying_api else None,
+                "retry_after": int(
+                    getattr(self._juying_api, "last_retry_after", 0) or 0
+                ) if self._juying_api else 0,
+                "cache_hit": bool(
+                    getattr(self._juying_api, "last_cache_hit", False)
+                ) if self._juying_api else False,
+                "result_count": int(
+                    getattr(self._juying_api, "last_result_count", 0) or 0
+                ) if self._juying_api else 0,
+                "source_status": dict(
+                    getattr(self._juying_api, "last_source_status", {}) or {}
+                ) if self._juying_api else {},
+                "summary": dict(
+                    getattr(self._juying_api, "last_summary", {}) or {}
+                ) if self._juying_api else {},
+            },
             "tasks": self._cms_tasks.public_records() if self._cms_tasks else [],
             "timeline": self._timeline.list(limit=10) if self._timeline else {"total": 0, "items": []},
             "source_health": self._source_health.snapshot(self._source_breaker.snapshot() if self._source_breaker else {}) if self._source_health else {},
@@ -4177,19 +4216,20 @@ class TgSearch115(_PluginBase):
         ok, msg = self._site_scraper.check()
         return JSONResponse({"success": ok, "message": msg})
 
-    def __check_juying_api(self, app_id: str = "", api_key: str = "", domain: str = ""):
-        """GET /check_juying?app_id=...&api_key=...&domain=...：检查聚影 API 鉴权。
-
-        传参则测当前输入（无需保存），否则测已保存配置。
-        """
+    def __check_juying_api(self, payload: dict = Body(default=None)):  # noqa: B008
+        """POST /check_juying: verify current form values without URL secrets."""
         from starlette.responses import JSONResponse
-        aid = (app_id or "").strip()
-        akey = (api_key or "").strip()
-        dom = (domain or "").strip() or self._juying_domain
+        payload = payload if isinstance(payload, dict) else {}
+        aid = str(payload.get("app_id") or "").strip()
+        akey = str(payload.get("api_key") or "").strip()
+        dom = str(payload.get("domain") or "").strip() or self._juying_domain
         if aid or akey:
             api = JuyingApi(app_id=aid, api_key=akey, domain=dom, proxy=self._juying_proxy)
-            ok, msg = api.check()
-            return JSONResponse({"success": ok, "message": msg})
+            try:
+                ok, msg = api.check()
+                return JSONResponse({"success": ok, "message": msg})
+            finally:
+                api.close()
         if not self._juying_api:
             return JSONResponse({"success": False, "message": "聚影未启用或未配置 AppID/API Key/域名"})
         ok, msg = self._juying_api.check()
@@ -4281,7 +4321,7 @@ class TgSearch115(_PluginBase):
             "juying_enabled": False,
             "juying_app_id": "",
             "juying_api_key": "",
-            "juying_domain": "",
+            "juying_domain": "https://www.jying.top",
             "juying_proxy": "",
             "pansou_enabled": True,
             "pansou_url": "http://192.168.1.15:8888",

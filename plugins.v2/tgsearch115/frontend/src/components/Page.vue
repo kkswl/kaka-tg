@@ -84,6 +84,19 @@
             <div class="text-body-2">{{ formatTime(runtime.pansou.last_success) }} · 缓存 {{ runtime.pansou.cache_hits || 0 }}</div>
             <div v-if="runtime.pansou.last_error" class="text-caption text-warning">{{ runtime.pansou.last_error }}</div>
           </v-col>
+          <v-col cols="12" md="4">
+            <div class="text-caption text-medium-emphasis">聚影开发者 API</div>
+            <div class="text-body-2">{{ runtime.juying.enabled ? '已启用' : '未启用' }} · 最近 {{ runtime.juying.result_count || 0 }} 条</div>
+          </v-col>
+          <v-col cols="12" md="4">
+            <div class="text-caption text-medium-emphasis">聚影来源状态</div>
+            <div class="text-body-2">{{ runtime.juying.source_status?.juying || '尚未请求' }} · API 缓存 {{ runtime.juying.cache_hit ? '命中' : '未命中' }}</div>
+          </v-col>
+          <v-col cols="12" md="4">
+            <div class="text-caption text-medium-emphasis">聚影最近诊断</div>
+            <div class="text-body-2">鉴权 {{ runtime.juying.auth_valid ? '正常' : '未确认' }}<span v-if="runtime.juying.retry_after"> · {{ runtime.juying.retry_after }} 秒后重试</span></div>
+            <div v-if="runtime.juying.last_error" class="text-caption text-warning">{{ runtime.juying.last_error }}</div>
+          </v-col>
         </v-row>
         <div v-if="sourceStates.length" class="d-flex flex-wrap ga-2 mt-3">
           <v-chip
@@ -448,8 +461,8 @@ import {
   openResourceLink,
 } from '../manualActions.js'
 
-const FRONTEND_VERSION = '4.8.33'
-const FRONTEND_BUILD_ID = typeof __TG115_BUILD_ID__ === 'string' ? __TG115_BUILD_ID__ : 'v4.8.33'
+const FRONTEND_VERSION = '4.8.34'
+const FRONTEND_BUILD_ID = typeof __TG115_BUILD_ID__ === 'string' ? __TG115_BUILD_ID__ : 'v4.8.34'
 const FRONTEND_BUILD_TIME = typeof __TG115_BUILD_TIME__ === 'string' ? __TG115_BUILD_TIME__ : 'unknown'
 
 const props = defineProps({
@@ -899,6 +912,7 @@ const runtime = reactive({
   sources: {},
   tg: { enabled: true, configured_channels: 0, enabled_channels: 0, status: 'empty' },
   pansou: { enabled: false, last_request: '', last_success: '', last_error: '', result_count: 0, type_counts: {}, cache_hits: 0, deduplicated: 0, rule_passed: 0, identity_checked: 0, safe_candidates: 0 },
+  juying: { enabled: false, auth_valid: false, last_error: '', last_error_status: null, retry_after: 0, cache_hit: false, result_count: 0, source_status: {}, summary: {} },
   tasks: [],
 })
 const diagnosticsExpanded = ref(false)
@@ -918,7 +932,7 @@ const statusText = computed(() => {
     : runtime.tg?.status === 'empty'
       ? '已启用但无频道'
       : '已启用'
-  return `${config.enabled ? '运行中' : '已停用'} · TG ${tgState} · 115 ${loginOk.value ? '已登录' : '未登录'} · PanSou ${runtime.pansou.enabled ? '已启用' : '未启用'}`
+  return `${config.enabled ? '运行中' : '已停用'} · TG ${tgState} · 115 ${loginOk.value ? '已登录' : '未登录'} · PanSou ${runtime.pansou.enabled ? '已启用' : '未启用'} · 聚影 ${runtime.juying.enabled ? '已启用' : '未启用'}`
 })
 const versionMismatch = computed(() => !!runtime.plugin_version && runtime.plugin_version !== FRONTEND_VERSION)
 const tasksExpanded = ref(false)
@@ -1038,6 +1052,7 @@ async function loadRuntimeStatus() {
       Object.assign(runtime.recognition, data.recognition || {})
       runtime.sources = data.sources || {}
       Object.assign(runtime.pansou, data.pansou || {})
+      Object.assign(runtime.juying, data.juying || {})
       runtime.tasks = Array.isArray(data.tasks) ? data.tasks : []
       Object.assign(timeline, data.timeline || { total: 0, active_count: 0, terminal_count: 0, items: [] })
       sourceHealth.value = data.source_health || {}
