@@ -3,10 +3,11 @@
     "name": "拦截mp订阅",
     "description": "聚合 TG、观影、PanSou 与聚影资源，经 MoviePilot 规则和精确媒体身份确认后按来源顺序转存；完整磁力统一使用插件内置 115 离线，115 分享继续使用插件内置 115 转存。",
     "labels": "订阅,Telegram,115网盘",
-    "version": "4.8.30",
+    "version": "4.8.31",
     "author": "MoviePilot User",
     "level": 2,
     "history": {
+      "v4.8.31": "修复 Windows 局域网 HTTP 页面复制假成功：现代 Clipboard 成功与旧式复制分开标记；旧式 textarea 与 DOM Range 双路径不再使用只读/负层级节点，无法验证系统剪贴板时显示并全选完整链接，提示 Ctrl+C，避免误报和页面跳底。",
       "v4.8.30": "修复真实手机/WebView 复制仍失效：移除会阻止按钮聚焦的 pointerdown.prevent 双事件，统一在 click 用户手势内复制；复制回退直接记录真实触发按钮的宿主滚动容器，并兼容移动端可选择节点与延迟滚动恢复。",
       "v4.8.29": "修复移动端/嵌入式 WebView 复制仍跳页且失败：局域网 HTTP 在指针手势内启动 Clipboard API 后立即执行 textarea 回退，并恢复 MoviePilot 内部滚动容器与窗口位置，避免异步拒绝导致复制权限丢失。",
       "v4.8.28": "修复手动资源真实链接复制与 115 手动转存参数闭环：保留完整资源 URL 并提供移动端手势、textarea 与手动复制对话框三级复制回退；115 分享读取失败不再伪造 file_id，目录分享使用真实 cid，share_receive 仅提交已核对的必要参数，并返回脱敏失败阶段。",

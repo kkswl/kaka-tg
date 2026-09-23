@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import {
   buildManualTransferPayload,
+  copyTextResult,
   copyTextWithFallback,
   fallbackCopyText,
   getResourceLink,
@@ -43,6 +44,34 @@ test('uses Clipboard API first and preserves the complete URL', async () => {
   })
   assert.equal(ok, true)
   assert.deepEqual(calls, [url])
+})
+
+test('reports modern Clipboard success as verified', async () => {
+  const result = await copyTextResult('https://115.com/s/example', {
+    navigatorRef: { clipboard: { writeText: async () => undefined } },
+    documentRef: null,
+    isSecureContext: true,
+  })
+  assert.deepEqual(result, { copied: true, verified: true, method: 'clipboard' })
+})
+
+test('does not misreport a synchronous Clipboard failure as verified', async () => {
+  const result = await copyTextResult('https://115.com/s/example', {
+    navigatorRef: { clipboard: { writeText: () => { throw new Error('blocked') } } },
+    documentRef: null,
+    isSecureContext: true,
+  })
+  assert.deepEqual(result, { copied: false, verified: false, method: 'manual' })
+})
+
+test('marks legacy Windows copy as unverified', async () => {
+  const { document } = fakeDocument()
+  const result = await copyTextResult('https://115.com/s/example', {
+    navigatorRef: {},
+    documentRef: document,
+    windowRef: { isSecureContext: false },
+  })
+  assert.deepEqual(result, { copied: true, verified: false, method: 'legacy' })
 })
 
 test('uses Clipboard API when an embedded local HTTP page exposes it', async () => {

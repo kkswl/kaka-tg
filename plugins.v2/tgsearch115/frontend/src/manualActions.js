@@ -68,7 +68,8 @@ export function fallbackCopyText(text, documentRef = globalThis.document, window
   }
   const textarea = documentRef.createElement('textarea')
   textarea.value = text
-  textarea.setAttribute('readonly', '')
+  textarea.setAttribute('inputmode', 'none')
+  textarea.setAttribute('aria-hidden', 'true')
   textarea.style.position = 'fixed'
   // Keep the selectable node inside the viewport. iOS/WebView can refuse a
   // selection on a control positioned thousands of pixels off-screen.
@@ -79,18 +80,46 @@ export function fallbackCopyText(text, documentRef = globalThis.document, window
   textarea.style.overflow = 'hidden'
   textarea.style.fontSize = '16px'
   textarea.style.opacity = '0.01'
-  textarea.style.zIndex = '-1'
+  textarea.style.zIndex = '2147483647'
   textarea.style.pointerEvents = 'none'
   documentRef.body.appendChild(textarea)
-  let copied = false
+  let textareaCopied = false
+  let rangeCopied = false
+  let rangeNode = null
+  let selection = null
   try {
     try { textarea.focus({ preventScroll: true }) } catch { textarea.focus() }
     textarea.select()
     if (typeof textarea.setSelectionRange === 'function') textarea.setSelectionRange(0, text.length)
-    copied = documentRef.execCommand?.('copy') === true
+    textareaCopied = documentRef.execCommand?.('copy') === true
+
+    // Chromium variants can report success for a textarea selection without
+    // updating the Windows clipboard. Repeat with a DOM Range so the browser
+    // receives a second, independent selection shape containing the same URL.
+    if (typeof documentRef.createRange === 'function' && typeof windowRef?.getSelection === 'function') {
+      rangeNode = documentRef.createElement('span')
+      rangeNode.textContent = text
+      rangeNode.style.position = 'fixed'
+      rangeNode.style.left = '0'
+      rangeNode.style.top = '0'
+      rangeNode.style.opacity = '0.01'
+      rangeNode.style.userSelect = 'text'
+      rangeNode.style.pointerEvents = 'none'
+      documentRef.body.appendChild(rangeNode)
+      const range = documentRef.createRange()
+      range.selectNodeContents(rangeNode)
+      selection = windowRef.getSelection()
+      selection?.removeAllRanges?.()
+      selection?.addRange?.(range)
+      rangeCopied = documentRef.execCommand?.('copy') === true
+    }
   } catch {
-    copied = false
+    // Preserve a successful textarea attempt if the Range path is unsupported.
   } finally {
+    try { selection?.removeAllRanges?.() } catch { /* Selection cleanup is best effort. */ }
+    if (rangeNode) {
+      try { rangeNode.remove() } catch { documentRef.body.removeChild?.(rangeNode) }
+    }
     try { textarea.remove() } catch { documentRef.body.removeChild?.(textarea) }
     try { anchorElement?.focus?.({ preventScroll: true }) } catch { /* Focus restoration is best effort. */ }
     const restoreScroll = () => {
@@ -109,10 +138,10 @@ export function fallbackCopyText(text, documentRef = globalThis.document, window
     // Restore once more on the next frame without delaying the copy result.
     try { windowRef?.requestAnimationFrame?.(restoreScroll) } catch { /* Best effort. */ }
   }
-  return copied
+  return textareaCopied || rangeCopied
 }
 
-export async function copyTextWithFallback(text, options = {}) {
+export async function copyTextResult(text, options = {}) {
   const navigatorRef = options.navigatorRef ?? globalThis.navigator
   const documentRef = options.documentRef ?? globalThis.document
   const windowRef = options.windowRef ?? globalThis.window
@@ -133,17 +162,24 @@ export async function copyTextWithFallback(text, options = {}) {
       const fallbackCopied = fallbackCopyText(text, documentRef, windowRef, anchorElement)
       if (fallbackCopied) {
         Promise.resolve(clipboardPromise).catch(() => undefined)
-        return true
+        return { copied: true, verified: false, method: 'legacy' }
       }
     }
-    try {
-      await clipboardPromise
-      return true
-    } catch {
-      // Secure contexts only reach this fallback after clipboard rejection.
+    if (clipboardPromise && typeof clipboardPromise.then === 'function') {
+      try {
+        await clipboardPromise
+        return { copied: true, verified: true, method: 'clipboard' }
+      } catch {
+        // Secure contexts only reach this fallback after clipboard rejection.
+      }
     }
   }
-  return fallbackCopyText(text, documentRef, windowRef, anchorElement)
+  const copied = fallbackCopyText(text, documentRef, windowRef, anchorElement)
+  return { copied, verified: false, method: copied ? 'legacy' : 'manual' }
+}
+
+export async function copyTextWithFallback(text, options = {}) {
+  return (await copyTextResult(text, options)).copied
 }
 
 export function openResourceLink(url, options = {}) {
