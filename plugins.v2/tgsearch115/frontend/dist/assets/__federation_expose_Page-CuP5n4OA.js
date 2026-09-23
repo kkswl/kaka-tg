@@ -17,9 +17,15 @@ function normalizeResourceUrl(value) {
   // APIs sometimes serialize query delimiters as HTML entities.  Decode only
   // delimiters that are valid in a URL; never use the display title as a
   // fallback and never encode an already-complete resource URL again.
-  return String(value || '').trim()
-    .replace(/&amp;/gi, '&')
-    .replace(/&#38;|&#x26;/gi, '&')
+  let text = String(value || '').trim();
+  // Some source payloads are escaped more than once (`&amp;amp;`). Decode
+  // only the URL delimiter and cap the loop so arbitrary HTML is untouched.
+  for (let index = 0; index < 3; index += 1) {
+    const decoded = text.replace(/&amp;/gi, '&').replace(/&#38;|&#x26;/gi, '&');
+    if (decoded === text) break
+    text = decoded;
+  }
+  return text
 }
 
 function getResourceLink(resource) {
@@ -41,112 +47,38 @@ function getResourceLink(resource) {
   return ''
 }
 
-function fallbackCopyText(text, documentRef = globalThis.document, windowRef = globalThis.window, anchorElement = null) {
-  if (!documentRef?.createElement || !documentRef?.body?.appendChild) return false
-  const scrollX = Number(windowRef?.scrollX) || 0;
-  const scrollY = Number(windowRef?.scrollY) || 0;
-  // MoviePilot places the plugin inside its own scrolling container. Restoring
-  // only window.scrollY is insufficient there: focusing a temporary textarea
-  // can move the host container to its end on mobile WebViews.
-  const scrollStates = [];
-  const seen = new Set();
-  const rememberAncestors = (start) => {
-    let parent = start;
-    while (parent) {
-      if (!seen.has(parent) && typeof parent.scrollTop === 'number') {
-        seen.add(parent);
-        scrollStates.push({ element: parent, left: parent.scrollLeft || 0, top: parent.scrollTop || 0 });
-      }
-      parent = parent.parentElement;
-    }
-  };
-  // pointerdown.prevent used to leave activeElement on an unrelated host
-  // control. The click handler now passes its real button so the actual
-  // MoviePilot scroll container is always recorded, even on mobile WebViews.
-  rememberAncestors(anchorElement);
-  rememberAncestors(documentRef.activeElement);
-  const scrollingElement = documentRef.scrollingElement;
-  if (scrollingElement && !seen.has(scrollingElement)) {
-    scrollStates.push({ element: scrollingElement, left: scrollingElement.scrollLeft || 0, top: scrollingElement.scrollTop || 0 });
-  }
-  const textarea = documentRef.createElement('textarea');
-  textarea.value = text;
-  textarea.setAttribute('readonly', '');
-  textarea.style.position = 'fixed';
-  // Keep the selectable node inside the viewport. iOS/WebView can refuse a
-  // selection on a control positioned thousands of pixels off-screen.
-  textarea.style.left = '0';
-  textarea.style.top = '0';
-  textarea.style.width = '1px';
-  textarea.style.height = '1px';
-  textarea.style.overflow = 'hidden';
-  textarea.style.fontSize = '16px';
-  textarea.style.opacity = '0.01';
-  textarea.style.zIndex = '-1';
-  textarea.style.pointerEvents = 'none';
-  documentRef.body.appendChild(textarea);
-  let copied = false;
-  try {
-    try { textarea.focus({ preventScroll: true }); } catch { textarea.focus(); }
-    textarea.select();
-    if (typeof textarea.setSelectionRange === 'function') textarea.setSelectionRange(0, text.length);
-    copied = documentRef.execCommand?.('copy') === true;
-  } catch {
-    copied = false;
-  } finally {
-    try { textarea.remove(); } catch { documentRef.body.removeChild?.(textarea); }
-    try { anchorElement?.focus?.({ preventScroll: true }); } catch { /* Focus restoration is best effort. */ }
-    const restoreScroll = () => {
-      for (const state of scrollStates) {
-        try {
-          state.element.scrollLeft = state.left;
-          state.element.scrollTop = state.top;
-        } catch { /* Container restoration is best effort. */ }
-      }
-      try {
-        windowRef?.scrollTo?.(scrollX, scrollY);
-      } catch { /* Scroll restoration is best effort. */ }
-    };
-    restoreScroll();
-    // Some mobile WebViews apply focus scrolling after execCommand returns.
-    // Restore once more on the next frame without delaying the copy result.
-    try { windowRef?.requestAnimationFrame?.(restoreScroll); } catch { /* Best effort. */ }
-  }
-  return copied
+function browserNameAndMajor(userAgent = '') {
+  const value = String(userAgent || '');
+  const match = value.match(/Edg\/(\d+)/i) || value.match(/Chrome\/(\d+)/i) || value.match(/Firefox\/(\d+)/i);
+  if (!match) return '未知'
+  const name = /Edg\//i.test(value) ? 'Edge' : /Firefox\//i.test(value) ? 'Firefox' : 'Chrome';
+  return `${name} ${match[1]}`
 }
 
-async function copyTextWithFallback(text, options = {}) {
+function clipboardEnvironment(options = {}) {
   const navigatorRef = options.navigatorRef ?? globalThis.navigator;
-  const documentRef = options.documentRef ?? globalThis.document;
   const windowRef = options.windowRef ?? globalThis.window;
-  const anchorElement = options.anchorElement ?? null;
-  const secureContext = options.isSecureContext ?? windowRef?.isSecureContext ?? false;
-  // Local-IP MoviePilot is HTTP. A WebView may expose Clipboard API but reject
-  // it asynchronously after the user gesture has expired. Start that API
-  // first, then complete the textarea route synchronously while the gesture is
-  // still live. Both paths copy exactly the same text and neither navigates.
-  if (navigatorRef?.clipboard?.writeText) {
-    let clipboardPromise;
-    try {
-      clipboardPromise = navigatorRef.clipboard.writeText(text);
-    } catch {
-      clipboardPromise = null;
-    }
-    if (!secureContext) {
-      const fallbackCopied = fallbackCopyText(text, documentRef, windowRef, anchorElement);
-      if (fallbackCopied) {
-        Promise.resolve(clipboardPromise).catch(() => undefined);
-        return true
-      }
-    }
-    try {
-      await clipboardPromise;
-      return true
-    } catch {
-      // Secure contexts only reach this fallback after clipboard rejection.
-    }
+  return {
+    protocol: String(windowRef?.location?.protocol || 'unknown:'),
+    secure_context: windowRef?.isSecureContext === true,
+    clipboard_available: Boolean(navigatorRef?.clipboard),
+    write_text_available: typeof navigatorRef?.clipboard?.writeText === 'function',
+    browser: browserNameAndMajor(navigatorRef?.userAgent),
   }
-  return fallbackCopyText(text, documentRef, windowRef, anchorElement)
+}
+
+async function copyTextSecure(text, options = {}) {
+  const navigatorRef = options.navigatorRef ?? globalThis.navigator;
+  const environment = clipboardEnvironment(options);
+  if (!isCopyableResourceUrl(text)) return { success: false, reason: 'invalid_url', environment }
+  if (!environment.secure_context) return { success: false, reason: 'insecure_context', environment }
+  if (!environment.write_text_available) return { success: false, reason: 'clipboard_unavailable', environment }
+  try {
+    await navigatorRef.clipboard.writeText(String(text || ''));
+    return { success: true, reason: 'copied', environment }
+  } catch {
+    return { success: false, reason: 'permission_denied', environment }
+  }
 }
 
 function openResourceLink(url, options = {}) {
@@ -324,40 +256,50 @@ const _hoisted_63 = ["onClick"];
 const _hoisted_64 = ["onClick"];
 const _hoisted_65 = ["onClick"];
 const _hoisted_66 = {
+  key: 1,
+  class: "manual-copy-inline",
+  role: "status"
+};
+const _hoisted_67 = { class: "manual-copy-guidance" };
+const _hoisted_68 = {
+  class: "manual-copy-link",
+  "aria-label": "完整资源链接"
+};
+const _hoisted_69 = { class: "manual-copy-inline-actions" };
+const _hoisted_70 = {
   key: 5,
   class: "manual-empty-state"
 };
-const _hoisted_67 = { class: "frontend-build-info text-caption text-medium-emphasis mt-2" };
-const _hoisted_68 = {
+const _hoisted_71 = { class: "frontend-build-info text-caption text-medium-emphasis mt-2" };
+const _hoisted_72 = {
   key: 0,
   class: "manual-default-target"
 };
-const _hoisted_69 = {
+const _hoisted_73 = {
   key: 1,
   class: "manual-directory-toolbar"
 };
-const _hoisted_70 = ["disabled"];
-const _hoisted_71 = ["disabled"];
-const _hoisted_72 = { class: "text-caption text-medium-emphasis" };
-const _hoisted_73 = ["disabled"];
-const _hoisted_74 = {
+const _hoisted_74 = ["disabled"];
+const _hoisted_75 = ["disabled"];
+const _hoisted_76 = { class: "text-caption text-medium-emphasis" };
+const _hoisted_77 = ["disabled"];
+const _hoisted_78 = {
   key: 2,
   class: "manual-loading",
   role: "status"
 };
-const _hoisted_75 = {
+const _hoisted_79 = {
   key: 3,
   class: "manual-directory-list"
 };
-const _hoisted_76 = ["onClick"];
-const _hoisted_77 = {
+const _hoisted_80 = ["onClick"];
+const _hoisted_81 = {
   key: 4,
   class: "manual-empty-state"
 };
-const _hoisted_78 = { class: "text-caption text-medium-emphasis" };
-const _hoisted_79 = ["value"];
-const {computed,getCurrentInstance,nextTick,onMounted,onUnmounted,reactive,ref,watch} = await importShared('vue');
-const FRONTEND_VERSION = "4.8.32";
+const _hoisted_82 = { class: "text-caption text-medium-emphasis" };
+const {computed,getCurrentInstance,onMounted,onUnmounted,reactive,ref,watch} = await importShared('vue');
+const FRONTEND_VERSION = "4.8.33";
 const MANUAL_CACHE_KEY = "TgSearch115:manual-search:v2";
 const FORCE_TIMELINE_CONFIRMATION = "强制清理诊断记录";
 const _sfc_main = {
@@ -368,8 +310,8 @@ const _sfc_main = {
   },
   emits: ["close", "back"],
   setup(__props, { emit: __emit }) {
-    const FRONTEND_BUILD_ID = "v4.8.32-safe-copy-rollback" ;
-    const FRONTEND_BUILD_TIME = "2026-09-23T09:26:23.202Z" ;
+    const FRONTEND_BUILD_ID = "v4.8.33-simple-secure-clipboard" ;
+    const FRONTEND_BUILD_TIME = "2026-09-23T11:56:48.294Z" ;
     const props = __props;
     const emit = __emit;
     const instance = getCurrentInstance();
@@ -444,9 +386,9 @@ const _sfc_main = {
     const manualTransferSubmitting = ref(false);
     const manualTransferUseDefault = ref(true);
     const manualCacheAvailable = ref(true);
-    const manualCopyDialog = ref(false);
+    const manualCopyFallbackId = ref("");
     const manualCopyUrl = ref("");
-    const manualCopyInput = ref(null);
+    const manualCopyMessage = ref("");
     const manualDetailFilters = computed(() => manualResourceType.value === "magnet" ? MANUAL_MAGNET_FILTERS : MANUAL_PAN_FILTERS);
     const manualTransferPathText = computed(() => {
       const names = manualTransferPath.value.slice(1).map((part) => part.name);
@@ -615,52 +557,53 @@ const _sfc_main = {
       if (item?.pan_type === "115" && item?.receive_code && !/[?&](password|receive_code|pwd)=/.test(url)) url += `${url.includes("?") ? "&" : "?"}password=${item.receive_code}`;
       return url;
     }
-    async function copyManualResult(item, event = null) {
+    function recordClipboardEnvironment(environment) {
+      console.info("【TG115】复制环境", {
+        protocol: environment.protocol,
+        secure_context: environment.secure_context,
+        clipboard_available: environment.clipboard_available,
+        write_text_available: environment.write_text_available,
+        browser: environment.browser,
+        frontend_version: FRONTEND_VERSION,
+        backend_version: runtime.plugin_version || "unknown"
+      });
+    }
+    function showManualCopyFallback(item, url, reason) {
+      manualCopyFallbackId.value = item.result_id;
+      manualCopyUrl.value = url;
+      manualCopyMessage.value = reason === "permission_denied" ? "浏览器拒绝了剪贴板权限。请手动选择下面的完整链接并按 Ctrl+C。" : "当前是 HTTP 页面，浏览器禁止网页写入剪贴板。请使用 HTTPS 访问，或手动选择链接并按 Ctrl+C。";
+    }
+    async function copyManualResult(item) {
       const url = manualFullUrl(item).trim();
-      const anchorElement = event?.currentTarget || null;
       if (!isCopyableResourceUrl(url)) {
         showSnack("该资源没有有效链接", "warning");
         return false;
       }
-      try {
-        const copied = await copyTextWithFallback(url, { anchorElement });
-        if (copied) {
-          manualCopyDialog.value = false;
-          showSnack("链接已复制", "success");
-          return true;
-        }
-      } catch {
+      const result = await copyTextSecure(url);
+      recordClipboardEnvironment(result.environment);
+      if (result.success) {
+        manualCopyFallbackId.value = "";
+        manualCopyUrl.value = "";
+        manualCopyMessage.value = "";
+        showSnack("链接已复制", "success");
+        return true;
       }
-      manualCopyUrl.value = url;
-      manualCopyDialog.value = true;
-      showSnack("复制失败，请长按或手动复制", "warning");
+      showManualCopyFallback(item, url, result.reason);
+      showSnack(result.reason === "permission_denied" ? "浏览器拒绝剪贴板权限" : "HTTP 页面不能自动复制，请手动按 Ctrl+C", "warning");
       return false;
     }
-    async function selectManualCopyText() {
-      await nextTick();
-      const input = manualCopyInput.value;
-      if (!input) return;
-      try {
-        input.focus({ preventScroll: true });
-        input.select();
-        input.setSelectionRange?.(0, input.value.length);
-      } catch {
-      }
+    function closeManualCopyFallback() {
+      manualCopyFallbackId.value = "";
+      manualCopyUrl.value = "";
+      manualCopyMessage.value = "";
     }
-    async function retryManualCopy() {
+    function openManualCopyFallback() {
       const url = manualCopyUrl.value.trim();
       if (!isCopyableResourceUrl(url)) {
         showSnack("该资源没有有效链接", "warning");
         return;
       }
-      const copied = await copyTextWithFallback(url);
-      if (copied) {
-        manualCopyDialog.value = false;
-        showSnack("链接已复制", "success");
-        return;
-      }
-      showSnack("仍无法自动复制，请长按或手动复制", "warning");
-      await selectManualCopyText();
+      if (!openResourceLink(url)) showSnack("链接无法打开，请检查浏览器弹窗或磁力关联设置", "warning");
     }
     function openManualResult(item) {
       const url = manualFullUrl(item).trim();
@@ -1123,7 +1066,7 @@ const _sfc_main = {
                   color: "primary",
                   class: "mr-2"
                 }),
-                _cache[16] || (_cache[16] = _createTextVNode(" 运行状态 ", -1)),
+                _cache[14] || (_cache[14] = _createTextVNode(" 运行状态 ", -1)),
                 _createElementVNode("span", _hoisted_2, _toDisplayString(statusText.value), 1),
                 _createVNode(_component_v_spacer),
                 _createVNode(_component_v_btn, {
@@ -1139,7 +1082,7 @@ const _sfc_main = {
                       activator: "parent",
                       location: "top"
                     }, {
-                      default: _withCtx(() => [..._cache[15] || (_cache[15] = [
+                      default: _withCtx(() => [..._cache[13] || (_cache[13] = [
                         _createTextVNode("关闭", -1)
                       ])]),
                       _: 1
@@ -1166,7 +1109,7 @@ const _sfc_main = {
                             md: "4"
                           }, {
                             default: _withCtx(() => [
-                              _cache[17] || (_cache[17] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "TG 频道数", -1)),
+                              _cache[15] || (_cache[15] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "TG 频道数", -1)),
                               _createElementVNode("div", _hoisted_3, _toDisplayString(channelCount.value), 1)
                             ]),
                             _: 1
@@ -1176,7 +1119,7 @@ const _sfc_main = {
                             md: "4"
                           }, {
                             default: _withCtx(() => [
-                              _cache[18] || (_cache[18] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "115 登录", -1)),
+                              _cache[16] || (_cache[16] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "115 登录", -1)),
                               _createElementVNode("div", {
                                 class: _normalizeClass(["text-h6", loginOk.value ? "text-success" : "text-medium-emphasis"])
                               }, _toDisplayString(loginOk.value ? "已登录" : "未登录"), 3)
@@ -1187,7 +1130,7 @@ const _sfc_main = {
                             cols: "12",
                             md: "4"
                           }, {
-                            default: _withCtx(() => [..._cache[19] || (_cache[19] = [
+                            default: _withCtx(() => [..._cache[17] || (_cache[17] = [
                               _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "订阅处理", -1),
                               _createElementVNode("div", { class: "text-h6" }, "插件来源优先", -1)
                             ])]),
@@ -1198,7 +1141,7 @@ const _sfc_main = {
                             md: "4"
                           }, {
                             default: _withCtx(() => [
-                              _cache[20] || (_cache[20] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "上次周期扫描", -1)),
+                              _cache[18] || (_cache[18] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "上次周期扫描", -1)),
                               _createElementVNode("div", _hoisted_4, _toDisplayString(formatTime(runtime.scheduler.last_run)), 1)
                             ]),
                             _: 1
@@ -1208,7 +1151,7 @@ const _sfc_main = {
                             md: "4"
                           }, {
                             default: _withCtx(() => [
-                              _cache[21] || (_cache[21] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "下次周期扫描", -1)),
+                              _cache[19] || (_cache[19] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "下次周期扫描", -1)),
                               _createElementVNode("div", _hoisted_5, _toDisplayString(formatTime(runtime.scheduler.next_run)), 1)
                             ]),
                             _: 1
@@ -1218,7 +1161,7 @@ const _sfc_main = {
                             md: "4"
                           }, {
                             default: _withCtx(() => [
-                              _cache[22] || (_cache[22] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "队列 / 本轮订阅", -1)),
+                              _cache[20] || (_cache[20] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "队列 / 本轮订阅", -1)),
                               _createElementVNode("div", _hoisted_6, _toDisplayString(runtime.scheduler.queue_size || 0) + " / " + _toDisplayString(runtime.scheduler.scanned_count || 0), 1)
                             ]),
                             _: 1
@@ -1228,7 +1171,7 @@ const _sfc_main = {
                             md: "4"
                           }, {
                             default: _withCtx(() => [
-                              _cache[23] || (_cache[23] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "TMDB 识别队列", -1)),
+                              _cache[21] || (_cache[21] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "TMDB 识别队列", -1)),
                               _createElementVNode("div", _hoisted_7, "等待 " + _toDisplayString(runtime.recognition.waiting || 0) + " / 活动 " + _toDisplayString(runtime.recognition.active || 0), 1)
                             ]),
                             _: 1
@@ -1238,7 +1181,7 @@ const _sfc_main = {
                             md: "4"
                           }, {
                             default: _withCtx(() => [
-                              _cache[24] || (_cache[24] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "TMDB 最大并发", -1)),
+                              _cache[22] || (_cache[22] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "TMDB 最大并发", -1)),
                               _createElementVNode("div", _hoisted_8, _toDisplayString(runtime.recognition.max_active || 0) + " / 1", 1)
                             ]),
                             _: 1
@@ -1248,7 +1191,7 @@ const _sfc_main = {
                             md: "4"
                           }, {
                             default: _withCtx(() => [
-                              _cache[25] || (_cache[25] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "识别恢复", -1)),
+                              _cache[23] || (_cache[23] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "识别恢复", -1)),
                               _createElementVNode("div", _hoisted_9, "重试 " + _toDisplayString(runtime.recognition.retries || 0) + " / 暂不可用 " + _toDisplayString(runtime.recognition.identity_unavailable || 0), 1)
                             ]),
                             _: 1
@@ -1258,7 +1201,7 @@ const _sfc_main = {
                             md: "4"
                           }, {
                             default: _withCtx(() => [
-                              _cache[26] || (_cache[26] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "PanSou", -1)),
+                              _cache[24] || (_cache[24] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "PanSou", -1)),
                               _createElementVNode("div", _hoisted_10, _toDisplayString(runtime.pansou.enabled ? "已启用" : "未启用") + " · 最近 " + _toDisplayString(runtime.pansou.result_count || 0) + " 条", 1)
                             ]),
                             _: 1
@@ -1268,7 +1211,7 @@ const _sfc_main = {
                             md: "4"
                           }, {
                             default: _withCtx(() => [
-                              _cache[27] || (_cache[27] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "PanSou 处理", -1)),
+                              _cache[25] || (_cache[25] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "PanSou 处理", -1)),
                               _createElementVNode("div", _hoisted_11, "去重 " + _toDisplayString(runtime.pansou.deduplicated || 0) + " / 规则 " + _toDisplayString(runtime.pansou.rule_passed || 0) + " / 安全 " + _toDisplayString(runtime.pansou.safe_candidates || 0), 1)
                             ]),
                             _: 1
@@ -1278,7 +1221,7 @@ const _sfc_main = {
                             md: "4"
                           }, {
                             default: _withCtx(() => [
-                              _cache[28] || (_cache[28] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "PanSou 最近状态", -1)),
+                              _cache[26] || (_cache[26] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "PanSou 最近状态", -1)),
                               _createElementVNode("div", _hoisted_12, _toDisplayString(formatTime(runtime.pansou.last_success)) + " · 缓存 " + _toDisplayString(runtime.pansou.cache_hits || 0), 1),
                               runtime.pansou.last_error ? (_openBlock(), _createElementBlock("div", _hoisted_13, _toDisplayString(runtime.pansou.last_error), 1)) : _createCommentVNode("", true)
                             ]),
@@ -1330,7 +1273,7 @@ const _sfc_main = {
                   color: "primary",
                   class: "mr-2"
                 }),
-                _cache[31] || (_cache[31] = _createTextVNode("订阅处理诊断 ", -1)),
+                _cache[29] || (_cache[29] = _createTextVNode("订阅处理诊断 ", -1)),
                 _createVNode(_component_v_chip, {
                   size: "x-small",
                   variant: "tonal",
@@ -1349,7 +1292,7 @@ const _sfc_main = {
                   "aria-label": "清理已结束的订阅诊断记录",
                   onClick: _withModifiers(clearTimeline, ["stop"])
                 }, {
-                  default: _withCtx(() => [..._cache[29] || (_cache[29] = [
+                  default: _withCtx(() => [..._cache[27] || (_cache[27] = [
                     _createTextVNode("清理已结束", -1)
                   ])]),
                   _: 1
@@ -1362,7 +1305,7 @@ const _sfc_main = {
                   "aria-label": "强制清理全部订阅诊断记录",
                   onClick: _withModifiers(openForceTimelineDialog, ["stop"])
                 }, {
-                  default: _withCtx(() => [..._cache[30] || (_cache[30] = [
+                  default: _withCtx(() => [..._cache[28] || (_cache[28] = [
                     _createTextVNode("强制清理", -1)
                   ])]),
                   _: 1
@@ -1445,7 +1388,7 @@ const _sfc_main = {
                   color: "primary",
                   class: "mr-2"
                 }),
-                _cache[35] || (_cache[35] = _createTextVNode(" 磁力下载任务 ", -1)),
+                _cache[33] || (_cache[33] = _createTextVNode(" 磁力下载任务 ", -1)),
                 _createVNode(_component_v_chip, {
                   size: "x-small",
                   variant: "tonal",
@@ -1467,12 +1410,12 @@ const _sfc_main = {
                   onClick: _withModifiers(openClearTasksDialog, ["stop"])
                 }, {
                   default: _withCtx(() => [
-                    _cache[33] || (_cache[33] = _createTextVNode("清除记录 ", -1)),
+                    _cache[31] || (_cache[31] = _createTextVNode("清除记录 ", -1)),
                     _createVNode(_component_v_tooltip, {
                       activator: "parent",
                       location: "top"
                     }, {
-                      default: _withCtx(() => [..._cache[32] || (_cache[32] = [
+                      default: _withCtx(() => [..._cache[30] || (_cache[30] = [
                         _createTextVNode("清除已结束的本地任务记录", -1)
                       ])]),
                       _: 1
@@ -1493,7 +1436,7 @@ const _sfc_main = {
                       activator: "parent",
                       location: "top"
                     }, {
-                      default: _withCtx(() => [..._cache[34] || (_cache[34] = [
+                      default: _withCtx(() => [..._cache[32] || (_cache[32] = [
                         _createTextVNode("刷新任务状态", -1)
                       ])]),
                       _: 1
@@ -1511,10 +1454,10 @@ const _sfc_main = {
               default: _withCtx(() => [
                 _withDirectives(_createElementVNode("div", null, [
                   _createVNode(_component_v_divider),
-                  _cache[39] || (_cache[39] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "115 直接磁力状态来自插件脱敏台账；手动取消只对可识别的当前任务可用", -1)),
+                  _cache[37] || (_cache[37] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "115 直接磁力状态来自插件脱敏台账；手动取消只对可识别的当前任务可用", -1)),
                   _createVNode(_component_v_table, { density: "compact" }, {
                     default: _withCtx(() => [
-                      _cache[38] || (_cache[38] = _createElementVNode("thead", null, [
+                      _cache[36] || (_cache[36] = _createElementVNode("thead", null, [
                         _createElementVNode("tr", null, [
                           _createElementVNode("th", null, "资源"),
                           _createElementVNode("th", null, "状态"),
@@ -1568,7 +1511,7 @@ const _sfc_main = {
                                     activator: "parent",
                                     location: "top"
                                   }, {
-                                    default: _withCtx(() => [..._cache[36] || (_cache[36] = [
+                                    default: _withCtx(() => [..._cache[34] || (_cache[34] = [
                                       _createTextVNode("重试任务", -1)
                                     ])]),
                                     _: 1
@@ -1590,7 +1533,7 @@ const _sfc_main = {
                                     activator: "parent",
                                     location: "top"
                                   }, {
-                                    default: _withCtx(() => [..._cache[37] || (_cache[37] = [
+                                    default: _withCtx(() => [..._cache[35] || (_cache[35] = [
                                       _createTextVNode("取消任务并恢复订阅", -1)
                                     ])]),
                                     _: 1
@@ -1630,7 +1573,7 @@ const _sfc_main = {
                       color: "error",
                       class: "mr-2"
                     }),
-                    _cache[40] || (_cache[40] = _createTextVNode("确认清除任务记录 ", -1))
+                    _cache[38] || (_cache[38] = _createTextVNode("确认清除任务记录 ", -1))
                   ]),
                   _: 1
                 }),
@@ -1638,7 +1581,7 @@ const _sfc_main = {
                   default: _withCtx(() => [
                     _createElementVNode("p", null, "将清除 " + _toDisplayString(terminalTaskCount.value) + " 条已结束的本地磁力下载任务记录。", 1),
                     activeTaskCount.value ? (_openBlock(), _createElementBlock("p", _hoisted_35, "当前有 " + _toDisplayString(activeTaskCount.value) + " 条任务仍在处理，服务器会拒绝此次清除。", 1)) : _createCommentVNode("", true),
-                    _cache[41] || (_cache[41] = _createElementVNode("p", { class: "text-medium-emphasis" }, "不会删除 115 文件，不会取消离线下载，也不会修改订阅。", -1))
+                    _cache[39] || (_cache[39] = _createElementVNode("p", { class: "text-medium-emphasis" }, "不会删除 115 文件，不会取消离线下载，也不会修改订阅。", -1))
                   ]),
                   _: 1
                 }),
@@ -1650,7 +1593,7 @@ const _sfc_main = {
                       disabled: clearingTasks.value,
                       onClick: _cache[4] || (_cache[4] = ($event) => clearTasksDialog.value = false)
                     }, {
-                      default: _withCtx(() => [..._cache[42] || (_cache[42] = [
+                      default: _withCtx(() => [..._cache[40] || (_cache[40] = [
                         _createTextVNode("取消", -1)
                       ])]),
                       _: 1
@@ -1661,7 +1604,7 @@ const _sfc_main = {
                       loading: clearingTasks.value,
                       onClick: clearTasksConfirmed
                     }, {
-                      default: _withCtx(() => [..._cache[43] || (_cache[43] = [
+                      default: _withCtx(() => [..._cache[41] || (_cache[41] = [
                         _createTextVNode("确认清除", -1)
                       ])]),
                       _: 1
@@ -1691,14 +1634,14 @@ const _sfc_main = {
                       color: "error",
                       class: "mr-2"
                     }),
-                    _cache[44] || (_cache[44] = _createTextVNode("强制清理订阅诊断记录 ", -1))
+                    _cache[42] || (_cache[42] = _createTextVNode("强制清理订阅诊断记录 ", -1))
                   ]),
                   _: 1
                 }),
                 _createVNode(_component_v_card_text, null, {
                   default: _withCtx(() => [
-                    _cache[45] || (_cache[45] = _createElementVNode("p", null, "此操作只删除本地订阅处理诊断记录，包括进行中的显示状态。", -1)),
-                    _cache[46] || (_cache[46] = _createElementVNode("p", { class: "text-medium-emphasis" }, "不会取消下载、删除 115 文件、清除磁力任务或修改订阅。", -1)),
+                    _cache[43] || (_cache[43] = _createElementVNode("p", null, "此操作只删除本地订阅处理诊断记录，包括进行中的显示状态。", -1)),
+                    _cache[44] || (_cache[44] = _createElementVNode("p", { class: "text-medium-emphasis" }, "不会取消下载、删除 115 文件、清除磁力任务或修改订阅。", -1)),
                     _createVNode(_component_v_text_field, {
                       modelValue: forceTimelineConfirmation.value,
                       "onUpdate:modelValue": _cache[6] || (_cache[6] = ($event) => forceTimelineConfirmation.value = $event),
@@ -1719,7 +1662,7 @@ const _sfc_main = {
                       disabled: forceClearingTimeline.value,
                       onClick: closeForceTimelineDialog
                     }, {
-                      default: _withCtx(() => [..._cache[47] || (_cache[47] = [
+                      default: _withCtx(() => [..._cache[45] || (_cache[45] = [
                         _createTextVNode("取消", -1)
                       ])]),
                       _: 1
@@ -1731,7 +1674,7 @@ const _sfc_main = {
                       disabled: forceTimelineConfirmation.value !== FORCE_TIMELINE_CONFIRMATION,
                       onClick: forceClearTimeline
                     }, {
-                      default: _withCtx(() => [..._cache[48] || (_cache[48] = [
+                      default: _withCtx(() => [..._cache[46] || (_cache[46] = [
                         _createTextVNode("确认强制清理", -1)
                       ])]),
                       _: 1
@@ -1757,7 +1700,7 @@ const _sfc_main = {
                   color: "primary",
                   class: "mr-2"
                 }),
-                _cache[49] || (_cache[49] = _createTextVNode("手动搜索 ", -1)),
+                _cache[47] || (_cache[47] = _createTextVNode("手动搜索 ", -1)),
                 _createVNode(_component_v_spacer),
                 _createElementVNode("span", _hoisted_36, _toDisplayString(_unref(frontendVersion)) + " / " + _toDisplayString(runtime.plugin_version || "后端版本未知"), 1)
               ]),
@@ -1773,14 +1716,14 @@ const _sfc_main = {
                   density: "compact",
                   class: "mb-3"
                 }, {
-                  default: _withCtx(() => [..._cache[50] || (_cache[50] = [
+                  default: _withCtx(() => [..._cache[48] || (_cache[48] = [
                     _createTextVNode(" 插件后端与前端资源版本不一致，请刷新 MoviePilot 插件资源缓存。 ", -1)
                   ])]),
                   _: 1
                 })) : _createCommentVNode("", true),
                 _createElementVNode("div", _hoisted_37, [
                   _createElementVNode("div", _hoisted_38, [
-                    _cache[51] || (_cache[51] = _createElementVNode("span", { class: "manual-filter-label" }, "搜索范围", -1)),
+                    _cache[49] || (_cache[49] = _createElementVNode("span", { class: "manual-filter-label" }, "搜索范围", -1)),
                     _createElementVNode("div", _hoisted_39, [
                       (_openBlock(), _createElementBlock(_Fragment, null, _renderList(MANUAL_SOURCE_FILTERS, (item) => {
                         return _createElementVNode("button", {
@@ -1792,7 +1735,7 @@ const _sfc_main = {
                       }), 64))
                     ])
                   ]),
-                  _cache[53] || (_cache[53] = _createElementVNode("label", {
+                  _cache[51] || (_cache[51] = _createElementVNode("label", {
                     for: "tg115-manual-keyword",
                     class: "manual-input-label"
                   }, "搜索关键字（影片名 + 年份）", -1)),
@@ -1817,7 +1760,7 @@ const _sfc_main = {
                     }, _toDisplayString(manualSearching.value ? "搜索中…" : "搜索"), 9, _hoisted_42)
                   ]),
                   _createElementVNode("div", _hoisted_43, [
-                    _cache[52] || (_cache[52] = _createElementVNode("span", { class: "manual-filter-label" }, "资源", -1)),
+                    _cache[50] || (_cache[50] = _createElementVNode("span", { class: "manual-filter-label" }, "资源", -1)),
                     _createElementVNode("div", _hoisted_44, [
                       (_openBlock(), _createElementBlock(_Fragment, null, _renderList(MANUAL_RESOURCE_FILTERS, (item) => {
                         return _createElementVNode("button", {
@@ -1867,7 +1810,7 @@ const _sfc_main = {
                           _createElementVNode("button", {
                             type: "button",
                             class: "manual-link-button",
-                            onClick: _withModifiers(($event) => copyManualResult(item, $event), ["stop", "prevent"])
+                            onClick: _withModifiers(($event) => copyManualResult(item), ["stop"])
                           }, "复制链接", 8, _hoisted_63),
                           _createElementVNode("button", {
                             type: "button",
@@ -1880,12 +1823,28 @@ const _sfc_main = {
                             class: "manual-action-button",
                             onClick: ($event) => item.pan_type === "115" ? openManualTransferDialog(item) : openManualProcessDialog(item)
                           }, _toDisplayString(item.pan_type === "magnet" ? "离线到115" : "转存"), 9, _hoisted_65)) : _createCommentVNode("", true)
-                        ])
+                        ]),
+                        manualCopyFallbackId.value === item.result_id ? (_openBlock(), _createElementBlock("div", _hoisted_66, [
+                          _createElementVNode("div", _hoisted_67, _toDisplayString(manualCopyMessage.value), 1),
+                          _createElementVNode("code", _hoisted_68, _toDisplayString(manualCopyUrl.value), 1),
+                          _createElementVNode("div", _hoisted_69, [
+                            _createElementVNode("button", {
+                              type: "button",
+                              class: "manual-link-button",
+                              onClick: _withModifiers(openManualCopyFallback, ["stop"])
+                            }, "打开链接"),
+                            _createElementVNode("button", {
+                              type: "button",
+                              class: "manual-link-button",
+                              onClick: _withModifiers(closeManualCopyFallback, ["stop"])
+                            }, "关闭")
+                          ])
+                        ])) : _createCommentVNode("", true)
                       ]);
                     }), 128))
-                  ])) : manualSearched.value && !manualSearching.value ? (_openBlock(), _createElementBlock("div", _hoisted_66, _toDisplayString(manualResults.value.length ? "当前筛选条件下没有资源，可切换筛选查看" : "所有可用来源均未找到符合条件的资源"), 1)) : _createCommentVNode("", true)
+                  ])) : manualSearched.value && !manualSearching.value ? (_openBlock(), _createElementBlock("div", _hoisted_70, _toDisplayString(manualResults.value.length ? "当前筛选条件下没有资源，可切换筛选查看" : "所有可用来源均未找到符合条件的资源"), 1)) : _createCommentVNode("", true)
                 ]),
-                _createElementVNode("div", _hoisted_67, " 前端构建 " + _toDisplayString(_unref(frontendBuildId)) + " · " + _toDisplayString(_unref(frontendBuildTime)), 1)
+                _createElementVNode("div", _hoisted_71, " 前端构建 " + _toDisplayString(_unref(frontendBuildId)) + " · " + _toDisplayString(_unref(frontendBuildTime)), 1)
               ]),
               _: 1
             })
@@ -1902,14 +1861,14 @@ const _sfc_main = {
             _createVNode(_component_v_card, null, {
               default: _withCtx(() => [
                 _createVNode(_component_v_card_title, null, {
-                  default: _withCtx(() => [..._cache[54] || (_cache[54] = [
+                  default: _withCtx(() => [..._cache[52] || (_cache[52] = [
                     _createTextVNode("确认正式操作", -1)
                   ])]),
                   _: 1
                 }),
                 _createVNode(_component_v_card_text, null, {
                   default: _withCtx(() => [
-                    _cache[55] || (_cache[55] = _createElementVNode("div", { class: "text-body-2 mb-3" }, "请选择对应的 MoviePilot 订阅。提交前仍会执行规则和媒体身份确认。", -1)),
+                    _cache[53] || (_cache[53] = _createElementVNode("div", { class: "text-body-2 mb-3" }, "请选择对应的 MoviePilot 订阅。提交前仍会执行规则和媒体身份确认。", -1)),
                     _createVNode(_component_v_select, {
                       modelValue: manualSubscribeId.value,
                       "onUpdate:modelValue": _cache[9] || (_cache[9] = ($event) => manualSubscribeId.value = $event),
@@ -1932,7 +1891,7 @@ const _sfc_main = {
                       disabled: !!manualTransferring.value,
                       onClick: closeManualProcessDialog
                     }, {
-                      default: _withCtx(() => [..._cache[56] || (_cache[56] = [
+                      default: _withCtx(() => [..._cache[54] || (_cache[54] = [
                         _createTextVNode("取消", -1)
                       ])]),
                       _: 1
@@ -1944,7 +1903,7 @@ const _sfc_main = {
                       loading: !!manualTransferring.value,
                       onClick: submitManualResult
                     }, {
-                      default: _withCtx(() => [..._cache[57] || (_cache[57] = [
+                      default: _withCtx(() => [..._cache[55] || (_cache[55] = [
                         _createTextVNode("确认提交", -1)
                       ])]),
                       _: 1
@@ -1973,66 +1932,66 @@ const _sfc_main = {
                       icon: "mdi-folder-open",
                       class: "mr-2"
                     }),
-                    _cache[58] || (_cache[58] = _createTextVNode("转存到 115 ", -1))
+                    _cache[56] || (_cache[56] = _createTextVNode("转存到 115 ", -1))
                   ]),
                   _: 1
                 }),
                 _createVNode(_component_v_divider),
                 _createVNode(_component_v_card_text, { class: "manual-directory-body" }, {
                   default: _withCtx(() => [
-                    manualTransferUseDefault.value ? (_openBlock(), _createElementBlock("div", _hoisted_68, [
-                      _cache[59] || (_cache[59] = _createElementVNode("div", null, "将使用插件设置中绑定的 115 默认目录。", -1)),
+                    manualTransferUseDefault.value ? (_openBlock(), _createElementBlock("div", _hoisted_72, [
+                      _cache[57] || (_cache[57] = _createElementVNode("div", null, "将使用插件设置中绑定的 115 默认目录。", -1)),
                       _createElementVNode("button", {
                         type: "button",
                         class: "manual-link-button",
                         onClick: chooseManualTransferDirectory
                       }, "选择其他目录")
-                    ])) : (_openBlock(), _createElementBlock("div", _hoisted_69, [
+                    ])) : (_openBlock(), _createElementBlock("div", _hoisted_73, [
                       _createElementVNode("button", {
                         type: "button",
                         class: "manual-link-button",
                         disabled: manualTransferLoading.value,
                         onClick: useManualTransferDefault
-                      }, "使用默认目录", 8, _hoisted_70),
+                      }, "使用默认目录", 8, _hoisted_74),
                       _createElementVNode("button", {
                         type: "button",
                         class: "manual-link-button",
                         disabled: manualTransferLoading.value,
                         onClick: navigateManualTransferRoot
-                      }, "根目录", 8, _hoisted_71),
-                      _createElementVNode("span", _hoisted_72, _toDisplayString(manualTransferPathText.value), 1),
+                      }, "根目录", 8, _hoisted_75),
+                      _createElementVNode("span", _hoisted_76, _toDisplayString(manualTransferPathText.value), 1),
                       manualTransferPath.value.length > 1 ? (_openBlock(), _createElementBlock("button", {
                         key: 0,
                         type: "button",
                         class: "manual-link-button",
                         disabled: manualTransferLoading.value,
                         onClick: navigateManualTransferUp
-                      }, "上一级", 8, _hoisted_73)) : _createCommentVNode("", true)
+                      }, "上一级", 8, _hoisted_77)) : _createCommentVNode("", true)
                     ])),
-                    !manualTransferUseDefault.value && manualTransferLoading.value ? (_openBlock(), _createElementBlock("div", _hoisted_74, "目录加载中…")) : !manualTransferUseDefault.value && manualTransferDirectories.value.length ? (_openBlock(), _createElementBlock("div", _hoisted_75, [
+                    !manualTransferUseDefault.value && manualTransferLoading.value ? (_openBlock(), _createElementBlock("div", _hoisted_78, "目录加载中…")) : !manualTransferUseDefault.value && manualTransferDirectories.value.length ? (_openBlock(), _createElementBlock("div", _hoisted_79, [
                       (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(manualTransferDirectories.value, (directory) => {
                         return _openBlock(), _createElementBlock("button", {
                           key: directory.cid,
                           type: "button",
                           class: "manual-directory-item",
                           onClick: ($event) => navigateManualTransferInto(directory)
-                        }, "📁 " + _toDisplayString(directory.name), 9, _hoisted_76);
+                        }, "📁 " + _toDisplayString(directory.name), 9, _hoisted_80);
                       }), 128))
-                    ])) : !manualTransferUseDefault.value ? (_openBlock(), _createElementBlock("div", _hoisted_77, "当前目录没有子目录，可直接转存到这里")) : _createCommentVNode("", true)
+                    ])) : !manualTransferUseDefault.value ? (_openBlock(), _createElementBlock("div", _hoisted_81, "当前目录没有子目录，可直接转存到这里")) : _createCommentVNode("", true)
                   ]),
                   _: 1
                 }),
                 _createVNode(_component_v_divider),
                 _createVNode(_component_v_card_actions, { class: "px-4 py-3" }, {
                   default: _withCtx(() => [
-                    _createElementVNode("span", _hoisted_78, "目标：" + _toDisplayString(manualTransferUseDefault.value ? "绑定的默认目录" : manualTransferPathText.value), 1),
+                    _createElementVNode("span", _hoisted_82, "目标：" + _toDisplayString(manualTransferUseDefault.value ? "绑定的默认目录" : manualTransferPathText.value), 1),
                     _createVNode(_component_v_spacer),
                     _createVNode(_component_v_btn, {
                       variant: "text",
                       disabled: manualTransferSubmitting.value,
                       onClick: closeManualTransferDialog
                     }, {
-                      default: _withCtx(() => [..._cache[60] || (_cache[60] = [
+                      default: _withCtx(() => [..._cache[58] || (_cache[58] = [
                         _createTextVNode("取消", -1)
                       ])]),
                       _: 1
@@ -2057,78 +2016,9 @@ const _sfc_main = {
           ]),
           _: 1
         }, 8, ["modelValue"]),
-        _createVNode(_component_v_dialog, {
-          modelValue: manualCopyDialog.value,
-          "onUpdate:modelValue": _cache[13] || (_cache[13] = ($event) => manualCopyDialog.value = $event),
-          "max-width": "620"
-        }, {
-          default: _withCtx(() => [
-            _createVNode(_component_v_card, { rounded: "lg" }, {
-              default: _withCtx(() => [
-                _createVNode(_component_v_card_title, null, {
-                  default: _withCtx(() => [..._cache[61] || (_cache[61] = [
-                    _createTextVNode("手动复制链接", -1)
-                  ])]),
-                  _: 1
-                }),
-                _createVNode(_component_v_card_text, null, {
-                  default: _withCtx(() => [
-                    _cache[62] || (_cache[62] = _createElementVNode("div", { class: "text-body-2 mb-3" }, "自动复制被当前浏览器拒绝。可长按或选择下面完整链接后手动复制。", -1)),
-                    _createElementVNode("textarea", {
-                      ref_key: "manualCopyInput",
-                      ref: manualCopyInput,
-                      class: "manual-copy-textarea",
-                      value: manualCopyUrl.value,
-                      readonly: "",
-                      "aria-label": "完整资源链接",
-                      onFocus: selectManualCopyText
-                    }, null, 40, _hoisted_79)
-                  ]),
-                  _: 1
-                }),
-                _createVNode(_component_v_card_actions, { class: "px-4 pb-4" }, {
-                  default: _withCtx(() => [
-                    _createVNode(_component_v_spacer),
-                    _createVNode(_component_v_btn, {
-                      variant: "text",
-                      onClick: selectManualCopyText
-                    }, {
-                      default: _withCtx(() => [..._cache[63] || (_cache[63] = [
-                        _createTextVNode("全选", -1)
-                      ])]),
-                      _: 1
-                    }),
-                    _createVNode(_component_v_btn, {
-                      color: "primary",
-                      variant: "flat",
-                      onClick: retryManualCopy
-                    }, {
-                      default: _withCtx(() => [..._cache[64] || (_cache[64] = [
-                        _createTextVNode("再次复制", -1)
-                      ])]),
-                      _: 1
-                    }),
-                    _createVNode(_component_v_btn, {
-                      variant: "text",
-                      onClick: _cache[12] || (_cache[12] = ($event) => manualCopyDialog.value = false)
-                    }, {
-                      default: _withCtx(() => [..._cache[65] || (_cache[65] = [
-                        _createTextVNode("关闭", -1)
-                      ])]),
-                      _: 1
-                    })
-                  ]),
-                  _: 1
-                })
-              ]),
-              _: 1
-            })
-          ]),
-          _: 1
-        }, 8, ["modelValue"]),
         _createVNode(_component_v_snackbar, {
           modelValue: snack.value,
-          "onUpdate:modelValue": _cache[14] || (_cache[14] = ($event) => snack.value = $event),
+          "onUpdate:modelValue": _cache[12] || (_cache[12] = ($event) => snack.value = $event),
           color: snackColor.value,
           timeout: 2500,
           location: "top"
@@ -2142,6 +2032,6 @@ const _sfc_main = {
     };
   }
 };
-const Page = /* @__PURE__ */ _export_sfc(_sfc_main, [["__scopeId", "data-v-57753af8"]]);
+const Page = /* @__PURE__ */ _export_sfc(_sfc_main, [["__scopeId", "data-v-7c6846db"]]);
 
 export { Page as default };

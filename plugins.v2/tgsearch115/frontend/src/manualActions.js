@@ -14,9 +14,15 @@ export function normalizeResourceUrl(value) {
   // APIs sometimes serialize query delimiters as HTML entities.  Decode only
   // delimiters that are valid in a URL; never use the display title as a
   // fallback and never encode an already-complete resource URL again.
-  return String(value || '').trim()
-    .replace(/&amp;/gi, '&')
-    .replace(/&#38;|&#x26;/gi, '&')
+  let text = String(value || '').trim()
+  // Some source payloads are escaped more than once (`&amp;amp;`). Decode
+  // only the URL delimiter and cap the loop so arbitrary HTML is untouched.
+  for (let index = 0; index < 3; index += 1) {
+    const decoded = text.replace(/&amp;/gi, '&').replace(/&#38;|&#x26;/gi, '&')
+    if (decoded === text) break
+    text = decoded
+  }
+  return text
 }
 
 export function getResourceLink(resource) {
@@ -38,112 +44,38 @@ export function getResourceLink(resource) {
   return ''
 }
 
-export function fallbackCopyText(text, documentRef = globalThis.document, windowRef = globalThis.window, anchorElement = null) {
-  if (!documentRef?.createElement || !documentRef?.body?.appendChild) return false
-  const scrollX = Number(windowRef?.scrollX) || 0
-  const scrollY = Number(windowRef?.scrollY) || 0
-  // MoviePilot places the plugin inside its own scrolling container. Restoring
-  // only window.scrollY is insufficient there: focusing a temporary textarea
-  // can move the host container to its end on mobile WebViews.
-  const scrollStates = []
-  const seen = new Set()
-  const rememberAncestors = (start) => {
-    let parent = start
-    while (parent) {
-      if (!seen.has(parent) && typeof parent.scrollTop === 'number') {
-        seen.add(parent)
-        scrollStates.push({ element: parent, left: parent.scrollLeft || 0, top: parent.scrollTop || 0 })
-      }
-      parent = parent.parentElement
-    }
-  }
-  // pointerdown.prevent used to leave activeElement on an unrelated host
-  // control. The click handler now passes its real button so the actual
-  // MoviePilot scroll container is always recorded, even on mobile WebViews.
-  rememberAncestors(anchorElement)
-  rememberAncestors(documentRef.activeElement)
-  const scrollingElement = documentRef.scrollingElement
-  if (scrollingElement && !seen.has(scrollingElement)) {
-    scrollStates.push({ element: scrollingElement, left: scrollingElement.scrollLeft || 0, top: scrollingElement.scrollTop || 0 })
-  }
-  const textarea = documentRef.createElement('textarea')
-  textarea.value = text
-  textarea.setAttribute('readonly', '')
-  textarea.style.position = 'fixed'
-  // Keep the selectable node inside the viewport. iOS/WebView can refuse a
-  // selection on a control positioned thousands of pixels off-screen.
-  textarea.style.left = '0'
-  textarea.style.top = '0'
-  textarea.style.width = '1px'
-  textarea.style.height = '1px'
-  textarea.style.overflow = 'hidden'
-  textarea.style.fontSize = '16px'
-  textarea.style.opacity = '0.01'
-  textarea.style.zIndex = '-1'
-  textarea.style.pointerEvents = 'none'
-  documentRef.body.appendChild(textarea)
-  let copied = false
-  try {
-    try { textarea.focus({ preventScroll: true }) } catch { textarea.focus() }
-    textarea.select()
-    if (typeof textarea.setSelectionRange === 'function') textarea.setSelectionRange(0, text.length)
-    copied = documentRef.execCommand?.('copy') === true
-  } catch {
-    copied = false
-  } finally {
-    try { textarea.remove() } catch { documentRef.body.removeChild?.(textarea) }
-    try { anchorElement?.focus?.({ preventScroll: true }) } catch { /* Focus restoration is best effort. */ }
-    const restoreScroll = () => {
-      for (const state of scrollStates) {
-        try {
-          state.element.scrollLeft = state.left
-          state.element.scrollTop = state.top
-        } catch { /* Container restoration is best effort. */ }
-      }
-      try {
-        windowRef?.scrollTo?.(scrollX, scrollY)
-      } catch { /* Scroll restoration is best effort. */ }
-    }
-    restoreScroll()
-    // Some mobile WebViews apply focus scrolling after execCommand returns.
-    // Restore once more on the next frame without delaying the copy result.
-    try { windowRef?.requestAnimationFrame?.(restoreScroll) } catch { /* Best effort. */ }
-  }
-  return copied
+function browserNameAndMajor(userAgent = '') {
+  const value = String(userAgent || '')
+  const match = value.match(/Edg\/(\d+)/i) || value.match(/Chrome\/(\d+)/i) || value.match(/Firefox\/(\d+)/i)
+  if (!match) return '未知'
+  const name = /Edg\//i.test(value) ? 'Edge' : /Firefox\//i.test(value) ? 'Firefox' : 'Chrome'
+  return `${name} ${match[1]}`
 }
 
-export async function copyTextWithFallback(text, options = {}) {
+export function clipboardEnvironment(options = {}) {
   const navigatorRef = options.navigatorRef ?? globalThis.navigator
-  const documentRef = options.documentRef ?? globalThis.document
   const windowRef = options.windowRef ?? globalThis.window
-  const anchorElement = options.anchorElement ?? null
-  const secureContext = options.isSecureContext ?? windowRef?.isSecureContext ?? false
-  // Local-IP MoviePilot is HTTP. A WebView may expose Clipboard API but reject
-  // it asynchronously after the user gesture has expired. Start that API
-  // first, then complete the textarea route synchronously while the gesture is
-  // still live. Both paths copy exactly the same text and neither navigates.
-  if (navigatorRef?.clipboard?.writeText) {
-    let clipboardPromise
-    try {
-      clipboardPromise = navigatorRef.clipboard.writeText(text)
-    } catch {
-      clipboardPromise = null
-    }
-    if (!secureContext) {
-      const fallbackCopied = fallbackCopyText(text, documentRef, windowRef, anchorElement)
-      if (fallbackCopied) {
-        Promise.resolve(clipboardPromise).catch(() => undefined)
-        return true
-      }
-    }
-    try {
-      await clipboardPromise
-      return true
-    } catch {
-      // Secure contexts only reach this fallback after clipboard rejection.
-    }
+  return {
+    protocol: String(windowRef?.location?.protocol || 'unknown:'),
+    secure_context: windowRef?.isSecureContext === true,
+    clipboard_available: Boolean(navigatorRef?.clipboard),
+    write_text_available: typeof navigatorRef?.clipboard?.writeText === 'function',
+    browser: browserNameAndMajor(navigatorRef?.userAgent),
   }
-  return fallbackCopyText(text, documentRef, windowRef, anchorElement)
+}
+
+export async function copyTextSecure(text, options = {}) {
+  const navigatorRef = options.navigatorRef ?? globalThis.navigator
+  const environment = clipboardEnvironment(options)
+  if (!isCopyableResourceUrl(text)) return { success: false, reason: 'invalid_url', environment }
+  if (!environment.secure_context) return { success: false, reason: 'insecure_context', environment }
+  if (!environment.write_text_available) return { success: false, reason: 'clipboard_unavailable', environment }
+  try {
+    await navigatorRef.clipboard.writeText(String(text || ''))
+    return { success: true, reason: 'copied', environment }
+  } catch {
+    return { success: false, reason: 'permission_denied', environment }
+  }
 }
 
 export function openResourceLink(url, options = {}) {

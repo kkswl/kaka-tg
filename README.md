@@ -1,5 +1,14 @@
 # 拦截 MP 订阅（tgsearch115）
 
+## v4.8.33 简单安全剪贴板流程
+
+- 恢复 v4.1.3 的核心复制方式：结果按钮只有一个普通 `click`，安全上下文中直接调用 `navigator.clipboard.writeText()`，Promise 成功后才提示“链接已复制”。
+- HTTP、Clipboard API 缺失或权限拒绝时，不尝试 `execCommand`、临时 textarea、DOM Range、自动聚焦、自动全选或滚动恢复；只在当前结果卡片内显示可手动选择的完整链接及明确的 `Ctrl+C` 提示。
+- 链接仍从八种原始资源字段中安全提取，115 提取码按需补齐，并兼容多重转义的 `&amp;amp;`；标题和展示文本不会被当成链接。
+- 浏览器诊断仅记录协议、安全上下文、Clipboard 能力、浏览器主版本和前后端版本，不记录资源链接或凭据。
+- 本地验证：Python 全量测试 281 项、前端 Node 测试 12 项通过；运行时代码确认不存在 `execCommand`、临时 DOM、Range、选择、焦点、定时器或滚动复制逻辑；Python 编译、Vite 构建、JSON、Ruff 与 `git diff --check` 全部通过。
+- 真实 Windows Chrome/Edge 粘贴验证必须在宿主安装 v4.8.33 后执行；完成前不宣称一键复制已经解决。
+
 ## v4.8.32 紧急安全回退
 
 - 完整撤销 v4.8.31 新增的 DOM Range 二次复制、自动全选弹窗和剪贴板验证实验，恢复到 v4.8.30 的复制实现基线。

@@ -1,7 +1,6 @@
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -72,12 +71,12 @@ class PanSouUiContractTest(unittest.TestCase):
         self.assertEqual(0, page.count("<ManualSearch"))
         self.assertEqual(1, page.count('data-testid="manual-search-root"'))
         self.assertNotIn('v-if="false"', page)
-        self.assertIn("FRONTEND_VERSION = '4.8.32'", page)
+        self.assertIn("FRONTEND_VERSION = '4.8.33'", page)
         self.assertIn("frontendBuildId", page)
         self.assertIn("versionMismatch", page)
         self.assertIn("manual-search-body", page)
-        self.assertIn('@click.stop.prevent="copyManualResult(item, $event)"', page)
-        self.assertNotIn("@pointerdown.stop.prevent", page)
+        self.assertIn('@click.stop="copyManualResult(item)"', page)
+        self.assertNotIn("@pointerdown", page)
 
     def test_page_exposes_sanitized_organize_wait_diagnostics(self):
         page = (ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "components" / "Page.vue").read_text(encoding="utf-8")

@@ -87,7 +87,7 @@
           </v-card-item>
           <v-spacer />
           <v-card-actions>
-            <v-btn size="small" variant="text" prepend-icon="mdi-content-copy" @click="copy(r, $event)">复制链接</v-btn>
+            <v-btn size="small" variant="text" prepend-icon="mdi-content-copy" @click.stop="copy(r)">复制链接</v-btn>
             <v-spacer />
             <v-btn
               v-if="['115', 'magnet'].includes(r.pan_type)"
@@ -99,6 +99,14 @@
               @click="openProcessDialog(r)"
             >{{ r.pan_type === 'magnet' ? '离线到115' : '转存' }}</v-btn>
           </v-card-actions>
+          <div v-if="copyFallbackId === r.result_id" class="copy-fallback ma-3 mt-0" role="status">
+            <div class="text-caption mb-2">{{ copyMessage }}</div>
+            <code class="copy-link" aria-label="完整资源链接">{{ copyUrl }}</code>
+            <div class="d-flex justify-end ga-2 mt-2">
+              <v-btn size="small" variant="text" @click.stop="openCopyFallback">打开链接</v-btn>
+              <v-btn size="small" variant="text" @click.stop="closeCopyFallback">关闭</v-btn>
+            </div>
+          </div>
         </v-card>
       </v-col>
     </v-row>
@@ -137,7 +145,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { filterSearchResults, MAGNET_FILTERS, PAN_FILTERS } from '../searchFilters.js'
-import { copyTextWithFallback, isCopyableResourceUrl } from '../manualActions.js'
+import { copyTextSecure, getResourceLink, isCopyableResourceUrl, openResourceLink } from '../manualActions.js'
 
 const CACHE_KEY = 'TgSearch115:manual-search:v1'
 const MAX_CACHED_RESULTS = 500
@@ -164,6 +172,9 @@ const snack = ref(false)
 const snackColor = ref('')
 const snackText = ref('')
 const recoveryMessage = ref('')
+const copyFallbackId = ref('')
+const copyUrl = ref('')
+const copyMessage = ref('')
 const cacheAvailable = ref(true)
 const filtered = computed(() => filterSearchResults(results.value, resourceType.value, detailFilter.value))
 const resourceFilteredCount = computed(() => resourceType.value === 'all' ? results.value.length : filterSearchResults(results.value, resourceType.value, 'all').length)
@@ -303,7 +314,7 @@ function unwrap(res) {
 }
 function notify(text, color = 'success') { snackText.value = text; snackColor.value = color; snack.value = true }
 function fullUrl(r) {
-  let url = String(r?.share_url || '')
+  let url = getResourceLink(r)
   if (r?.pan_type === '115' && r?.receive_code && !/[?&](password|receive_code|pwd)=/.test(url)) {
     url += (url.includes('?') ? '&' : '?') + 'password=' + r.receive_code
   }
@@ -345,16 +356,35 @@ async function search() {
     persistSession()
   }
 }
-async function copy(r, event = null) {
+function showCopyFallback(r, url, reason) {
+  copyFallbackId.value = r.result_id
+  copyUrl.value = url
+  copyMessage.value = reason === 'permission_denied'
+    ? '浏览器拒绝了剪贴板权限。请手动选择下面的完整链接并按 Ctrl+C。'
+    : '当前是 HTTP 页面，浏览器禁止网页写入剪贴板。请使用 HTTPS 访问，或手动选择链接并按 Ctrl+C。'
+}
+async function copy(r) {
   const url = fullUrl(r).trim()
   if (!isCopyableResourceUrl(url)) return notify('该资源没有有效链接', 'warning')
-  const anchorElement = event?.currentTarget || null
-  try {
-    const copied = await copyTextWithFallback(url, { anchorElement })
-    notify(copied ? '链接已复制' : '复制失败，请长按或手动复制', copied ? 'success' : 'error')
-  } catch {
-    notify('复制失败，请长按或手动复制', 'error')
+  const result = await copyTextSecure(url)
+  console.info('【TG115】复制环境', result.environment)
+  if (result.success) {
+    copyFallbackId.value = ''
+    copyUrl.value = ''
+    copyMessage.value = ''
+    notify('链接已复制')
+    return
   }
+  showCopyFallback(r, url, result.reason)
+  notify(result.reason === 'permission_denied' ? '浏览器拒绝剪贴板权限' : 'HTTP 页面不能自动复制，请手动按 Ctrl+C', 'warning')
+}
+function closeCopyFallback() {
+  copyFallbackId.value = ''
+  copyUrl.value = ''
+  copyMessage.value = ''
+}
+function openCopyFallback() {
+  if (!openResourceLink(copyUrl.value)) notify('链接无法打开，请检查浏览器弹窗或磁力关联设置', 'warning')
 }
 async function openProcessDialog(r) {
   if (!props.api) return notify('API 未就绪', 'error')
@@ -417,6 +447,8 @@ function qualityLabel(r) { return ({ '4k': '4K', '1080p': '1080P', '720p': '720P
 .filter-toggle { flex-wrap:wrap; height:auto; max-width:calc(100% - 40px); overflow-x:auto; }
 .source-summary { padding:10px 12px; border:1px solid rgba(var(--v-border-color), var(--v-border-opacity)); border-radius:6px; font-size:.8rem; }
 .result-card { min-height:172px; border-radius:8px; }
+.copy-fallback { padding:10px; border:1px solid rgba(var(--v-theme-warning),.55); border-radius:6px; background:rgba(var(--v-theme-warning),.07); }
+.copy-link { display:block; padding:8px; border-radius:4px; background:rgba(var(--v-theme-on-surface),.06); overflow-wrap:anywhere; user-select:text; font:12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .line-clamp-3 { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
 .empty-state { padding:36px 20px; text-align:center; color:rgba(var(--v-theme-on-surface),.6); }
 @media (max-width:600px) {

@@ -3,192 +3,127 @@ import test from 'node:test'
 
 import {
   buildManualTransferPayload,
-  copyTextWithFallback,
-  fallbackCopyText,
+  clipboardEnvironment,
+  copyTextSecure,
   getResourceLink,
   isCopyableResourceUrl,
   normalizeResourceUrl,
   openResourceLink,
 } from '../src/manualActions.js'
 
-function fakeDocument({ copied = true } = {}) {
-  const state = { appended: 0, removed: 0, selected: false, value: '' }
-  const textarea = {
-    style: {},
-    setAttribute() {},
-    focus() {},
-    select() { state.selected = true },
-    setSelectionRange() {},
-    remove() { state.removed += 1 },
-    set value(value) { state.value = value },
-    get value() { return state.value },
-  }
-  return {
-    state,
-    document: {
-      body: { appendChild() { state.appended += 1 } },
-      createElement(tag) { assert.equal(tag, 'textarea'); return textarea },
-      execCommand(command) { assert.equal(command, 'copy'); return copied },
-    },
-  }
-}
-
-test('uses Clipboard API first and preserves the complete URL', async () => {
+test('copies the complete URL only through secure Clipboard API', async () => {
   const calls = []
-  const url = 'https://115.com/s/example?password=abcd'
-  const ok = await copyTextWithFallback(url, {
-    navigatorRef: { clipboard: { writeText: async (value) => calls.push(value) } },
-    documentRef: null,
-    isSecureContext: true,
+  const url = 'https://115.example/s/resource?password=code'
+  const result = await copyTextSecure(url, {
+    navigatorRef: { userAgent: 'Chrome/140.0', clipboard: { writeText: async (value) => calls.push(value) } },
+    windowRef: { isSecureContext: true, location: { protocol: 'https:' } },
   })
-  assert.equal(ok, true)
+  assert.equal(result.success, true)
+  assert.equal(result.reason, 'copied')
   assert.deepEqual(calls, [url])
 })
 
-test('uses Clipboard API when an embedded local HTTP page exposes it', async () => {
+test('insecure HTTP never invokes Clipboard API', async () => {
   const calls = []
-  const ok = await copyTextWithFallback('magnet:?xt=urn:btih:0123456789abcdef', {
+  const result = await copyTextSecure('https://115.example/s/resource', {
     navigatorRef: { clipboard: { writeText: async (value) => calls.push(value) } },
-    documentRef: null,
+    windowRef: { isSecureContext: false, location: { protocol: 'http:' } },
   })
-  assert.equal(ok, true)
-  assert.equal(calls.length, 1)
+  assert.equal(result.success, false)
+  assert.equal(result.reason, 'insecure_context')
+  assert.deepEqual(calls, [])
 })
 
-test('uses the fallback after an insecure local HTTP Clipboard rejection', async () => {
-  const { document, state } = fakeDocument()
-  let clipboardCalled = false
-  const ok = await copyTextWithFallback('magnet:?xt=urn:btih:0123456789abcdef', {
-    navigatorRef: { clipboard: { writeText: async () => { clipboardCalled = true; throw new Error('denied') } } },
-    documentRef: document,
+test('missing Clipboard API returns an explicit safe reason', async () => {
+  const result = await copyTextSecure('https://115.example/s/resource', {
+    navigatorRef: { userAgent: 'Edg/140.0' },
+    windowRef: { isSecureContext: true, location: { protocol: 'https:' } },
   })
-  assert.equal(ok, true)
-  assert.equal(clipboardCalled, true)
-  assert.equal(state.selected, true)
+  assert.equal(result.success, false)
+  assert.equal(result.reason, 'clipboard_unavailable')
 })
 
-test('uses textarea synchronously on local HTTP even when Clipboard rejection is delayed', async () => {
-  const { document, state } = fakeDocument()
-  let rejectClipboard
-  const pendingClipboard = new Promise((_, reject) => { rejectClipboard = reject })
-  const promise = copyTextWithFallback('magnet:?xt=urn:btih:0123456789abcdef', {
-    navigatorRef: { clipboard: { writeText: () => pendingClipboard } },
-    documentRef: document,
-    windowRef: { isSecureContext: false },
-  })
-  assert.equal(await promise, true)
-  assert.equal(state.selected, true)
-  rejectClipboard(new Error('denied'))
-})
-
-test('falls back to a temporary textarea when Clipboard API rejects', async () => {
-  const { document, state } = fakeDocument()
-  const url = 'https://115.com/s/example?password=abcd'
-  const ok = await copyTextWithFallback(url, {
+test('Clipboard rejection is not reported as success', async () => {
+  const result = await copyTextSecure('magnet:?xt=urn:btih:0123456789abcdef', {
     navigatorRef: { clipboard: { writeText: async () => { throw new Error('denied') } } },
-    documentRef: document,
-    isSecureContext: true,
+    windowRef: { isSecureContext: true, location: { protocol: 'https:' } },
   })
-  assert.equal(ok, true)
-  assert.equal(state.value, url)
-  assert.equal(state.appended, 1)
-  assert.equal(state.removed, 1)
-  assert.equal(state.selected, true)
+  assert.equal(result.success, false)
+  assert.equal(result.reason, 'permission_denied')
 })
 
-test('selects complete links from all supported result fields', () => {
-  const magnet = 'magnet:?xt=urn:btih:0123456789abcdef'
-  assert.equal(getResourceLink({ title: 'ignored', magnet }), magnet)
-  assert.equal(getResourceLink({ download_url: 'https://115.com/s/example?password=abcd' }), 'https://115.com/s/example?password=abcd')
-  assert.equal(getResourceLink({ url: 'not a link' }), '')
+test('empty or display-only values never call Clipboard API', async () => {
+  const calls = []
+  for (const value of ['', '点击查看']) {
+    const result = await copyTextSecure(value, {
+      navigatorRef: { clipboard: { writeText: async (text) => calls.push(text) } },
+      windowRef: { isSecureContext: true, location: { protocol: 'https:' } },
+    })
+    assert.equal(result.reason, 'invalid_url')
+  }
+  assert.deepEqual(calls, [])
 })
 
-test('decodes URL delimiters without converting display text into a link', () => {
-  const url = 'https://115.com/s/example?password=abcd&amp;foo=bar'
-  assert.equal(normalizeResourceUrl(url), 'https://115.com/s/example?password=abcd&foo=bar')
-  assert.equal(getResourceLink({ resource_url: url }), 'https://115.com/s/example?password=abcd&foo=bar')
-  assert.equal(getResourceLink({ title: 'https&#58;//not-a-resource' }), '')
+test('ten sequential clicks produce ten completed writes without auxiliary state', async () => {
+  const calls = []
+  const options = {
+    navigatorRef: { clipboard: { writeText: async (value) => calls.push(value) } },
+    windowRef: { isSecureContext: true, location: { protocol: 'https:' } },
+  }
+  for (let index = 0; index < 10; index += 1) {
+    const result = await copyTextSecure('https://115.example/s/resource', options)
+    assert.equal(result.success, true)
+  }
+  assert.equal(calls.length, 10)
 })
 
-test('opens web links in a protected new tab and magnet links through an anchor', () => {
-  const opened = []
-  assert.equal(openResourceLink('https://115.com/s/example', { windowRef: { open: (...args) => { opened.push(args); return {} } } }), true)
-  assert.deepEqual(opened[0], ['https://115.com/s/example', '_blank', 'noopener,noreferrer'])
-  const state = { appended: 0, removed: 0, clicked: false }
-  const anchor = { style: {}, click() { state.clicked = true }, remove() { state.removed += 1 } }
-  const document = { body: { appendChild() { state.appended += 1 } }, createElement() { return anchor } }
-  assert.equal(openResourceLink('magnet:?xt=urn:btih:0123456789abcdef', { documentRef: document }), true)
-  assert.equal(state.clicked, true)
-  assert.equal(state.removed, 1)
-})
-
-test('fallback reports failure and still removes its temporary node', () => {
-  const { document, state } = fakeDocument({ copied: false })
-  assert.equal(fallbackCopyText('https://115.com/s/example', document), false)
-  assert.equal(state.removed, 1)
-})
-
-test('returns false when both Clipboard API and textarea fallback are unavailable', async () => {
-  const ok = await copyTextWithFallback('https://115.com/s/example', {
-    navigatorRef: { clipboard: { writeText: async () => { throw new Error('denied') } } },
-    documentRef: null,
+test('environment diagnostics contain capabilities but no resource data', () => {
+  const environment = clipboardEnvironment({
+    navigatorRef: { userAgent: 'Mozilla/5.0 Edg/140.0', clipboard: { writeText() {} } },
+    windowRef: { isSecureContext: true, location: { protocol: 'https:' } },
   })
-  assert.equal(ok, false)
+  assert.deepEqual(environment, {
+    protocol: 'https:',
+    secure_context: true,
+    clipboard_available: true,
+    write_text_available: true,
+    browser: 'Edge 140',
+  })
+  assert.equal(JSON.stringify(environment).includes('115.example'), false)
 })
 
-test('fallback restores the scroll position after focusing the temporary field', () => {
-  const { document } = fakeDocument()
-  const restored = []
-  const windowRef = { scrollX: 12, scrollY: 345, scrollTo: (...args) => restored.push(args) }
-  assert.equal(fallbackCopyText('https://115.com/s/example', document, windowRef), true)
-  assert.deepEqual(restored, [[12, 345]])
-})
-
-test('fallback restores the MoviePilot scroll container as well as the window', () => {
-  const { document } = fakeDocument()
-  const host = { scrollLeft: 4, scrollTop: 210, parentElement: null }
-  const button = { scrollLeft: 0, scrollTop: 0, parentElement: host }
-  document.activeElement = button
-  document.scrollingElement = host
-  document.execCommand = () => {
-    host.scrollTop = 9999
-    return true
+test('selects complete links from every supported resource field', () => {
+  const values = {
+    share_url: 'https://115.example/s/share', resource_url: 'https://115.example/s/resource',
+    magnet: 'magnet:?xt=urn:btih:0123456789abcdef', download_url: 'https://115.example/s/download',
+    enclosure: 'https://115.example/s/enclosure', page_url: 'https://115.example/s/page',
+    url: 'https://115.example/s/url', link: 'https://115.example/s/link',
   }
-  assert.equal(fallbackCopyText('https://115.com/s/example', document), true)
-  assert.equal(host.scrollTop, 210)
-  assert.equal(host.scrollLeft, 4)
+  for (const [field, value] of Object.entries(values)) assert.equal(getResourceLink({ [field]: value }), value)
+  assert.equal(getResourceLink({ title: 'https://display-only.example' }), '')
 })
 
-test('fallback uses the clicked button ancestors when activeElement belongs elsewhere', () => {
-  const { document } = fakeDocument()
-  const host = { scrollLeft: 2, scrollTop: 180, parentElement: null }
-  const clickedButton = { scrollLeft: 0, scrollTop: 0, parentElement: host, focus() {} }
-  document.activeElement = { scrollLeft: 0, scrollTop: 0, parentElement: null }
-  document.execCommand = () => {
-    host.scrollTop = 9000
-    return true
-  }
-  assert.equal(fallbackCopyText('https://115.com/s/example', document, {}, clickedButton), true)
-  assert.equal(host.scrollTop, 180)
-  assert.equal(host.scrollLeft, 2)
+test('decodes nested URL delimiters without using display text', () => {
+  const escaped = 'https://115.example/s/resource?password=code&amp;amp;foo=bar'
+  assert.equal(normalizeResourceUrl(escaped), 'https://115.example/s/resource?password=code&foo=bar')
+  assert.equal(getResourceLink({ resource_url: escaped }), 'https://115.example/s/resource?password=code&foo=bar')
 })
 
-test('accepts complete web and magnet links but rejects empty or display text', () => {
-  assert.equal(isCopyableResourceUrl('https://115.com/s/example?password=abcd'), true)
+test('accepts complete web and magnet links but rejects display text', () => {
+  assert.equal(isCopyableResourceUrl('https://115.example/s/resource'), true)
   assert.equal(isCopyableResourceUrl('magnet:?xt=urn:btih:0123456789abcdef'), true)
+  assert.equal(isCopyableResourceUrl('点击查看'), false)
   assert.equal(isCopyableResourceUrl(''), false)
-  assert.equal(isCopyableResourceUrl('影片标题'), false)
 })
 
-test('omits target for the bound default directory and includes an explicitly selected cid', () => {
-  const url = 'https://115.com/s/example?password=abcd'
-  assert.deepEqual(buildManualTransferPayload(url, '123', true), {
-    confirm: true,
-    share_url: url,
-  })
-  assert.deepEqual(buildManualTransferPayload(url, '123', false), {
-    confirm: true,
-    share_url: url,
-    target: '123',
-  })
+test('opens links without sharing state with the copy operation', () => {
+  const opened = []
+  assert.equal(openResourceLink('https://115.example/s/resource', { windowRef: { open: (...args) => { opened.push(args); return {} } } }), true)
+  assert.deepEqual(opened[0], ['https://115.example/s/resource', '_blank', 'noopener,noreferrer'])
+})
+
+test('manual transfer payload behavior is unchanged', () => {
+  const url = 'https://115.example/s/resource?password=code'
+  assert.deepEqual(buildManualTransferPayload(url, '123', true), { confirm: true, share_url: url })
+  assert.deepEqual(buildManualTransferPayload(url, '123', false), { confirm: true, share_url: url, target: '123' })
 })

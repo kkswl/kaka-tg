@@ -1,7 +1,5 @@
-# -*- coding: utf-8 -*-
 import unittest
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / "plugins.v2" / "tgsearch115" / "__init__.py"
@@ -55,22 +53,27 @@ class ManualVerifiedProcessContractTest(unittest.TestCase):
         ):
             self.assertNotIn(forbidden, method)
 
-    def test_copy_link_has_clipboard_fallback_and_validates_complete_url(self):
+    def test_copy_link_uses_only_secure_clipboard_and_static_http_fallback(self):
         source = MANUAL.read_text(encoding="utf-8")
-        self.assertIn("copyTextWithFallback", source)
+        actions = (ROOT / "plugins.v2" / "tgsearch115" / "frontend" / "src" / "manualActions.js").read_text(encoding="utf-8")
+        self.assertIn("copyTextSecure", source)
         self.assertIn("getResourceLink", source)
         self.assertIn("openResourceLink", source)
         self.assertIn("isCopyableResourceUrl", source)
         copy = source[source.index("async function copyManualResult"):source.index("async function loadManualTransferDirectories")]
+        copy_action = source[source.index("async function copyManualResult"):source.index("function closeManualCopyFallback")]
         self.assertIn("manualFullUrl(item).trim()", copy)
         self.assertIn("链接已复制", copy)
-        self.assertIn("手动复制链接", source)
-        self.assertIn("manualCopyDialog", copy)
-        self.assertIn('@click.stop.prevent="copyManualResult(item, $event)"', source)
-        self.assertNotIn("@pointerdown.stop.prevent", source)
+        self.assertIn("当前是 HTTP 页面", source)
+        self.assertIn("manualCopyFallbackId", copy)
+        self.assertIn('@click.stop="copyManualResult(item)"', source)
         self.assertIn("该资源没有有效链接", copy)
         self.assertIn(">打开链接</button>", source)
-        self.assertIn("{ anchorElement }", copy)
+        for forbidden in ("execCommand", "createRange", "getSelection", "requestAnimationFrame", "setSelectionRange", "pointerdown", "touchstart"):
+            self.assertNotIn(forbidden, source + actions)
+        self.assertNotIn("document.createElement", actions)
+        for unrelated in ("openResourceLink", "openManualResult", "submitManual", "runManualSearch", "manualTransferDialog"):
+            self.assertNotIn(unrelated, copy_action)
 
     def test_manual_transfer_returns_only_safe_stage_diagnostics(self):
         source = PLUGIN.read_text(encoding="utf-8")

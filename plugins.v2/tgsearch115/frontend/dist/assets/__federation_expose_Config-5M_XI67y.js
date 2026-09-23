@@ -54,7 +54,7 @@ function filterSearchResults(results, resourceFilter, qualityFilter) {
   })
 }
 
-const {toDisplayString:_toDisplayString$1,createTextVNode:_createTextVNode$1,resolveComponent:_resolveComponent$1,withCtx:_withCtx$1,createVNode:_createVNode$1,openBlock:_openBlock$1,createBlock:_createBlock$1,createCommentVNode:_createCommentVNode$1,createElementVNode:_createElementVNode$1,withKeys:_withKeys,createElementBlock:_createElementBlock$1,unref:_unref,renderList:_renderList$1,Fragment:_Fragment$1,normalizeClass:_normalizeClass$1} = await importShared('vue');
+const {toDisplayString:_toDisplayString$1,createTextVNode:_createTextVNode$1,resolveComponent:_resolveComponent$1,withCtx:_withCtx$1,createVNode:_createVNode$1,openBlock:_openBlock$1,createBlock:_createBlock$1,createCommentVNode:_createCommentVNode$1,createElementVNode:_createElementVNode$1,withKeys:_withKeys,createElementBlock:_createElementBlock$1,unref:_unref,renderList:_renderList$1,Fragment:_Fragment$1,normalizeClass:_normalizeClass$1,withModifiers:_withModifiers$1} = await importShared('vue');
 
 const {computed: computed$1,ref: ref$1,watch} = await importShared('vue');
 
