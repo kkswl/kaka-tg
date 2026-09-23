@@ -7,6 +7,7 @@ import {
   fallbackCopyText,
   getResourceLink,
   isCopyableResourceUrl,
+  normalizeResourceUrl,
   openResourceLink,
 } from '../src/manualActions.js'
 
@@ -88,6 +89,13 @@ test('selects complete links from all supported result fields', () => {
   assert.equal(getResourceLink({ url: 'not a link' }), '')
 })
 
+test('decodes URL delimiters without converting display text into a link', () => {
+  const url = 'https://115.com/s/example?password=abcd&amp;foo=bar'
+  assert.equal(normalizeResourceUrl(url), 'https://115.com/s/example?password=abcd&foo=bar')
+  assert.equal(getResourceLink({ resource_url: url }), 'https://115.com/s/example?password=abcd&foo=bar')
+  assert.equal(getResourceLink({ title: 'https&#58;//not-a-resource' }), '')
+})
+
 test('opens web links in a protected new tab and magnet links through an anchor', () => {
   const opened = []
   assert.equal(openResourceLink('https://115.com/s/example', { windowRef: { open: (...args) => { opened.push(args); return {} } } }), true)
@@ -104,6 +112,14 @@ test('fallback reports failure and still removes its temporary node', () => {
   const { document, state } = fakeDocument({ copied: false })
   assert.equal(fallbackCopyText('https://115.com/s/example', document), false)
   assert.equal(state.removed, 1)
+})
+
+test('returns false when both Clipboard API and textarea fallback are unavailable', async () => {
+  const ok = await copyTextWithFallback('https://115.com/s/example', {
+    navigatorRef: { clipboard: { writeText: async () => { throw new Error('denied') } } },
+    documentRef: null,
+  })
+  assert.equal(ok, false)
 })
 
 test('fallback restores the scroll position after focusing the temporary field', () => {

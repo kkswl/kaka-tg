@@ -332,7 +332,12 @@
               <div v-if="item.meta" class="manual-result-meta">{{ item.meta }}</div>
               <div class="manual-result-text">{{ item.text || item.title }}</div>
               <div class="manual-result-actions">
-                <button type="button" class="manual-link-button" @click.stop.prevent="copyManualResult(item)">复制链接</button>
+                <button
+                  type="button"
+                  class="manual-link-button"
+                  @pointerdown.stop.prevent="startManualCopy(item)"
+                  @click.stop.prevent="handleManualCopyClick(item)"
+                >复制链接</button>
                 <button type="button" class="manual-link-button" @click.stop.prevent="openManualResult(item)">打开链接</button>
                 <button
                   v-if="['115', 'magnet'].includes(item.pan_type)"
@@ -422,12 +427,35 @@
       </v-card>
     </v-dialog>
 
+    <v-dialog v-model="manualCopyDialog" max-width="620">
+      <v-card rounded="lg">
+        <v-card-title>手动复制链接</v-card-title>
+        <v-card-text>
+          <div class="text-body-2 mb-3">自动复制被当前浏览器拒绝。可长按或选择下面完整链接后手动复制。</div>
+          <textarea
+            ref="manualCopyInput"
+            class="manual-copy-textarea"
+            :value="manualCopyUrl"
+            readonly
+            aria-label="完整资源链接"
+            @focus="selectManualCopyText"
+          />
+        </v-card-text>
+        <v-card-actions class="px-4 pb-4">
+          <v-spacer />
+          <v-btn variant="text" @click="selectManualCopyText">全选</v-btn>
+          <v-btn color="primary" variant="flat" @click="retryManualCopy">再次复制</v-btn>
+          <v-btn variant="text" @click="manualCopyDialog = false">关闭</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
     <v-snackbar v-model="snack" :color="snackColor" :timeout="2500" location="top">{{ snackText }}</v-snackbar>
   </div>
 </template>
 
 <script setup>
-import { computed, getCurrentInstance, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, getCurrentInstance, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import {
   buildManualTransferPayload,
   copyTextWithFallback,
@@ -436,8 +464,8 @@ import {
   openResourceLink,
 } from '../manualActions.js'
 
-const FRONTEND_VERSION = '4.8.27'
-const FRONTEND_BUILD_ID = typeof __TG115_BUILD_ID__ === 'string' ? __TG115_BUILD_ID__ : 'v4.8.27'
+const FRONTEND_VERSION = '4.8.28'
+const FRONTEND_BUILD_ID = typeof __TG115_BUILD_ID__ === 'string' ? __TG115_BUILD_ID__ : 'v4.8.28'
 const FRONTEND_BUILD_TIME = typeof __TG115_BUILD_TIME__ === 'string' ? __TG115_BUILD_TIME__ : 'unknown'
 
 const props = defineProps({
@@ -507,6 +535,10 @@ const manualTransferLoading = ref(false)
 const manualTransferSubmitting = ref(false)
 const manualTransferUseDefault = ref(true)
 const manualCacheAvailable = ref(true)
+const manualCopyDialog = ref(false)
+const manualCopyUrl = ref('')
+const manualCopyInput = ref(null)
+const manualPointerCopyActive = ref(false)
 const manualDetailFilters = computed(() => manualResourceType.value === 'magnet' ? MANUAL_MAGNET_FILTERS : MANUAL_PAN_FILTERS)
 const manualTransferPathText = computed(() => {
   const names = manualTransferPath.value.slice(1).map((part) => part.name)
@@ -650,14 +682,58 @@ async function copyManualResult(item) {
   const url = manualFullUrl(item).trim()
   if (!isCopyableResourceUrl(url)) {
     showSnack('该资源没有有效链接', 'warning')
-    return
+    return false
   }
   try {
     const copied = await copyTextWithFallback(url)
-    showSnack(copied ? '链接已复制' : '复制失败，请手动复制', copied ? 'success' : 'error')
+    if (copied) {
+      manualCopyDialog.value = false
+      showSnack('链接已复制', 'success')
+      return true
+    }
   } catch {
-    showSnack('复制失败，请手动复制', 'error')
+    // Continue to a local, selectable fallback rather than failing silently.
   }
+  manualCopyUrl.value = url
+  manualCopyDialog.value = true
+  showSnack('复制失败，请长按或手动复制', 'warning')
+  return false
+}
+function startManualCopy(item) {
+  manualPointerCopyActive.value = true
+  void copyManualResult(item)
+  window.setTimeout(() => { manualPointerCopyActive.value = false }, 450)
+}
+function handleManualCopyClick(item) {
+  if (manualPointerCopyActive.value) return
+  void copyManualResult(item)
+}
+async function selectManualCopyText() {
+  await nextTick()
+  const input = manualCopyInput.value
+  if (!input) return
+  try {
+    input.focus({ preventScroll: true })
+    input.select()
+    input.setSelectionRange?.(0, input.value.length)
+  } catch {
+    // Long-press remains available if a browser blocks programmatic selection.
+  }
+}
+async function retryManualCopy() {
+  const url = manualCopyUrl.value.trim()
+  if (!isCopyableResourceUrl(url)) {
+    showSnack('该资源没有有效链接', 'warning')
+    return
+  }
+  const copied = await copyTextWithFallback(url)
+  if (copied) {
+    manualCopyDialog.value = false
+    showSnack('链接已复制', 'success')
+    return
+  }
+  showSnack('仍无法自动复制，请长按或手动复制', 'warning')
+  await selectManualCopyText()
 }
 function openManualResult(item) {
   const url = manualFullUrl(item).trim()
@@ -755,17 +831,27 @@ async function submitManualTransfer() {
     const response = await props.api.post(`plugin/${PID.value}/manual/transfer`, payload)
     const data = unwrapApiResponse(response)
     const success = data?.success === true
-    showSnack(manualSafeText(data?.message, success ? '转存成功' : '转存失败'), success ? 'success' : 'error')
+    showSnack(formatManualTransferMessage(data, success), success ? 'success' : 'error')
     if (success) {
       manualTransferSubmitting.value = false
       closeManualTransferDialog()
     }
   } catch (error) {
     const data = unwrapApiResponse(error?.response?.data)
-    showSnack(manualSafeText(data?.message, safeRequestError(error, '转存请求失败，请重试')), 'error')
+    showSnack(formatManualTransferMessage(data, false, safeRequestError(error, '转存请求失败，请重试')), 'error')
   } finally {
     manualTransferSubmitting.value = false
   }
+}
+function formatManualTransferMessage(data, success, fallback = '') {
+  const message = manualSafeText(data?.message, fallback || (success ? '转存成功' : '转存失败'))
+  const stage = manualSafeText(data?.diagnostic?.stage)
+  const labels = {
+    share_url: '分享链接', cookie: '115 登录状态', target_cid: '目标目录',
+    share_snap: '读取分享目录', file_id: '分享文件标识', share_receive: '115 接收资源',
+  }
+  return !success && labels[stage] && !message.includes(labels[stage])
+    ? `${labels[stage]}：${message}` : message
 }
 async function loadManualSubscriptions() {
   if (!props.api?.get) return
@@ -1108,6 +1194,7 @@ onUnmounted(() => {
 .manual-result-text { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; font-size:.78rem; color:rgba(var(--v-theme-on-surface),.66); }
 .manual-result-actions { justify-content:flex-start; gap:6px; flex-wrap:wrap; margin-top:auto; padding-top:5px; }
 .manual-link-button { border:0; }
+.manual-copy-textarea { display:block; width:100%; min-height:120px; padding:10px; border:1px solid rgba(var(--v-border-color),.8); border-radius:6px; resize:vertical; word-break:break-all; font:12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; color:inherit; background:transparent; }
 .manual-directory-body { max-height:55vh; overflow-y:auto; padding:10px 14px; }
 .manual-directory-toolbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 .manual-default-target { display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; min-height:48px; }

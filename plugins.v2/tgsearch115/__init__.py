@@ -249,7 +249,7 @@ class TgSearch115(_PluginBase):
         "支持 115 分享直接转存，磁力优先通过插件内置 115 离线；"
         "未命中或处理失败则平滑回退到 MoviePilot 默认站点搜索。"
     )
-    plugin_version = "4.8.27"
+    plugin_version = "4.8.28"
     plugin_author = "MoviePilot User"
     plugin_icon = "T"
     plugin_config_prefix = "plugin.tgsearch115"
@@ -3260,11 +3260,27 @@ class TgSearch115(_PluginBase):
                 status_code=400,
             )
         try:
-            ok, message, _data = self._transfer.transfer(share_url, target)
+            ok, message, transfer_data = self._transfer.transfer(share_url, target)
             safe_message = str(message or ("转存成功" if ok else "转存失败"))[:500]
+            raw_diagnostic = transfer_data.get("diagnostic", {}) \
+                if isinstance(transfer_data, dict) else {}
+            # This endpoint is displayed in the manual UI.  Return only a
+            # fixed, non-secret diagnostic vocabulary; never propagate a 115
+            # response, URL, code, file id, CID, or account identifier.
+            diagnostic = {}
+            if isinstance(raw_diagnostic, dict):
+                stage = str(raw_diagnostic.get("stage") or "")
+                status = str(raw_diagnostic.get("status") or "")
+                error_code = str(raw_diagnostic.get("error_code") or "")[:32]
+                if stage in {"input", "share_url", "cookie", "target_cid", "share_snap", "file_id", "share_receive"}:
+                    diagnostic["stage"] = stage
+                if status in {"failed", "accepted", "already_saved"}:
+                    diagnostic["status"] = status
+                if error_code:
+                    diagnostic["error_code"] = error_code
             logger.info("【TG115】独立手动 115 转存完成 ok=%s", bool(ok))
             return JSONResponse(
-                {"success": bool(ok), "message": safe_message},
+                {"success": bool(ok), "message": safe_message, "diagnostic": diagnostic},
                 status_code=200 if ok else 502,
             )
         except Exception as exc:  # noqa: BLE001 - third-party 115 client errors are not stable

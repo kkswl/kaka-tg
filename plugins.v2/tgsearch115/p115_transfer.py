@@ -8,8 +8,8 @@
 
 调用端点（Cookie 鉴权；转存/列目录用 webapi.115.com，目录名/建目录用 proapi 开放 API，
 均与 p115client 内部端点逐一核对一致）：
-  - 转存：GET  webapi /share/snap?share_code=&receive_code=&cid=0  -> 取 file_id
-         POST webapi /share/receive  (form: share_code,receive_code,file_id,cid,user_id)
+  - 转存：GET  webapi /share/snap?share_code=&receive_code=&cid=0  -> 取真实 fid/cid
+         POST webapi /share/receive  (form: share_code,receive_code,file_id,cid)
   - 列目录/验证 Cookie：GET webapi /files?cid={cid}&limit=50  (返回 cid/n/sha1)
   - 目录名：GET proapi /open/folder/get_info?file_id={cid}
   - 建目录：POST proapi /open/folder/add  (form: file_name, pid)
@@ -72,18 +72,20 @@ class P115Transfer:
         """
         share_url = self._normalize(share_url)
         effective = self._normalize(target_path) or self.default_target_path
-        result: Dict[str, Any] = {"url": share_url, "path": effective}
+        # Keep return diagnostics safe: callers may expose this structure in a
+        # plugin API response, so it must never contain a share URL or code.
+        result: Dict[str, Any] = {"diagnostic": {"stage": "input"}}
 
         if not share_url or not self._is_115_share_url(share_url):
-            return False, "不是有效的 115 分享链接", result
+            return self._transfer_failure(result, "share_url", "不是有效的 115 分享链接")
 
         ok, msg = self.is_ready()
         if not ok:
-            return False, msg, result
+            return self._transfer_failure(result, "cookie", msg)
 
         share_code, receive_code = self._extract_payload(share_url)
         if not share_code or not receive_code:
-            return False, "解析 115 分享链接失败，缺少分享码或提取码", result
+            return self._transfer_failure(result, "share_url", "解析 115 分享链接失败，缺少分享码或提取码")
 
         logger.info("【TG115】115 分享转存请求已接收")
         # 目标目录：纯数字视为 cid 直接用；否则按路径查找/创建
@@ -93,85 +95,87 @@ class P115Transfer:
             else:
                 parent_id = self._get_or_create_cid(effective)
         except Exception as e:
-            return False, f"定位 115 目标目录失败: {e}", result
+            return self._transfer_failure(
+                result, "target_cid", f"定位 115 目标目录失败（{type(e).__name__}）"
+            )
+        parent_id = str(parent_id or "").strip()
+        if not parent_id.isdigit():
+            return self._transfer_failure(result, "target_cid", "115 目标目录不是有效 CID")
 
-        # share_receive 需要在表单里带 user_id（UID 的数字部分）
-        user_id = ""
-        for _part in self.cookie.split(";"):
-            _part = _part.strip()
-            if _part.startswith("UID="):
-                user_id = _part[4:].split("_")[0].strip()
-                break
-
-        # 1. share_snap 获取分享文件列表
-        #    - 文件分享（list[0] 有 sha1/fid）：用 fid 转存该文件
-        #    - 目录分享（list[0] 无 sha1 且无 fid）：用 file_id=0 转存整个分享
-        file_id = 0
-        is_dir_share = False
+        # 1. share_snap 获取分享根目录的真实可接收项。115 的 share_receive
+        # 需要分享空间内的 fid/cid；绝不能在读取失败后伪造 file_id=0。
         try:
             snap = self._api_get("/share/snap", {
                 "share_code": share_code, "receive_code": receive_code,
                 "cid": 0, "limit": 32, "offset": 0,
             })
-            snap_data = snap.get("data") if isinstance(snap, dict) else None
-            snap_items = (snap_data.get("list") or snap_data.get("filelist") or []) \
-                if isinstance(snap_data, dict) else []
-            logger.info(
-                "【TG115】share_snap 完成 state=%s items=%s",
-                bool(self._response_ok(snap)), len(snap_items),
-            )
-            if isinstance(snap, dict) and snap.get("state") not in (True, 1, "1"):
-                snap_err = snap.get("error") or snap.get("message") or "分享不可用"
-                return False, f"分享链接不可用：{snap_err}", result
-            if isinstance(snap_data, dict):
-                fl = snap_data.get("list") or snap_data.get("filelist") or []
-                if fl and isinstance(fl[0], dict):
-                    first = fl[0]
-                    if first.get("sha1") or first.get("fid"):
-                        # 文件分享：用 fid 定位具体文件
-                        file_id = first.get("fid") or first.get("cid") or 0
-                    else:
-                        # 目录分享：保持 file_id=0 转存整个分享
-                        is_dir_share = True
-            logger.info(
-                "【TG115】分享文件定位完成 has_file_id=%s is_dir_share=%s",
-                bool(file_id), is_dir_share,
-            )
         except Exception as e:
-            logger.warn(f"【TG115】share_snap 异常（继续用 file_id=0）: {e}")
+            logger.warning("【TG115】share_snap 异常 type=%s", type(e).__name__)
+            return self._transfer_failure(result, "share_snap", "无法读取 115 分享元数据")
+        if not self._response_ok(snap):
+            return self._transfer_failure(
+                result, "share_snap", self._safe_115_message(snap, "115 拒绝读取分享元数据")
+            )
+        file_ids, item_count = self._share_receive_file_ids(snap)
+        logger.info(
+            "【TG115】share_snap 已读取 items=%s has_file_id=%s target_cid_numeric=%s",
+            item_count, bool(file_ids), parent_id.isdigit(),
+        )
+        if not file_ids:
+            return self._transfer_failure(
+                result, "file_id", "分享元数据未提供可接收的文件或目录 ID，未提交转存"
+            )
 
-        # 2. share_receive 转存（带真实 file_id + user_id）
+        # 2. share_receive only accepts the documented share identifiers.
+        # The local p115client reference does not send user_id; an extra field
+        # can be rejected by stricter 115 deployments.
         payload = {
             "share_code": share_code,
             "receive_code": receive_code,
-            "file_id": file_id,
-            "cid": str(parent_id),
-            "is_check": 0,
-            "user_id": user_id,
+            "file_id": file_ids,
+            "cid": parent_id,
         }
         try:
             resp = self._api_post("/share/receive", payload)
             logger.info(
-                "【TG115】share_receive 完成 state=%s",
-                bool(self._response_ok(resp)),
+                "【TG115】share_receive 完成 ok=%s file_id_present=%s cid_numeric=%s",
+                bool(self._response_ok(resp)), bool(file_ids), parent_id.isdigit(),
             )
         except Exception as e:
-            logger.error(f"【TG115】share_receive 异常: {e}")
-            return False, f"调用 115 转存接口失败: {e}", result
+            logger.error("【TG115】share_receive 异常 type=%s", type(e).__name__)
+            return self._transfer_failure(result, "share_receive", "调用 115 接收接口失败")
 
         if not self._response_ok(resp):
-            err = self._response_error(resp) or "115 转存失败"
-            if self._is_already_saved(err):  # 已转存视为成功（幂等）
-                result.update({"share_code": share_code, "parent_id": parent_id})
+            # Idempotency must inspect the original response before mapping it
+            # to a safe public error category, otherwise wording such as
+            # “文件已接收” would be lost.
+            if self._is_already_saved(self._response_error(resp)):  # 已转存视为成功（幂等）
+                result["diagnostic"] = {"stage": "share_receive", "status": "already_saved"}
                 return True, "115 转存已存在（之前已转存）", result
-            result.update({"parent_id": parent_id, "raw": self._jsonable(resp)})
-            return False, err, result
+            err = self._safe_115_message(resp, "115 接收失败")
+            return self._transfer_failure(result, "share_receive", err, self._response_code(resp))
 
-        result.update({
-            "share_code": share_code, "receive_code": receive_code,
-            "parent_id": parent_id, "raw": self._jsonable(resp),
-        })
+        result["diagnostic"] = {"stage": "share_receive", "status": "accepted"}
         return True, "115 转存成功", result
+
+    @staticmethod
+    def _share_receive_file_ids(snap: Any) -> Tuple[str, int]:
+        """Return documented share-space IDs for share_receive, never a fake 0."""
+        data = snap.get("data") if isinstance(snap, dict) else None
+        items = (data.get("list") or data.get("filelist") or []) if isinstance(data, dict) else []
+        if not isinstance(items, list):
+            return "", 0
+        ids = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            # Files use fid/file_id. Directories use their cid; share_receive
+            # accepts either as file_id according to the 115 client reference.
+            value = item.get("fid") or item.get("file_id") or item.get("cid")
+            value = str(value or "").strip()
+            if value.isdigit() and value != "0" and value not in ids:
+                ids.append(value)
+        return ",".join(ids), len(items)
 
     def _snap_names(self, share_code: str, receive_code: str, cid: Any = 0,
                     limit: int = 32) -> Tuple[bool, list]:
@@ -444,6 +448,40 @@ class P115Transfer:
             if v not in (None, ""):
                 return str(v)
         return str(resp)
+
+    @staticmethod
+    def _response_code(resp: Any) -> str:
+        if not isinstance(resp, dict):
+            return ""
+        for key in ("code", "errno", "status"):
+            value = resp.get(key)
+            if isinstance(value, (str, int)) and str(value).strip():
+                return str(value).strip()[:32]
+        return ""
+
+    @classmethod
+    def _safe_115_message(cls, resp: Any, fallback: str) -> str:
+        """Return a useful but non-sensitive 115 error category."""
+        text = cls._response_error(resp).strip().lower()
+        if "参数" in text or "param" in text:
+            return "115 返回参数错误"
+        if "提取码" in text or "password" in text or "receive" in text:
+            return "115 拒绝分享提取码"
+        if "分享" in text or "share" in text:
+            return "115 拒绝该分享资源"
+        if "登录" in text or "cookie" in text or "auth" in text:
+            return "115 登录状态或权限无效"
+        return fallback
+
+    @staticmethod
+    def _transfer_failure(
+            result: Dict[str, Any], stage: str, message: str, error_code: str = ""
+    ) -> Tuple[bool, str, Dict[str, Any]]:
+        diagnostic = {"stage": stage, "status": "failed"}
+        if error_code:
+            diagnostic["error_code"] = error_code
+        result["diagnostic"] = diagnostic
+        return False, message, result
 
     @staticmethod
     def _is_already_saved(text: Any) -> bool:

@@ -64,10 +64,21 @@ class ManualVerifiedProcessContractTest(unittest.TestCase):
         copy = source[source.index("async function copyManualResult"):source.index("async function loadManualTransferDirectories")]
         self.assertIn("manualFullUrl(item).trim()", copy)
         self.assertIn("链接已复制", copy)
-        self.assertIn("复制失败，请手动复制", copy)
+        self.assertIn("手动复制链接", source)
+        self.assertIn("manualCopyDialog", copy)
+        self.assertIn("@pointerdown.stop.prevent=\"startManualCopy(item)\"", source)
         self.assertIn("该资源没有有效链接", copy)
         self.assertIn(">打开链接</button>", source)
-        self.assertIn('@click.stop.prevent="copyManualResult(item)"', source)
+        self.assertIn('@click.stop.prevent="handleManualCopyClick(item)"', source)
+
+    def test_manual_transfer_returns_only_safe_stage_diagnostics(self):
+        source = PLUGIN.read_text(encoding="utf-8")
+        start = source.index("    def __manual_transfer_api")
+        end = source.index("    def __manual_subscriptions_api", start)
+        method = source[start:end]
+        self.assertIn('transfer_data.get("diagnostic", {})', method)
+        self.assertIn('"share_receive"', method)
+        self.assertNotIn('transfer_data.get("share_url")', method)
 
     def test_backend_rechecks_rules_and_media_identity_before_side_effects(self):
         source = PLUGIN.read_text(encoding="utf-8")

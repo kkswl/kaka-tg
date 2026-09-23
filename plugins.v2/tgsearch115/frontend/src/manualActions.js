@@ -1,5 +1,5 @@
 export function isCopyableResourceUrl(value) {
-  const text = String(value || '').trim()
+  const text = normalizeResourceUrl(value)
   if (!text) return false
   if (/^magnet:\?xt=urn:btih:[a-z0-9]+/i.test(text)) return true
   try {
@@ -8,6 +8,15 @@ export function isCopyableResourceUrl(value) {
   } catch {
     return false
   }
+}
+
+export function normalizeResourceUrl(value) {
+  // APIs sometimes serialize query delimiters as HTML entities.  Decode only
+  // delimiters that are valid in a URL; never use the display title as a
+  // fallback and never encode an already-complete resource URL again.
+  return String(value || '').trim()
+    .replace(/&amp;/gi, '&')
+    .replace(/&#38;|&#x26;/gi, '&')
 }
 
 export function getResourceLink(resource) {
@@ -23,7 +32,7 @@ export function getResourceLink(resource) {
     resource.link,
   ]
   for (const candidate of candidates) {
-    const text = String(candidate || '').trim()
+    const text = normalizeResourceUrl(candidate)
     if (isCopyableResourceUrl(text)) return text
   }
   return ''

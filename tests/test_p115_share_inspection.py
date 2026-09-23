@@ -77,6 +77,75 @@ class ShareInspectionTest(unittest.TestCase):
         self.assertEqual("115 转存成功", message)
         self.assertEqual(cid, received[-1]["cid"])
 
+    def test_root_target_cid_zero_is_sent_without_directory_lookup(self):
+        client = module.P115Transfer("UID=123_abc; CID=y; SEID=z", default_target_path="0")
+        client.is_ready = lambda: (True, "")
+        client._get_or_create_cid = lambda _path: self.fail("root cid must not become a path")
+        client._api_get = lambda *_args, **_kwargs: {
+            "state": True, "data": {"list": [{"fid": "789"}]}
+        }
+        received = []
+        client._api_post = lambda _path, payload, **_kwargs: received.append(payload) or {"state": True}
+
+        ok, _message, _data = client.transfer("https://115.com/s/demo?password=abcd")
+
+        self.assertTrue(ok)
+        self.assertEqual("0", received[-1]["cid"])
+
+    def test_directory_share_uses_real_cid_as_receive_file_id(self):
+        client = module.P115Transfer("UID=123_abc; CID=y; SEID=z", default_target_path="456")
+        client.is_ready = lambda: (True, "")
+        client._api_get = lambda *_args, **_kwargs: {
+            "state": True, "data": {"list": [{"cid": "789", "n": "folder"}]}
+        }
+        received = []
+        client._api_post = lambda _path, payload, **_kwargs: received.append(payload) or {"state": True}
+
+        ok, _message, _data = client.transfer("https://115.com/s/demo?password=abcd")
+
+        self.assertTrue(ok)
+        self.assertEqual("789", received[-1]["file_id"])
+        self.assertEqual("456", received[-1]["cid"])
+        self.assertEqual({"share_code", "receive_code", "file_id", "cid"}, set(received[-1]))
+
+    def test_share_snap_failure_never_submits_share_receive(self):
+        client = module.P115Transfer("UID=123_abc; CID=y; SEID=z", default_target_path="456")
+        client.is_ready = lambda: (True, "")
+        client._api_get = lambda *_args, **_kwargs: {"state": False, "error": "bad params"}
+        client._api_post = lambda *_args, **_kwargs: self.fail("share_receive must not run")
+
+        ok, message, data = client.transfer("https://115.com/s/demo?password=abcd")
+
+        self.assertFalse(ok)
+        self.assertEqual("115 返回参数错误", message)
+        self.assertEqual("share_snap", data["diagnostic"]["stage"])
+
+    def test_missing_share_item_id_never_submits_share_receive(self):
+        client = module.P115Transfer("UID=123_abc; CID=y; SEID=z", default_target_path="456")
+        client.is_ready = lambda: (True, "")
+        client._api_get = lambda *_args, **_kwargs: {"state": True, "data": {"list": [{"n": "unknown"}]}}
+        client._api_post = lambda *_args, **_kwargs: self.fail("share_receive must not run")
+
+        ok, _message, data = client.transfer("https://115.com/s/demo?password=abcd")
+
+        self.assertFalse(ok)
+        self.assertEqual("file_id", data["diagnostic"]["stage"])
+
+    def test_share_receive_parameter_error_has_safe_stage_diagnostic(self):
+        client = module.P115Transfer("UID=123_abc; CID=y; SEID=z", default_target_path="456")
+        client.is_ready = lambda: (True, "")
+        client._api_get = lambda *_args, **_kwargs: {
+            "state": True, "data": {"list": [{"fid": "789"}]}
+        }
+        client._api_post = lambda *_args, **_kwargs: {"state": False, "code": "400", "error": "参数错误"}
+
+        ok, message, data = client.transfer("https://115.com/s/demo?password=abcd")
+
+        self.assertFalse(ok)
+        self.assertEqual("115 返回参数错误", message)
+        self.assertEqual("share_receive", data["diagnostic"]["stage"])
+        self.assertEqual("400", data["diagnostic"]["error_code"])
+
     def test_transfer_source_does_not_log_sensitive_payloads(self):
         source = PATH.read_text(encoding="utf-8")
         self.assertNotIn("手动转存 share_url=", source)
