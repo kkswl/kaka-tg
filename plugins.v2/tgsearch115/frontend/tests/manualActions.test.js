@@ -44,16 +44,25 @@ test('uses Clipboard API first and preserves the complete URL', async () => {
   assert.deepEqual(calls, [url])
 })
 
-test('uses the synchronous fallback first on an insecure local HTTP page', async () => {
+test('uses Clipboard API when an embedded local HTTP page exposes it', async () => {
+  const calls = []
+  const ok = await copyTextWithFallback('magnet:?xt=urn:btih:0123456789abcdef', {
+    navigatorRef: { clipboard: { writeText: async (value) => calls.push(value) } },
+    documentRef: null,
+  })
+  assert.equal(ok, true)
+  assert.equal(calls.length, 1)
+})
+
+test('uses the fallback after an insecure local HTTP Clipboard rejection', async () => {
   const { document, state } = fakeDocument()
   let clipboardCalled = false
   const ok = await copyTextWithFallback('magnet:?xt=urn:btih:0123456789abcdef', {
-    navigatorRef: { clipboard: { writeText: async () => { clipboardCalled = true } } },
+    navigatorRef: { clipboard: { writeText: async () => { clipboardCalled = true; throw new Error('denied') } } },
     documentRef: document,
-    isSecureContext: false,
   })
   assert.equal(ok, true)
-  assert.equal(clipboardCalled, false)
+  assert.equal(clipboardCalled, true)
   assert.equal(state.selected, true)
 })
 
@@ -95,6 +104,14 @@ test('fallback reports failure and still removes its temporary node', () => {
   const { document, state } = fakeDocument({ copied: false })
   assert.equal(fallbackCopyText('https://115.com/s/example', document), false)
   assert.equal(state.removed, 1)
+})
+
+test('fallback restores the scroll position after focusing the temporary field', () => {
+  const { document } = fakeDocument()
+  const restored = []
+  const windowRef = { scrollX: 12, scrollY: 345, scrollTo: (...args) => restored.push(args) }
+  assert.equal(fallbackCopyText('https://115.com/s/example', document, windowRef), true)
+  assert.deepEqual(restored, [[12, 345]])
 })
 
 test('accepts complete web and magnet links but rejects empty or display text', () => {

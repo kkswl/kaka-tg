@@ -72,7 +72,7 @@ class PanSouUiContractTest(unittest.TestCase):
         self.assertEqual(0, page.count("<ManualSearch"))
         self.assertEqual(1, page.count('data-testid="manual-search-root"'))
         self.assertNotIn('v-if="false"', page)
-        self.assertIn("FRONTEND_VERSION = '4.8.25'", page)
+        self.assertIn("FRONTEND_VERSION = '4.8.26'", page)
         self.assertIn("frontendBuildId", page)
         self.assertIn("versionMismatch", page)
         self.assertIn("manual-search-body", page)

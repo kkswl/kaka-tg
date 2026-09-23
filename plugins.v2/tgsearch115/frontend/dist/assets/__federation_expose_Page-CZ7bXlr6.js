@@ -32,14 +32,19 @@ function getResourceLink(resource) {
   return ''
 }
 
-function fallbackCopyText(text, documentRef = globalThis.document) {
+function fallbackCopyText(text, documentRef = globalThis.document, windowRef = globalThis.window) {
   if (!documentRef?.createElement || !documentRef?.body?.appendChild) return false
+  const scrollX = Number(windowRef?.scrollX) || 0;
+  const scrollY = Number(windowRef?.scrollY) || 0;
   const textarea = documentRef.createElement('textarea');
   textarea.value = text;
   textarea.setAttribute('readonly', '');
   textarea.style.position = 'fixed';
-  textarea.style.left = '-9999px';
+  textarea.style.left = '0';
   textarea.style.top = '0';
+  textarea.style.width = '1px';
+  textarea.style.height = '1px';
+  textarea.style.overflow = 'hidden';
   textarea.style.fontSize = '12pt';
   textarea.style.opacity = '0';
   textarea.style.pointerEvents = 'none';
@@ -54,6 +59,7 @@ function fallbackCopyText(text, documentRef = globalThis.document) {
     copied = false;
   } finally {
     try { textarea.remove(); } catch { documentRef.body.removeChild?.(textarea); }
+    try { windowRef?.scrollTo?.(scrollX, scrollY); } catch { /* Scroll restoration is best effort. */ }
   }
   return copied
 }
@@ -61,10 +67,10 @@ function fallbackCopyText(text, documentRef = globalThis.document) {
 async function copyTextWithFallback(text, options = {}) {
   const navigatorRef = options.navigatorRef ?? globalThis.navigator;
   const documentRef = options.documentRef ?? globalThis.document;
-  const isSecureContext = options.isSecureContext ?? globalThis.isSecureContext === true;
-  // HTTP/local-IP pages must keep the user click synchronous for execCommand;
-  // waiting for a rejected Clipboard promise can lose that browser gesture.
-  if (!isSecureContext) return fallbackCopyText(text, documentRef)
+  const windowRef = options.windowRef ?? globalThis.window;
+  // Some embedded/local-IP browsers expose Clipboard API despite a non-secure
+  // origin. Invoke it immediately while the click gesture is active, then use
+  // the legacy fallback only if the browser actually rejects the request.
   if (navigatorRef?.clipboard?.writeText) {
     try {
       await navigatorRef.clipboard.writeText(text);
@@ -73,7 +79,7 @@ async function copyTextWithFallback(text, options = {}) {
       // HTTP/local-IP pages often expose Clipboard API but reject writes.
     }
   }
-  return fallbackCopyText(text, documentRef)
+  return fallbackCopyText(text, documentRef, windowRef)
 }
 
 function openResourceLink(url, options = {}) {
@@ -283,7 +289,7 @@ const _hoisted_77 = {
 };
 const _hoisted_78 = { class: "text-caption text-medium-emphasis" };
 const {computed,getCurrentInstance,onMounted,onUnmounted,reactive,ref,watch} = await importShared('vue');
-const FRONTEND_VERSION = "4.8.25";
+const FRONTEND_VERSION = "4.8.26";
 const MANUAL_CACHE_KEY = "TgSearch115:manual-search:v2";
 const FORCE_TIMELINE_CONFIRMATION = "强制清理诊断记录";
 const _sfc_main = {
@@ -294,8 +300,8 @@ const _sfc_main = {
   },
   emits: ["close", "back"],
   setup(__props, { emit: __emit }) {
-    const FRONTEND_BUILD_ID = "v4.8.25-link-actions" ;
-    const FRONTEND_BUILD_TIME = "2026-09-22T22:59:31.469Z" ;
+    const FRONTEND_BUILD_ID = "v4.8.26-copy-scroll-restore" ;
+    const FRONTEND_BUILD_TIME = "2026-09-23T01:04:31.623Z" ;
     const props = __props;
     const emit = __emit;
     const instance = getCurrentInstance();
@@ -1743,12 +1749,12 @@ const _sfc_main = {
                           _createElementVNode("button", {
                             type: "button",
                             class: "manual-link-button",
-                            onClick: ($event) => copyManualResult(item)
+                            onClick: _withModifiers(($event) => copyManualResult(item), ["stop", "prevent"])
                           }, "复制链接", 8, _hoisted_63),
                           _createElementVNode("button", {
                             type: "button",
                             class: "manual-link-button",
-                            onClick: ($event) => openManualResult(item)
+                            onClick: _withModifiers(($event) => openManualResult(item), ["stop", "prevent"])
                           }, "打开链接", 8, _hoisted_64),
                           ["115", "magnet"].includes(item.pan_type) ? (_openBlock(), _createElementBlock("button", {
                             key: 0,
@@ -1949,6 +1955,6 @@ const _sfc_main = {
     };
   }
 };
-const Page = /* @__PURE__ */ _export_sfc(_sfc_main, [["__scopeId", "data-v-614fdd6d"]]);
+const Page = /* @__PURE__ */ _export_sfc(_sfc_main, [["__scopeId", "data-v-4bde8b9e"]]);
 
 export { Page as default };

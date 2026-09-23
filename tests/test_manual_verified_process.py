@@ -67,6 +67,7 @@ class ManualVerifiedProcessContractTest(unittest.TestCase):
         self.assertIn("复制失败，请手动复制", copy)
         self.assertIn("该资源没有有效链接", copy)
         self.assertIn(">打开链接</button>", source)
+        self.assertIn('@click.stop.prevent="copyManualResult(item)"', source)
 
     def test_backend_rechecks_rules_and_media_identity_before_side_effects(self):
         source = PLUGIN.read_text(encoding="utf-8")

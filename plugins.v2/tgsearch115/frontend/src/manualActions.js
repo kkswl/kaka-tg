@@ -29,14 +29,19 @@ export function getResourceLink(resource) {
   return ''
 }
 
-export function fallbackCopyText(text, documentRef = globalThis.document) {
+export function fallbackCopyText(text, documentRef = globalThis.document, windowRef = globalThis.window) {
   if (!documentRef?.createElement || !documentRef?.body?.appendChild) return false
+  const scrollX = Number(windowRef?.scrollX) || 0
+  const scrollY = Number(windowRef?.scrollY) || 0
   const textarea = documentRef.createElement('textarea')
   textarea.value = text
   textarea.setAttribute('readonly', '')
   textarea.style.position = 'fixed'
-  textarea.style.left = '-9999px'
+  textarea.style.left = '0'
   textarea.style.top = '0'
+  textarea.style.width = '1px'
+  textarea.style.height = '1px'
+  textarea.style.overflow = 'hidden'
   textarea.style.fontSize = '12pt'
   textarea.style.opacity = '0'
   textarea.style.pointerEvents = 'none'
@@ -51,6 +56,7 @@ export function fallbackCopyText(text, documentRef = globalThis.document) {
     copied = false
   } finally {
     try { textarea.remove() } catch { documentRef.body.removeChild?.(textarea) }
+    try { windowRef?.scrollTo?.(scrollX, scrollY) } catch { /* Scroll restoration is best effort. */ }
   }
   return copied
 }
@@ -58,10 +64,10 @@ export function fallbackCopyText(text, documentRef = globalThis.document) {
 export async function copyTextWithFallback(text, options = {}) {
   const navigatorRef = options.navigatorRef ?? globalThis.navigator
   const documentRef = options.documentRef ?? globalThis.document
-  const isSecureContext = options.isSecureContext ?? globalThis.isSecureContext === true
-  // HTTP/local-IP pages must keep the user click synchronous for execCommand;
-  // waiting for a rejected Clipboard promise can lose that browser gesture.
-  if (!isSecureContext) return fallbackCopyText(text, documentRef)
+  const windowRef = options.windowRef ?? globalThis.window
+  // Some embedded/local-IP browsers expose Clipboard API despite a non-secure
+  // origin. Invoke it immediately while the click gesture is active, then use
+  // the legacy fallback only if the browser actually rejects the request.
   if (navigatorRef?.clipboard?.writeText) {
     try {
       await navigatorRef.clipboard.writeText(text)
@@ -70,7 +76,7 @@ export async function copyTextWithFallback(text, options = {}) {
       // HTTP/local-IP pages often expose Clipboard API but reject writes.
     }
   }
-  return fallbackCopyText(text, documentRef)
+  return fallbackCopyText(text, documentRef, windowRef)
 }
 
 export function openResourceLink(url, options = {}) {

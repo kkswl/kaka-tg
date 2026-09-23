@@ -6,7 +6,7 @@ import federation from '@originjs/vite-plugin-federation'
 // 产物 dist/remoteEntry.js 由 MP 前端动态导入，配置弹窗渲染 Config，详情页渲染 Page。
 export default defineConfig({
   define: {
-    __TG115_BUILD_ID__: JSON.stringify(process.env.TG115_BUILD_ID || 'v4.8.25-link-actions'),
+    __TG115_BUILD_ID__: JSON.stringify(process.env.TG115_BUILD_ID || 'v4.8.26-copy-scroll-restore'),
     __TG115_BUILD_TIME__: JSON.stringify(new Date().toISOString()),
   },
   plugins: [

@@ -332,8 +332,8 @@
               <div v-if="item.meta" class="manual-result-meta">{{ item.meta }}</div>
               <div class="manual-result-text">{{ item.text || item.title }}</div>
               <div class="manual-result-actions">
-                <button type="button" class="manual-link-button" @click="copyManualResult(item)">复制链接</button>
-                <button type="button" class="manual-link-button" @click="openManualResult(item)">打开链接</button>
+                <button type="button" class="manual-link-button" @click.stop.prevent="copyManualResult(item)">复制链接</button>
+                <button type="button" class="manual-link-button" @click.stop.prevent="openManualResult(item)">打开链接</button>
                 <button
                   v-if="['115', 'magnet'].includes(item.pan_type)"
                   type="button"
@@ -436,8 +436,8 @@ import {
   openResourceLink,
 } from '../manualActions.js'
 
-const FRONTEND_VERSION = '4.8.25'
-const FRONTEND_BUILD_ID = typeof __TG115_BUILD_ID__ === 'string' ? __TG115_BUILD_ID__ : 'v4.8.25'
+const FRONTEND_VERSION = '4.8.26'
+const FRONTEND_BUILD_ID = typeof __TG115_BUILD_ID__ === 'string' ? __TG115_BUILD_ID__ : 'v4.8.26'
 const FRONTEND_BUILD_TIME = typeof __TG115_BUILD_TIME__ === 'string' ? __TG115_BUILD_TIME__ : 'unknown'
 
 const props = defineProps({
