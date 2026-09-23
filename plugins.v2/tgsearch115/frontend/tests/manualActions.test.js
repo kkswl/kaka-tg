@@ -67,6 +67,20 @@ test('uses the fallback after an insecure local HTTP Clipboard rejection', async
   assert.equal(state.selected, true)
 })
 
+test('uses textarea synchronously on local HTTP even when Clipboard rejection is delayed', async () => {
+  const { document, state } = fakeDocument()
+  let rejectClipboard
+  const pendingClipboard = new Promise((_, reject) => { rejectClipboard = reject })
+  const promise = copyTextWithFallback('magnet:?xt=urn:btih:0123456789abcdef', {
+    navigatorRef: { clipboard: { writeText: () => pendingClipboard } },
+    documentRef: document,
+    windowRef: { isSecureContext: false },
+  })
+  assert.equal(await promise, true)
+  assert.equal(state.selected, true)
+  rejectClipboard(new Error('denied'))
+})
+
 test('falls back to a temporary textarea when Clipboard API rejects', async () => {
   const { document, state } = fakeDocument()
   const url = 'https://115.com/s/example?password=abcd'
@@ -128,6 +142,21 @@ test('fallback restores the scroll position after focusing the temporary field',
   const windowRef = { scrollX: 12, scrollY: 345, scrollTo: (...args) => restored.push(args) }
   assert.equal(fallbackCopyText('https://115.com/s/example', document, windowRef), true)
   assert.deepEqual(restored, [[12, 345]])
+})
+
+test('fallback restores the MoviePilot scroll container as well as the window', () => {
+  const { document } = fakeDocument()
+  const host = { scrollLeft: 4, scrollTop: 210, parentElement: null }
+  const button = { scrollLeft: 0, scrollTop: 0, parentElement: host }
+  document.activeElement = button
+  document.scrollingElement = host
+  document.execCommand = () => {
+    host.scrollTop = 9999
+    return true
+  }
+  assert.equal(fallbackCopyText('https://115.com/s/example', document), true)
+  assert.equal(host.scrollTop, 210)
+  assert.equal(host.scrollLeft, 4)
 })
 
 test('accepts complete web and magnet links but rejects empty or display text', () => {

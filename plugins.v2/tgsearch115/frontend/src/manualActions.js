@@ -42,12 +42,27 @@ export function fallbackCopyText(text, documentRef = globalThis.document, window
   if (!documentRef?.createElement || !documentRef?.body?.appendChild) return false
   const scrollX = Number(windowRef?.scrollX) || 0
   const scrollY = Number(windowRef?.scrollY) || 0
+  // MoviePilot places the plugin inside its own scrolling container. Restoring
+  // only window.scrollY is insufficient there: focusing a temporary textarea
+  // can move the host container to its end on mobile WebViews.
+  const scrollStates = []
+  let parent = documentRef.activeElement
+  while (parent) {
+    if (typeof parent.scrollTop === 'number') {
+      scrollStates.push({ element: parent, left: parent.scrollLeft || 0, top: parent.scrollTop || 0 })
+    }
+    parent = parent.parentElement
+  }
+  const scrollingElement = documentRef.scrollingElement
+  if (scrollingElement && !scrollStates.some((state) => state.element === scrollingElement)) {
+    scrollStates.push({ element: scrollingElement, left: scrollingElement.scrollLeft || 0, top: scrollingElement.scrollTop || 0 })
+  }
   const textarea = documentRef.createElement('textarea')
   textarea.value = text
   textarea.setAttribute('readonly', '')
   textarea.style.position = 'fixed'
-  textarea.style.left = '0'
-  textarea.style.top = '0'
+  textarea.style.left = '-10000px'
+  textarea.style.top = '-10000px'
   textarea.style.width = '1px'
   textarea.style.height = '1px'
   textarea.style.overflow = 'hidden'
@@ -65,6 +80,12 @@ export function fallbackCopyText(text, documentRef = globalThis.document, window
     copied = false
   } finally {
     try { textarea.remove() } catch { documentRef.body.removeChild?.(textarea) }
+    for (const state of scrollStates) {
+      try {
+        state.element.scrollLeft = state.left
+        state.element.scrollTop = state.top
+      } catch { /* Container restoration is best effort. */ }
+    }
     try { windowRef?.scrollTo?.(scrollX, scrollY) } catch { /* Scroll restoration is best effort. */ }
   }
   return copied
@@ -74,15 +95,30 @@ export async function copyTextWithFallback(text, options = {}) {
   const navigatorRef = options.navigatorRef ?? globalThis.navigator
   const documentRef = options.documentRef ?? globalThis.document
   const windowRef = options.windowRef ?? globalThis.window
-  // Some embedded/local-IP browsers expose Clipboard API despite a non-secure
-  // origin. Invoke it immediately while the click gesture is active, then use
-  // the legacy fallback only if the browser actually rejects the request.
+  const secureContext = options.isSecureContext ?? windowRef?.isSecureContext ?? false
+  // Local-IP MoviePilot is HTTP. A WebView may expose Clipboard API but reject
+  // it asynchronously after the user gesture has expired. Start that API
+  // first, then complete the textarea route synchronously while the gesture is
+  // still live. Both paths copy exactly the same text and neither navigates.
   if (navigatorRef?.clipboard?.writeText) {
+    let clipboardPromise
     try {
-      await navigatorRef.clipboard.writeText(text)
+      clipboardPromise = navigatorRef.clipboard.writeText(text)
+    } catch {
+      clipboardPromise = null
+    }
+    if (!secureContext) {
+      const fallbackCopied = fallbackCopyText(text, documentRef, windowRef)
+      if (fallbackCopied) {
+        Promise.resolve(clipboardPromise).catch(() => undefined)
+        return true
+      }
+    }
+    try {
+      await clipboardPromise
       return true
     } catch {
-      // HTTP/local-IP pages often expose Clipboard API but reject writes.
+      // Secure contexts only reach this fallback after clipboard rejection.
     }
   }
   return fallbackCopyText(text, documentRef, windowRef)
