@@ -30,7 +30,14 @@ class P115Transfer:
 
     def __init__(self, cookie: str = "", default_target_path: str = "/") -> None:
         self.cookie = self._normalize(cookie)
-        self.default_target_path = self._normalize_path(default_target_path) or "/"
+        # Config.vue can save a directory browser result as a numeric cid.  It
+        # must remain a cid here: turning ``123`` into ``/123`` makes the
+        # default-transfer path try to create a directory literally named 123.
+        configured_target = self._normalize(default_target_path)
+        self.default_target_path = (
+            configured_target if configured_target.isdigit()
+            else self._normalize_path(configured_target) or "/"
+        )
         self._http = None  # 懒加载 httpx.Client
 
     # ============================ 公共方法 ============================

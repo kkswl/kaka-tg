@@ -57,6 +57,26 @@ class ShareInspectionTest(unittest.TestCase):
         self.assertTrue(ok)
         self.assertIn("已存在", message)
 
+    def test_numeric_default_target_remains_a_cid_for_manual_transfer(self):
+        cid = "3469789358402308035"
+        client = module.P115Transfer(
+            "UID=123_abc; CID=y; SEID=z", default_target_path=cid
+        )
+        self.assertEqual(cid, client.default_target_path)
+        client.is_ready = lambda: (True, "")
+        client._get_or_create_cid = lambda _path: self.fail("numeric cid must not become a path")
+        client._api_get = lambda *_args, **_kwargs: {
+            "state": True, "data": {"list": [{"fid": "789"}]}
+        }
+        received = []
+        client._api_post = lambda _path, payload, **_kwargs: received.append(payload) or {"state": True}
+
+        ok, message, _data = client.transfer("https://115.com/s/demo?password=abcd")
+
+        self.assertTrue(ok)
+        self.assertEqual("115 转存成功", message)
+        self.assertEqual(cid, received[-1]["cid"])
+
     def test_transfer_source_does_not_log_sensitive_payloads(self):
         source = PATH.read_text(encoding="utf-8")
         self.assertNotIn("手动转存 share_url=", source)
