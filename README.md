@@ -5,7 +5,7 @@
 - 修复手机端 MoviePilot 内嵌页面点击“复制链接”后跳到页面底部且复制失败的问题：除窗口位置外，同时保存并恢复触发按钮所在的宿主滚动容器位置。
 - 局域网 HTTP WebView 会在同一指针手势内先发起 Clipboard API，再立即走 textarea 兼容复制；避免 API 在手势结束后才异步拒绝，导致兼容复制也失效。
 - 临时复制节点移至可视区外，不导航、不搜索、不转存；安全上下文仍优先等待 Clipboard API 结果。
-- 交付验证：Python 全量测试 281 项、前端 Node 测试 14 项通过；Python 编译、Vite 生产构建、JSON 解析、改动 Python 契约 Ruff 与 `git diff --check` 通过。未执行真实转存。
+- 交付验证：Python 全量测试 281 项、前端 Node 测试 14 项通过；Python 编译、Vite 生产构建、JSON 解析、改动 Python 契约 Ruff 与 `git diff --check` 通过。已在真实 MoviePilot 宿主确认前后端均为 4.8.29；两条手动结果的复制均写入有效资源链接，页面地址与滚动位置未改变。未执行真实转存。
 
 ## v4.8.28 手动真实链接与 115 参数闭环
 
